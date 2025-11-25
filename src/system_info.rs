@@ -2,11 +2,12 @@
 //!
 //! System diagnostics and historical metrics tracking for the /sysinfo command.
 //!
-//! - **Version**: 1.0.0
+//! - **Version**: 1.1.0
 //! - **Since**: 0.3.0
 //! - **Toggleable**: false
 //!
 //! ## Changelog
+//! - 1.1.0: Added OpenAI usage data cleanup integration
 //! - 1.0.0: Initial implementation with current metrics and historical tracking
 
 use sysinfo::{System, Disks, ProcessRefreshKind, ProcessesToUpdate};
@@ -383,10 +384,24 @@ pub async fn metrics_collection_loop(db: Arc<Database>, db_path: String) {
         cleanup_counter += 1;
         if cleanup_counter >= 288 {
             cleanup_counter = 0;
-            info!("Running metrics cleanup (removing data older than 7 days)");
+            info!("Running daily cleanup tasks");
+
+            // Cleanup system metrics (7 days)
             if let Err(e) = db.cleanup_old_metrics(7).await {
-                warn!("Failed to cleanup old metrics: {}", e);
+                warn!("Failed to cleanup old system metrics: {}", e);
             }
+
+            // Cleanup raw OpenAI usage data (7 days - detailed request-level data)
+            if let Err(e) = db.cleanup_old_openai_usage(7).await {
+                warn!("Failed to cleanup old OpenAI usage data: {}", e);
+            }
+
+            // Cleanup OpenAI daily aggregates (90 days - for historical trends)
+            if let Err(e) = db.cleanup_old_openai_usage_daily(90).await {
+                warn!("Failed to cleanup old OpenAI usage daily data: {}", e);
+            }
+
+            info!("Daily cleanup tasks completed");
         }
     }
 }

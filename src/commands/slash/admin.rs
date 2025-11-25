@@ -1,4 +1,4 @@
-//! Admin slash commands: /introspect, /settings, /set_channel_verbosity, /set_guild_setting, /admin_role, /features, /toggle, /sysinfo
+//! Admin slash commands: /introspect, /settings, /set_channel_verbosity, /set_guild_setting, /admin_role, /features, /toggle, /sysinfo, /usage
 
 use serenity::builder::CreateApplicationCommand;
 use serenity::model::application::command::CommandOptionType;
@@ -15,6 +15,7 @@ pub fn create_commands() -> Vec<CreateApplicationCommand> {
         create_features_command(),
         create_toggle_command(),
         create_sysinfo_command(),
+        create_usage_command(),
     ]
 }
 
@@ -177,6 +178,26 @@ fn create_sysinfo_command() -> CreateApplicationCommand {
                 .add_string_choice("Current Status", "current")
                 .add_string_choice("History (24h)", "history_24h")
                 .add_string_choice("History (7d)", "history_7d")
+        })
+        .to_owned()
+}
+
+/// Creates the usage command - displays OpenAI API usage and cost metrics
+fn create_usage_command() -> CreateApplicationCommand {
+    CreateApplicationCommand::default()
+        .name("usage")
+        .description("View OpenAI API usage and cost metrics")
+        .create_option(|option| {
+            option
+                .name("scope")
+                .description("What usage to display")
+                .kind(CommandOptionType::String)
+                .required(false)
+                .add_string_choice("My Usage (Today)", "personal_today")
+                .add_string_choice("My Usage (7 days)", "personal_7d")
+                .add_string_choice("Server Usage (Today) - Admin", "server_today")
+                .add_string_choice("Server Usage (7 days) - Admin", "server_7d")
+                .add_string_choice("Top Users (7 days) - Admin", "top_users")
         })
         .to_owned()
 }

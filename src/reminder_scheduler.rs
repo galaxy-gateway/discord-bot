@@ -4,15 +4,17 @@
 //! for due reminders every 60 seconds and delivers them in the user's preferred
 //! persona style.
 //!
-//! - **Version**: 1.0.0
+//! - **Version**: 1.1.0
 //! - **Since**: 0.1.0
 //! - **Toggleable**: true
 //!
 //! ## Changelog
+//! - 1.1.0: Added OpenAI usage tracking for reminder message generation
 //! - 1.0.0: Initial release with time parsing (30m, 2h, 1d, 1h30m) and persona delivery
 
 use crate::database::Database;
 use crate::personas::PersonaManager;
+use crate::usage_tracker::UsageTracker;
 use anyhow::Result;
 use log::{debug, error, info, warn};
 use openai::chat::{ChatCompletion, ChatCompletionMessage, ChatCompletionMessageRole};
@@ -26,14 +28,16 @@ pub struct ReminderScheduler {
     database: Database,
     persona_manager: PersonaManager,
     openai_model: String,
+    usage_tracker: UsageTracker,
 }
 
 impl ReminderScheduler {
-    pub fn new(database: Database, openai_model: String) -> Self {
+    pub fn new(database: Database, openai_model: String, usage_tracker: UsageTracker) -> Self {
         Self {
             database,
             persona_manager: PersonaManager::new(),
             openai_model,
+            usage_tracker,
         }
     }
 
@@ -97,7 +101,7 @@ impl ReminderScheduler {
         let system_prompt = persona.map(|p| p.system_prompt.as_str()).unwrap_or("");
 
         // Generate a persona-flavored reminder message
-        let reminder_message = self.generate_reminder_message(&persona_name, system_prompt, reminder_text).await?;
+        let reminder_message = self.generate_reminder_message(&persona_name, system_prompt, reminder_text, user_id, channel_id).await?;
 
         // Parse channel ID
         let channel = ChannelId(channel_id.parse::<u64>()?);
@@ -114,7 +118,14 @@ impl ReminderScheduler {
         Ok(())
     }
 
-    async fn generate_reminder_message(&self, persona_name: &str, persona_prompt: &str, reminder_text: &str) -> Result<String> {
+    async fn generate_reminder_message(
+        &self,
+        persona_name: &str,
+        persona_prompt: &str,
+        reminder_text: &str,
+        user_id: &str,
+        channel_id: &str,
+    ) -> Result<String> {
         // Create a prompt to generate a persona-flavored reminder
         let system_prompt = format!(
             "{persona_prompt}\n\n\
@@ -147,6 +158,20 @@ impl ReminderScheduler {
 
         match chat_completion {
             Ok(completion) => {
+                // Log usage if available
+                if let Some(usage) = &completion.usage {
+                    self.usage_tracker.log_chat(
+                        &self.openai_model,
+                        usage.prompt_tokens,
+                        usage.completion_tokens,
+                        usage.total_tokens,
+                        user_id,
+                        None, // Reminders don't have guild context stored
+                        Some(channel_id),
+                        None,
+                    );
+                }
+
                 let response = completion
                     .choices
                     .first()

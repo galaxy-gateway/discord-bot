@@ -15,3 +15,4 @@ pub mod rate_limiter;
 pub mod reminder_scheduler;
 pub mod startup_notification;
 pub mod system_info;
+pub mod usage_tracker;

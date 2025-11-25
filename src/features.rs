@@ -124,6 +124,14 @@ pub const FEATURES: &[Feature] = &[
         toggleable: true,
         description: "Rich notifications when bot comes online, configured via /set_guild_setting",
     },
+    Feature {
+        id: "usage_tracking",
+        name: "Usage Tracking",
+        version: "1.0.0",
+        since: "0.5.0",
+        toggleable: false,
+        description: "OpenAI API usage and cost tracking with /usage command",
+    },
 ];
 
 /// Get all registered features
@@ -172,7 +180,7 @@ mod tests {
     fn test_get_features() {
         let features = get_features();
         assert!(!features.is_empty());
-        assert!(features.len() >= 12, "Should have at least 12 features");
+        assert!(features.len() >= 13, "Should have at least 13 features");
     }
 
     #[test]

@@ -3,21 +3,29 @@
 //! Whisper-powered transcription of audio attachments with automatic format conversion.
 //! Supports a wide range of audio and video formats via ffmpeg conversion.
 //!
-//! - **Version**: 1.3.0
+//! - **Version**: 1.4.0
 //! - **Since**: 0.1.0
 //! - **Toggleable**: true
 //!
 //! ## Changelog
+//! - 1.4.0: Added audio duration tracking for usage metrics via ffprobe
 //! - 1.3.0: Fixed double-posting bug, added configurable output mode (transcription_only/with_commentary)
 //! - 1.2.0: Added ffmpeg conversion for broader format support
 //! - 1.1.0: Added configurable transcription modes (always/mention_only/disabled)
 //! - 1.0.0: Initial release with Whisper API integration
 
 use anyhow::Result;
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use std::process::Command;
 use std::time::Instant;
 use tokio::fs;
+
+/// Result of audio transcription with duration for usage tracking
+#[derive(Debug)]
+pub struct TranscriptionResult {
+    pub text: String,
+    pub duration_seconds: f64,
+}
 
 /// Formats that OpenAI Whisper supports natively (no conversion needed)
 const WHISPER_NATIVE_FORMATS: &[&str] = &[".mp3", ".mp4", ".m4a", ".wav", ".webm", ".mpeg", ".mpga"];
@@ -147,7 +155,38 @@ impl AudioTranscriber {
             .unwrap_or(false)
     }
 
-    pub async fn download_and_transcribe_attachment(&self, url: &str, filename: &str) -> Result<String> {
+    /// Get audio duration in seconds using ffprobe
+    fn get_audio_duration(file_path: &str) -> f64 {
+        let output = Command::new("ffprobe")
+            .args([
+                "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                file_path,
+            ])
+            .output();
+
+        match output {
+            Ok(out) if out.status.success() => {
+                String::from_utf8(out.stdout)
+                    .ok()
+                    .and_then(|s| s.trim().parse::<f64>().ok())
+                    .unwrap_or(0.0)
+            }
+            Ok(out) => {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                debug!("ffprobe failed: {}", stderr);
+                0.0
+            }
+            Err(e) => {
+                debug!("ffprobe not available: {}", e);
+                0.0
+            }
+        }
+    }
+
+    /// Download and transcribe with duration tracking
+    pub async fn download_and_transcribe_with_duration(&self, url: &str, filename: &str) -> Result<TranscriptionResult> {
         let temp_file = format!("/tmp/discord_audio_{filename}");
         let mut converted_file: Option<String> = None;
 
@@ -181,6 +220,10 @@ impl AudioTranscriber {
             temp_file.clone()
         };
 
+        // Get audio duration before transcription (for usage tracking)
+        let duration_seconds = Self::get_audio_duration(&file_to_transcribe);
+        info!("Audio duration: {:.1}s", duration_seconds);
+
         // Transcribe the file
         let transcription = self.transcribe_file(&file_to_transcribe).await;
 
@@ -195,6 +238,15 @@ impl AudioTranscriber {
             }
         }
 
-        transcription
+        transcription.map(|text| TranscriptionResult {
+            text,
+            duration_seconds,
+        })
+    }
+
+    /// Legacy method for backwards compatibility
+    pub async fn download_and_transcribe_attachment(&self, url: &str, filename: &str) -> Result<String> {
+        let result = self.download_and_transcribe_with_duration(url, filename).await?;
+        Ok(result.text)
     }
 }

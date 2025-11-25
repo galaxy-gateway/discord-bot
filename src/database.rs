@@ -381,6 +381,69 @@ impl Database {
             )",
         )?;
 
+        // OpenAI Usage Tracking Tables
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS openai_usage (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                request_id TEXT,
+                user_id TEXT NOT NULL,
+                guild_id TEXT,
+                channel_id TEXT,
+                service_type TEXT NOT NULL,
+                model TEXT NOT NULL,
+                input_tokens INTEGER DEFAULT 0,
+                output_tokens INTEGER DEFAULT 0,
+                total_tokens INTEGER DEFAULT 0,
+                audio_duration_seconds REAL DEFAULT 0,
+                image_count INTEGER DEFAULT 0,
+                image_size TEXT,
+                estimated_cost_usd REAL NOT NULL,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+            )",
+        )?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_openai_usage_user_ts
+             ON openai_usage(user_id, timestamp)",
+        )?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_openai_usage_guild_ts
+             ON openai_usage(guild_id, timestamp)",
+        )?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_openai_usage_timestamp
+             ON openai_usage(timestamp)",
+        )?;
+
+        // Daily aggregates for fast queries (90-day retention)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS openai_usage_daily (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date DATE NOT NULL,
+                guild_id TEXT,
+                user_id TEXT,
+                service_type TEXT NOT NULL,
+                request_count INTEGER DEFAULT 0,
+                total_tokens INTEGER DEFAULT 0,
+                total_audio_seconds REAL DEFAULT 0,
+                total_images INTEGER DEFAULT 0,
+                total_cost_usd REAL DEFAULT 0,
+                UNIQUE(date, guild_id, user_id, service_type)
+            )",
+        )?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_openai_daily_guild_date
+             ON openai_usage_daily(guild_id, date)",
+        )?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_openai_daily_user_date
+             ON openai_usage_daily(user_id, date)",
+        )?;
+
         Ok(())
     }
 
@@ -1430,5 +1493,286 @@ impl Database {
             // No bot admin role set - only Discord admins can manage
             Ok(false)
         }
+    }
+
+    // OpenAI Usage Tracking Methods
+
+    /// Log a ChatCompletion (GPT) usage event
+    #[allow(clippy::too_many_arguments)]
+    pub async fn log_openai_chat_usage(
+        &self,
+        model: &str,
+        input_tokens: u32,
+        output_tokens: u32,
+        total_tokens: u32,
+        estimated_cost: f64,
+        user_id: &str,
+        guild_id: Option<&str>,
+        channel_id: Option<&str>,
+        request_id: Option<&str>,
+    ) -> Result<()> {
+        let conn = self.connection.lock().await;
+        let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
+
+        // Insert into raw usage table
+        let mut statement = conn.prepare(
+            "INSERT INTO openai_usage
+             (request_id, user_id, guild_id, channel_id, service_type, model,
+              input_tokens, output_tokens, total_tokens, estimated_cost_usd)
+             VALUES (?, ?, ?, ?, 'chat', ?, ?, ?, ?, ?)"
+        )?;
+        statement.bind((1, request_id.unwrap_or("")))?;
+        statement.bind((2, user_id))?;
+        statement.bind((3, guild_id.unwrap_or("")))?;
+        statement.bind((4, channel_id.unwrap_or("")))?;
+        statement.bind((5, model))?;
+        statement.bind((6, input_tokens as i64))?;
+        statement.bind((7, output_tokens as i64))?;
+        statement.bind((8, total_tokens as i64))?;
+        statement.bind((9, estimated_cost))?;
+        statement.next()?;
+
+        // Update daily aggregate
+        drop(statement);
+        let mut agg_stmt = conn.prepare(
+            "INSERT INTO openai_usage_daily
+             (date, guild_id, user_id, service_type, request_count, total_tokens, total_cost_usd)
+             VALUES (?, ?, ?, 'chat', 1, ?, ?)
+             ON CONFLICT(date, guild_id, user_id, service_type) DO UPDATE SET
+             request_count = request_count + 1,
+             total_tokens = total_tokens + excluded.total_tokens,
+             total_cost_usd = total_cost_usd + excluded.total_cost_usd"
+        )?;
+        agg_stmt.bind((1, date.as_str()))?;
+        agg_stmt.bind((2, guild_id.unwrap_or("")))?;
+        agg_stmt.bind((3, user_id))?;
+        agg_stmt.bind((4, total_tokens as i64))?;
+        agg_stmt.bind((5, estimated_cost))?;
+        agg_stmt.next()?;
+
+        Ok(())
+    }
+
+    /// Log a Whisper (audio transcription) usage event
+    pub async fn log_openai_whisper_usage(
+        &self,
+        audio_duration_seconds: f64,
+        estimated_cost: f64,
+        user_id: &str,
+        guild_id: Option<&str>,
+        channel_id: Option<&str>,
+    ) -> Result<()> {
+        let conn = self.connection.lock().await;
+        let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
+
+        // Insert into raw usage table
+        let mut statement = conn.prepare(
+            "INSERT INTO openai_usage
+             (user_id, guild_id, channel_id, service_type, model,
+              audio_duration_seconds, estimated_cost_usd)
+             VALUES (?, ?, ?, 'whisper', 'whisper-1', ?, ?)"
+        )?;
+        statement.bind((1, user_id))?;
+        statement.bind((2, guild_id.unwrap_or("")))?;
+        statement.bind((3, channel_id.unwrap_or("")))?;
+        statement.bind((4, audio_duration_seconds))?;
+        statement.bind((5, estimated_cost))?;
+        statement.next()?;
+
+        // Update daily aggregate
+        drop(statement);
+        let mut agg_stmt = conn.prepare(
+            "INSERT INTO openai_usage_daily
+             (date, guild_id, user_id, service_type, request_count, total_audio_seconds, total_cost_usd)
+             VALUES (?, ?, ?, 'whisper', 1, ?, ?)
+             ON CONFLICT(date, guild_id, user_id, service_type) DO UPDATE SET
+             request_count = request_count + 1,
+             total_audio_seconds = total_audio_seconds + excluded.total_audio_seconds,
+             total_cost_usd = total_cost_usd + excluded.total_cost_usd"
+        )?;
+        agg_stmt.bind((1, date.as_str()))?;
+        agg_stmt.bind((2, guild_id.unwrap_or("")))?;
+        agg_stmt.bind((3, user_id))?;
+        agg_stmt.bind((4, audio_duration_seconds))?;
+        agg_stmt.bind((5, estimated_cost))?;
+        agg_stmt.next()?;
+
+        Ok(())
+    }
+
+    /// Log a DALL-E (image generation) usage event
+    pub async fn log_openai_dalle_usage(
+        &self,
+        image_size: &str,
+        image_count: u32,
+        estimated_cost: f64,
+        user_id: &str,
+        guild_id: Option<&str>,
+        channel_id: Option<&str>,
+    ) -> Result<()> {
+        let conn = self.connection.lock().await;
+        let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
+
+        // Insert into raw usage table
+        let mut statement = conn.prepare(
+            "INSERT INTO openai_usage
+             (user_id, guild_id, channel_id, service_type, model,
+              image_count, image_size, estimated_cost_usd)
+             VALUES (?, ?, ?, 'dalle', 'dall-e-3', ?, ?, ?)"
+        )?;
+        statement.bind((1, user_id))?;
+        statement.bind((2, guild_id.unwrap_or("")))?;
+        statement.bind((3, channel_id.unwrap_or("")))?;
+        statement.bind((4, image_count as i64))?;
+        statement.bind((5, image_size))?;
+        statement.bind((6, estimated_cost))?;
+        statement.next()?;
+
+        // Update daily aggregate
+        drop(statement);
+        let mut agg_stmt = conn.prepare(
+            "INSERT INTO openai_usage_daily
+             (date, guild_id, user_id, service_type, request_count, total_images, total_cost_usd)
+             VALUES (?, ?, ?, 'dalle', 1, ?, ?)
+             ON CONFLICT(date, guild_id, user_id, service_type) DO UPDATE SET
+             request_count = request_count + 1,
+             total_images = total_images + excluded.total_images,
+             total_cost_usd = total_cost_usd + excluded.total_cost_usd"
+        )?;
+        agg_stmt.bind((1, date.as_str()))?;
+        agg_stmt.bind((2, guild_id.unwrap_or("")))?;
+        agg_stmt.bind((3, user_id))?;
+        agg_stmt.bind((4, image_count as i64))?;
+        agg_stmt.bind((5, estimated_cost))?;
+        agg_stmt.next()?;
+
+        Ok(())
+    }
+
+    /// Get usage statistics for a user within a date range
+    /// Returns (service_type, request_count, tokens, audio_seconds, images, cost)
+    pub async fn get_user_usage_stats(
+        &self,
+        user_id: &str,
+        days: i64,
+    ) -> Result<Vec<(String, i64, i64, f64, i64, f64)>> {
+        let conn = self.connection.lock().await;
+        let mut statement = conn.prepare(
+            "SELECT service_type,
+                    SUM(request_count) as requests,
+                    SUM(total_tokens) as tokens,
+                    SUM(total_audio_seconds) as audio_secs,
+                    SUM(total_images) as images,
+                    SUM(total_cost_usd) as cost
+             FROM openai_usage_daily
+             WHERE user_id = ? AND date >= date('now', ? || ' days')
+             GROUP BY service_type"
+        )?;
+        statement.bind((1, user_id))?;
+        statement.bind((2, format!("-{}", days).as_str()))?;
+
+        let mut results = Vec::new();
+        while let Ok(State::Row) = statement.next() {
+            let service_type = statement.read::<String, _>(0)?;
+            let requests = statement.read::<i64, _>(1)?;
+            let tokens = statement.read::<i64, _>(2)?;
+            let audio_secs = statement.read::<f64, _>(3)?;
+            let images = statement.read::<i64, _>(4)?;
+            let cost = statement.read::<f64, _>(5)?;
+            results.push((service_type, requests, tokens, audio_secs, images, cost));
+        }
+        Ok(results)
+    }
+
+    /// Get usage statistics for an entire guild within a date range
+    /// Returns (service_type, request_count, tokens, audio_seconds, images, cost)
+    pub async fn get_guild_usage_stats(
+        &self,
+        guild_id: &str,
+        days: i64,
+    ) -> Result<Vec<(String, i64, i64, f64, i64, f64)>> {
+        let conn = self.connection.lock().await;
+        let mut statement = conn.prepare(
+            "SELECT service_type,
+                    SUM(request_count) as requests,
+                    SUM(total_tokens) as tokens,
+                    SUM(total_audio_seconds) as audio_secs,
+                    SUM(total_images) as images,
+                    SUM(total_cost_usd) as cost
+             FROM openai_usage_daily
+             WHERE guild_id = ? AND date >= date('now', ? || ' days')
+             GROUP BY service_type"
+        )?;
+        statement.bind((1, guild_id))?;
+        statement.bind((2, format!("-{}", days).as_str()))?;
+
+        let mut results = Vec::new();
+        while let Ok(State::Row) = statement.next() {
+            let service_type = statement.read::<String, _>(0)?;
+            let requests = statement.read::<i64, _>(1)?;
+            let tokens = statement.read::<i64, _>(2)?;
+            let audio_secs = statement.read::<f64, _>(3)?;
+            let images = statement.read::<i64, _>(4)?;
+            let cost = statement.read::<f64, _>(5)?;
+            results.push((service_type, requests, tokens, audio_secs, images, cost));
+        }
+        Ok(results)
+    }
+
+    /// Get top users by cost for a guild
+    /// Returns (user_id, request_count, total_cost)
+    pub async fn get_guild_top_users_by_cost(
+        &self,
+        guild_id: &str,
+        days: i64,
+        limit: i64,
+    ) -> Result<Vec<(String, i64, f64)>> {
+        let conn = self.connection.lock().await;
+        let mut statement = conn.prepare(
+            "SELECT user_id,
+                    SUM(request_count) as requests,
+                    SUM(total_cost_usd) as cost
+             FROM openai_usage_daily
+             WHERE guild_id = ? AND user_id != '' AND date >= date('now', ? || ' days')
+             GROUP BY user_id
+             ORDER BY cost DESC
+             LIMIT ?"
+        )?;
+        statement.bind((1, guild_id))?;
+        statement.bind((2, format!("-{}", days).as_str()))?;
+        statement.bind((3, limit))?;
+
+        let mut results = Vec::new();
+        while let Ok(State::Row) = statement.next() {
+            let user_id = statement.read::<String, _>(0)?;
+            let requests = statement.read::<i64, _>(1)?;
+            let cost = statement.read::<f64, _>(2)?;
+            results.push((user_id, requests, cost));
+        }
+        Ok(results)
+    }
+
+    /// Cleanup old raw usage data (keep last N days)
+    pub async fn cleanup_old_openai_usage(&self, days: i64) -> Result<()> {
+        let conn = self.connection.lock().await;
+        let mut statement = conn.prepare(
+            "DELETE FROM openai_usage WHERE timestamp < datetime('now', ? || ' days')"
+        )?;
+        statement.bind((1, format!("-{}", days).as_str()))?;
+        statement.next()?;
+        info!("Cleaned up openai_usage older than {} days", days);
+        Ok(())
+    }
+
+    /// Cleanup old daily aggregates (keep last N days)
+    pub async fn cleanup_old_openai_usage_daily(&self, days: i64) -> Result<()> {
+        let conn = self.connection.lock().await;
+        let mut statement = conn.prepare(
+            "DELETE FROM openai_usage_daily WHERE date < date('now', ? || ' days')"
+        )?;
+        statement.bind((1, format!("-{}", days).as_str()))?;
+        statement.next()?;
+        info!("Cleaned up openai_usage_daily older than {} days", days);
+        Ok(())
     }
 }

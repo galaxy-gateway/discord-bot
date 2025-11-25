@@ -6,6 +6,7 @@ use persona::config::Config;
 use persona::database::Database;
 use persona::commands::CommandHandler;
 use persona::http_server::start_http_server;
+use persona::usage_tracker::UsageTracker;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -30,6 +31,9 @@ async fn main() -> Result<()> {
     let database = Database::new(&config.database_path).await?;
     info!("✅ Database connected");
 
+    // Create usage tracker
+    let usage_tracker = UsageTracker::new(database.clone());
+
     // Create command handler
     let command_handler = CommandHandler::new(
         database,
@@ -38,6 +42,7 @@ async fn main() -> Result<()> {
         config.conflict_mediation_enabled,
         &config.conflict_sensitivity,
         config.mediation_cooldown_minutes,
+        usage_tracker,
     );
 
     info!("✅ Command handler initialized");

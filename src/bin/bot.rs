@@ -16,6 +16,7 @@ use persona::personas::PersonaManager;
 use persona::reminder_scheduler::ReminderScheduler;
 use persona::startup_notification::StartupNotifier;
 use persona::system_info::metrics_collection_loop;
+use persona::usage_tracker::UsageTracker;
 use persona::commands::{register_global_commands, register_guild_commands};
 use serenity::model::id::GuildId;
 
@@ -299,6 +300,7 @@ async fn main() -> Result<()> {
     info!("Starting Persona Discord Bot...");
 
     let database = Database::new(&config.database_path).await?;
+    let usage_tracker = UsageTracker::new(database.clone());
     let persona_manager = PersonaManager::new();
     let command_handler = CommandHandler::new(
         database.clone(),
@@ -307,6 +309,7 @@ async fn main() -> Result<()> {
         config.conflict_mediation_enabled,
         &config.conflict_sensitivity,
         config.mediation_cooldown_minutes,
+        usage_tracker.clone(),
     );
     let component_handler = MessageComponentHandler::new(
         command_handler.clone(),
@@ -342,7 +345,7 @@ async fn main() -> Result<()> {
     info!("Bot configured successfully. Connecting to Discord gateway...");
 
     // Start the reminder scheduler
-    let scheduler = ReminderScheduler::new(database.clone(), config.openai_model.clone());
+    let scheduler = ReminderScheduler::new(database.clone(), config.openai_model.clone(), usage_tracker);
     let http = client.cache_and_http.http.clone();
     tokio::spawn(async move {
         scheduler.run(http).await;

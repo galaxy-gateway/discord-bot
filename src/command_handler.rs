@@ -7,6 +7,7 @@ use crate::introspection::get_component_snippet;
 use crate::message_components::MessageComponentHandler;
 use crate::personas::PersonaManager;
 use crate::rate_limiter::RateLimiter;
+use crate::usage_tracker::UsageTracker;
 use crate::commands::slash::{get_string_option, get_channel_option, get_role_option, get_integer_option};
 use anyhow::Result;
 use log::{debug, error, info, warn};
@@ -31,6 +32,7 @@ pub struct CommandHandler {
     conflict_enabled: bool,
     conflict_sensitivity_threshold: f32,
     start_time: std::time::Instant,
+    usage_tracker: UsageTracker,
 }
 
 impl CommandHandler {
@@ -41,6 +43,7 @@ impl CommandHandler {
         conflict_enabled: bool,
         conflict_sensitivity: &str,
         mediation_cooldown_minutes: u64,
+        usage_tracker: UsageTracker,
     ) -> Self {
         // Map sensitivity to threshold
         let sensitivity_threshold = match conflict_sensitivity.to_lowercase().as_str() {
@@ -62,6 +65,7 @@ impl CommandHandler {
             conflict_enabled,
             conflict_sensitivity_threshold: sensitivity_threshold,
             start_time: std::time::Instant::now(),
+            usage_tracker,
         }
     }
 
@@ -268,7 +272,7 @@ impl CommandHandler {
 
         // Get AI response with conversation history
         info!("[{request_id}] 🚀 Calling OpenAI API for DM response");
-        match self.get_ai_response_with_id(&system_prompt, user_message, conversation_history, request_id).await {
+        match self.get_ai_response_with_context(&system_prompt, user_message, conversation_history, request_id, Some(&user_id), None, Some(&channel_id)).await {
             Ok(ai_response) => {
                 info!("[{}] ✅ OpenAI response received | Response length: {}",
                       request_id, ai_response.len());
@@ -398,7 +402,7 @@ impl CommandHandler {
 
         // Get AI response with conversation history
         info!("[{request_id}] 🚀 Calling OpenAI API for mention response");
-        match self.get_ai_response_with_id(&system_prompt, user_message, conversation_history, request_id).await {
+        match self.get_ai_response_with_context(&system_prompt, user_message, conversation_history, request_id, Some(&user_id), guild_id_opt, Some(&channel_id)).await {
             Ok(ai_response) => {
                 info!("[{}] ✅ OpenAI response received | Response length: {}",
                       request_id, ai_response.len());
@@ -593,6 +597,10 @@ impl CommandHandler {
             "sysinfo" => {
                 debug!("[{request_id}] 📊 Handling sysinfo command");
                 self.handle_slash_sysinfo(ctx, command, request_id).await?;
+            }
+            "usage" => {
+                debug!("[{request_id}] 💰 Handling usage command");
+                self.handle_slash_usage(ctx, command, request_id).await?;
             }
             _ => {
                 warn!("[{}] ❓ Unknown slash command: {}", request_id, command.data.name);
@@ -840,8 +848,10 @@ Use the buttons below for more help or to try custom prompts!"#;
         info!("[{request_id}] ✅ Interaction deferred successfully");
 
         // Get AI response and edit the message
+        let guild_id_str = command.guild_id.map(|id| id.to_string());
+        let channel_id_str = command.channel_id.to_string();
         info!("[{request_id}] 🚀 Calling OpenAI API");
-        match self.get_ai_response_with_id(&system_prompt, &user_message, Vec::new(), request_id).await {
+        match self.get_ai_response_with_context(&system_prompt, &user_message, Vec::new(), request_id, Some(&user_id), guild_id_str.as_deref(), Some(&channel_id_str)).await {
             Ok(ai_response) => {
                 let processing_time = start_time.elapsed();
                 info!("[{}] ✅ OpenAI response received | Processing time: {:?} | Response length: {}", 
@@ -1005,10 +1015,21 @@ Use the buttons below for more help or to try custom prompts!"#;
             })?;
 
         // Generate the image
-        match self.image_generator.generate_image(&prompt, size, style).await {
+        let channel_id_str = command.channel_id.to_string();
+        match self.image_generator.generate_image(&prompt, size.clone(), style).await {
             Ok(generated_image) => {
                 let generation_time = start_time.elapsed();
                 info!("[{request_id}] ✅ Image generated | Time: {generation_time:?}");
+
+                // Log DALL-E usage
+                self.usage_tracker.log_dalle(
+                    size.as_str(),
+                    "standard", // DALL-E 3 via this bot uses standard quality
+                    1,          // One image per request
+                    &user_id,
+                    guild_id_opt,
+                    Some(&channel_id_str),
+                );
 
                 // Download the image
                 match self.image_generator.download_image(&generated_image.url).await {
@@ -1395,10 +1416,25 @@ Use the buttons below for more help or to try custom prompts!"#;
     }
 
     pub async fn get_ai_response(&self, system_prompt: &str, user_message: &str) -> Result<String> {
-        self.get_ai_response_with_id(system_prompt, user_message, Vec::new(), Uuid::new_v4()).await
+        self.get_ai_response_with_context(system_prompt, user_message, Vec::new(), Uuid::new_v4(), None, None, None).await
     }
 
     pub async fn get_ai_response_with_id(&self, system_prompt: &str, user_message: &str, conversation_history: Vec<(String, String)>, request_id: Uuid) -> Result<String> {
+        self.get_ai_response_with_context(system_prompt, user_message, conversation_history, request_id, None, None, None).await
+    }
+
+    /// Get AI response with full context for usage tracking
+    #[allow(clippy::too_many_arguments)]
+    pub async fn get_ai_response_with_context(
+        &self,
+        system_prompt: &str,
+        user_message: &str,
+        conversation_history: Vec<(String, String)>,
+        request_id: Uuid,
+        user_id: Option<&str>,
+        guild_id: Option<&str>,
+        channel_id: Option<&str>,
+    ) -> Result<String> {
         let start_time = Instant::now();
 
         info!("[{}] 🤖 Starting OpenAI API request | Model: {} | History messages: {}", request_id, self.openai_model, conversation_history.len());
@@ -1470,9 +1506,25 @@ Use the buttons below for more help or to try custom prompts!"#;
         let elapsed = start_time.elapsed();
         info!("[{request_id}] ✅ OpenAI API response received after {elapsed:?}");
 
+        // Log usage if we have context
+        if let (Some(uid), Some(usage)) = (user_id, &chat_completion.usage) {
+            debug!("[{request_id}] 📊 Token usage - Prompt: {}, Completion: {}, Total: {}",
+                   usage.prompt_tokens, usage.completion_tokens, usage.total_tokens);
+            self.usage_tracker.log_chat(
+                &self.openai_model,
+                usage.prompt_tokens,
+                usage.completion_tokens,
+                usage.total_tokens,
+                uid,
+                guild_id,
+                channel_id,
+                Some(&request_id.to_string()),
+            );
+        }
+
         debug!("[{request_id}] 🔍 Parsing OpenAI API response");
         debug!("[{}] 📊 Response choices count: {}", request_id, chat_completion.choices.len());
-        
+
         let response = chat_completion
             .choices
             .first()
@@ -1483,8 +1535,8 @@ Use the buttons below for more help or to try custom prompts!"#;
             })?;
 
         let trimmed_response = response.trim().to_string();
-        info!("[{}] ✅ OpenAI response processed | Length: {} chars | First 100 chars: '{}'", 
-              request_id, trimmed_response.len(), 
+        info!("[{}] ✅ OpenAI response processed | Length: {} chars | First 100 chars: '{}'",
+              request_id, trimmed_response.len(),
               trimmed_response.chars().take(100).collect::<String>());
 
         Ok(trimmed_response)
@@ -1514,10 +1566,20 @@ Use the buttons below for more help or to try custom prompts!"#;
 
                 match self
                     .audio_transcriber
-                    .download_and_transcribe_attachment(&attachment.url, &attachment.filename)
+                    .download_and_transcribe_with_duration(&attachment.url, &attachment.filename)
                     .await
                 {
-                    Ok(transcription) => {
+                    Ok(result) => {
+                        let transcription = &result.text;
+
+                        // Log Whisper usage
+                        self.usage_tracker.log_whisper(
+                            result.duration_seconds,
+                            &user_id,
+                            guild_id_opt,
+                            Some(&msg.channel_id.to_string()),
+                        );
+
                         if transcription.trim().is_empty() {
                             msg.channel_id
                                 .say(&ctx.http, "I couldn't hear anything in that audio file.")
@@ -1701,7 +1763,7 @@ Use the buttons below for more help or to try custom prompts!"#;
 
             // Generate context-aware mediation response using OpenAI
             info!("🤖 Generating context-aware mediation response with OpenAI...");
-            let mediation_text = match self.generate_mediation_response(&recent_messages, &conflict_type, confidence).await {
+            let mediation_text = match self.generate_mediation_response(&recent_messages, &conflict_type, confidence, guild_id, channel_id).await {
                 Ok(response) => {
                     info!("✅ OpenAI mediation response generated successfully");
                     response
@@ -2476,8 +2538,22 @@ Use the buttons below for more help or to try custom prompts!"#;
         .create()
         .await;
 
+        let channel_id_str = command.channel_id.to_string();
         let response = match chat_completion {
             Ok(completion) => {
+                // Log usage if available
+                if let Some(usage) = &completion.usage {
+                    self.usage_tracker.log_chat(
+                        &self.openai_model,
+                        usage.prompt_tokens,
+                        usage.completion_tokens,
+                        usage.total_tokens,
+                        &user_id,
+                        guild_id.as_deref(),
+                        Some(&channel_id_str),
+                        Some(&request_id.to_string()),
+                    );
+                }
                 completion
                     .choices
                     .first()
@@ -2799,12 +2875,163 @@ Use the buttons below for more help or to try custom prompts!"#;
         Ok(())
     }
 
+    /// Handle the /usage slash command - displays OpenAI API usage and cost metrics
+    async fn handle_slash_usage(
+        &self,
+        ctx: &Context,
+        command: &ApplicationCommandInteraction,
+        request_id: Uuid,
+    ) -> Result<()> {
+        let user_id = command.user.id.to_string();
+        let guild_id = command.guild_id.map(|id| id.to_string());
+
+        // Get the scope option (defaults to "personal_today")
+        let scope = get_string_option(&command.data.options, "scope")
+            .unwrap_or_else(|| "personal_today".to_string());
+
+        info!("[{request_id}] 💰 Usage requested: scope={scope}");
+
+        // Defer response since querying can take a moment
+        command
+            .create_interaction_response(&ctx.http, |response| {
+                response.kind(serenity::model::application::interaction::InteractionResponseType::DeferredChannelMessageWithSource)
+            })
+            .await?;
+
+        let response = match scope.as_str() {
+            "personal_today" => {
+                let stats = self.database.get_user_usage_stats(&user_id, 1).await?;
+                Self::format_usage_stats("Your Usage Today", &stats, None)
+            }
+            "personal_7d" => {
+                let stats = self.database.get_user_usage_stats(&user_id, 7).await?;
+                Self::format_usage_stats("Your Usage (7 days)", &stats, None)
+            }
+            "server_today" => {
+                if let Some(gid) = &guild_id {
+                    let stats = self.database.get_guild_usage_stats(gid, 1).await?;
+                    Self::format_usage_stats("Server Usage Today", &stats, None)
+                } else {
+                    "Server usage is only available in guild channels.".to_string()
+                }
+            }
+            "server_7d" => {
+                if let Some(gid) = &guild_id {
+                    let stats = self.database.get_guild_usage_stats(gid, 7).await?;
+                    Self::format_usage_stats("Server Usage (7 days)", &stats, None)
+                } else {
+                    "Server usage is only available in guild channels.".to_string()
+                }
+            }
+            "top_users" => {
+                if let Some(gid) = &guild_id {
+                    let top_users = self.database.get_guild_top_users_by_cost(gid, 7, 10).await?;
+                    Self::format_top_users("Top Users by Cost (7 days)", &top_users)
+                } else {
+                    "Top users is only available in guild channels.".to_string()
+                }
+            }
+            _ => "Invalid scope. Please select a valid option.".to_string(),
+        };
+
+        // Edit the deferred response
+        command
+            .edit_original_interaction_response(&ctx.http, |msg| {
+                msg.content(response)
+            })
+            .await?;
+
+        self.database.log_usage(&user_id, "usage", None).await?;
+        info!("[{request_id}] ✅ Usage command completed");
+        Ok(())
+    }
+
+    /// Format usage statistics into a Discord message
+    fn format_usage_stats(
+        title: &str,
+        stats: &[(String, i64, i64, f64, i64, f64)],
+        _extra_info: Option<&str>,
+    ) -> String {
+        if stats.is_empty() {
+            return format!("**{title}**\n\nNo usage recorded for this period.");
+        }
+
+        let mut total_requests: i64 = 0;
+        let mut total_tokens: i64 = 0;
+        let mut total_audio_secs: f64 = 0.0;
+        let mut total_images: i64 = 0;
+        let mut total_cost: f64 = 0.0;
+
+        let mut lines = vec![format!("**{title}**\n")];
+
+        for (service_type, requests, tokens, audio_secs, images, cost) in stats {
+            total_requests += requests;
+            total_cost += cost;
+
+            let details = match service_type.as_str() {
+                "chat" => {
+                    total_tokens += tokens;
+                    format!("**Chat (GPT)**: {} requests, {} tokens, ${:.4}", requests, tokens, cost)
+                }
+                "whisper" => {
+                    total_audio_secs += audio_secs;
+                    let mins = audio_secs / 60.0;
+                    format!("**Audio (Whisper)**: {} requests, {:.1} minutes, ${:.4}", requests, mins, cost)
+                }
+                "dalle" => {
+                    total_images += images;
+                    format!("**Images (DALL-E)**: {} requests, {} images, ${:.4}", requests, images, cost)
+                }
+                _ => format!("**{}**: {} requests, ${:.4}", service_type, requests, cost),
+            };
+            lines.push(details);
+        }
+
+        lines.push(String::new());
+        lines.push(format!("**Total**: {} requests, ${:.4} estimated cost", total_requests, total_cost));
+
+        if total_tokens > 0 {
+            lines.push(format!("📝 {} total tokens", total_tokens));
+        }
+        if total_audio_secs > 0.0 {
+            lines.push(format!("🎤 {:.1} minutes transcribed", total_audio_secs / 60.0));
+        }
+        if total_images > 0 {
+            lines.push(format!("🎨 {} images generated", total_images));
+        }
+
+        lines.join("\n")
+    }
+
+    /// Format top users list into a Discord message
+    fn format_top_users(title: &str, top_users: &[(String, i64, f64)]) -> String {
+        if top_users.is_empty() {
+            return format!("**{title}**\n\nNo usage recorded for this period.");
+        }
+
+        let mut lines = vec![format!("**{title}**\n")];
+
+        for (i, (user_id, requests, cost)) in top_users.iter().enumerate() {
+            let medal = match i {
+                0 => "🥇",
+                1 => "🥈",
+                2 => "🥉",
+                _ => "  ",
+            };
+            lines.push(format!("{} <@{}>: {} requests, ${:.4}", medal, user_id, requests, cost));
+        }
+
+        lines.join("\n")
+    }
+
     /// Generate a context-aware mediation response using OpenAI
     async fn generate_mediation_response(
         &self,
         messages: &[(String, String, String)], // (user_id, content, timestamp)
         conflict_type: &str,
         confidence: f32,
+        guild_id: Option<&str>,
+        channel_id: &str,
     ) -> Result<String> {
         // Build conversation context from recent messages
         let mut conversation_context = String::new();
@@ -2843,6 +3070,20 @@ Use the buttons below for more help or to try custom prompts!"#;
         ])
         .create()
         .await?;
+
+        // Log usage for mediation (system-initiated, no specific user)
+        if let Some(usage) = &chat_completion.usage {
+            self.usage_tracker.log_chat(
+                &self.openai_model,
+                usage.prompt_tokens,
+                usage.completion_tokens,
+                usage.total_tokens,
+                "system_mediation", // Special user_id for system-initiated requests
+                guild_id,
+                Some(channel_id),
+                None,
+            );
+        }
 
         let response = chat_completion
             .choices
