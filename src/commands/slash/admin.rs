@@ -1,4 +1,4 @@
-//! Admin slash commands: /introspect, /settings, /set_channel_verbosity, /set_guild_setting, /admin_role, /features, /toggle
+//! Admin slash commands: /introspect, /settings, /set_channel_verbosity, /set_guild_setting, /admin_role, /features, /toggle, /sysinfo
 
 use serenity::builder::CreateApplicationCommand;
 use serenity::model::application::command::CommandOptionType;
@@ -14,6 +14,7 @@ pub fn create_commands() -> Vec<CreateApplicationCommand> {
         create_admin_role_command(),
         create_features_command(),
         create_toggle_command(),
+        create_sysinfo_command(),
     ]
 }
 
@@ -152,6 +153,25 @@ fn create_toggle_command() -> CreateApplicationCommand {
                 .add_string_choice("Conflict Mediation", "conflict_mediation")
                 .add_string_choice("Image Generation", "image_generation")
                 .add_string_choice("Audio Transcription", "audio_transcription")
+        })
+        .to_owned()
+}
+
+/// Creates the sysinfo command (admin) - displays system diagnostics and metrics
+fn create_sysinfo_command() -> CreateApplicationCommand {
+    CreateApplicationCommand::default()
+        .name("sysinfo")
+        .description("Display system information, bot diagnostics, and resource history (Admin)")
+        .default_member_permissions(Permissions::MANAGE_GUILD)
+        .create_option(|option| {
+            option
+                .name("view")
+                .description("What information to display")
+                .kind(CommandOptionType::String)
+                .required(false)
+                .add_string_choice("Current Status", "current")
+                .add_string_choice("History (24h)", "history_24h")
+                .add_string_choice("History (7d)", "history_7d")
         })
         .to_owned()
 }

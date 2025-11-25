@@ -108,6 +108,14 @@ pub const FEATURES: &[Feature] = &[
         toggleable: false,
         description: "Server-wide configuration and defaults",
     },
+    Feature {
+        id: "system_info",
+        name: "System Information",
+        version: "1.0.0",
+        since: "0.3.0",
+        toggleable: false,
+        description: "System diagnostics and historical resource metrics tracking",
+    },
 ];
 
 /// Get all registered features
@@ -156,7 +164,7 @@ mod tests {
     fn test_get_features() {
         let features = get_features();
         assert!(!features.is_empty());
-        assert!(features.len() >= 8, "Should have at least 8 features");
+        assert!(features.len() >= 11, "Should have at least 11 features");
     }
 
     #[test]

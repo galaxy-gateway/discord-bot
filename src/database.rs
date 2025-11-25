@@ -860,6 +860,55 @@ impl Database {
         Ok(())
     }
 
+    // System Metrics Methods (for /sysinfo command)
+
+    /// Store a system metric snapshot (uses performance_metrics table)
+    pub async fn store_system_metric(&self, metric_type: &str, value: f64) -> Result<()> {
+        let conn = self.connection.lock().await;
+        let mut statement = conn.prepare(
+            "INSERT INTO performance_metrics (metric_type, value, unit, metadata) VALUES (?, ?, 'system', '')"
+        )?;
+        statement.bind((1, metric_type))?;
+        statement.bind((2, value))?;
+        statement.next()?;
+        Ok(())
+    }
+
+    /// Get historical metrics data for a specific metric type
+    /// Returns (unix_timestamp, value) pairs ordered by time ascending
+    pub async fn get_metrics_history(&self, metric_type: &str, hours: i64) -> Result<Vec<(i64, f64)>> {
+        let conn = self.connection.lock().await;
+        let mut statement = conn.prepare(
+            "SELECT strftime('%s', timestamp) as unix_time, value
+             FROM performance_metrics
+             WHERE metric_type = ? AND timestamp >= datetime('now', ? || ' hours')
+             ORDER BY timestamp ASC"
+        )?;
+        statement.bind((1, metric_type))?;
+        statement.bind((2, format!("-{}", hours).as_str()))?;
+
+        let mut results = Vec::new();
+        while let Ok(State::Row) = statement.next() {
+            let timestamp_str = statement.read::<String, _>(0)?;
+            let timestamp = timestamp_str.parse::<i64>().unwrap_or(0);
+            let value = statement.read::<f64, _>(1)?;
+            results.push((timestamp, value));
+        }
+        Ok(results)
+    }
+
+    /// Cleanup old metrics data (keep last N days)
+    pub async fn cleanup_old_metrics(&self, days: i64) -> Result<()> {
+        let conn = self.connection.lock().await;
+        let mut statement = conn.prepare(
+            "DELETE FROM performance_metrics WHERE unit = 'system' AND timestamp < datetime('now', ? || ' days')"
+        )?;
+        statement.bind((1, format!("-{}", days).as_str()))?;
+        statement.next()?;
+        info!("Cleaned up system metrics older than {} days", days);
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub async fn log_error(
         &self,

@@ -1,6 +1,6 @@
 [package]
 name = "persona"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -30,4 +30,6 @@ uuid = { version = "1.0", features = ["v4"] }
 regex = "1.12.2"
 rand = "0.9.2"
 reqwest = { version = "0.12", features = ["json"] }
+sysinfo = { version = "0.32", default-features = false, features = ["system", "disk"] }
+rustc_version_runtime = "0.3"
 

@@ -588,6 +588,10 @@ impl CommandHandler {
                 debug!("[{request_id}] 🔀 Handling toggle command");
                 self.handle_slash_toggle(ctx, command, request_id).await?;
             }
+            "sysinfo" => {
+                debug!("[{request_id}] 📊 Handling sysinfo command");
+                self.handle_slash_sysinfo(ctx, command, request_id).await?;
+            }
             _ => {
                 warn!("[{}] ❓ Unknown slash command: {}", request_id, command.data.name);
                 debug!("[{request_id}] 📤 Sending unknown command response to Discord");
@@ -2651,6 +2655,87 @@ Use the buttons below for more help or to try custom prompts!"#;
 
         self.database.log_usage(&user_id, "toggle", None).await?;
         info!("[{request_id}] ✅ Toggle command completed: {feature_id} -> {new_enabled}");
+        Ok(())
+    }
+
+    /// Handle the /sysinfo slash command - displays system diagnostics and metrics history
+    async fn handle_slash_sysinfo(
+        &self,
+        ctx: &Context,
+        command: &ApplicationCommandInteraction,
+        request_id: Uuid,
+    ) -> Result<()> {
+        use crate::system_info::{CurrentMetrics, HistoricalSummary, format_history};
+
+        let user_id = command.user.id.to_string();
+
+        // Get the view option (defaults to "current")
+        let view = get_string_option(&command.data.options, "view")
+            .unwrap_or_else(|| "current".to_string());
+
+        info!("[{request_id}] 📊 Sysinfo requested: view={view}");
+
+        // Defer response since gathering metrics can take a moment
+        command
+            .create_interaction_response(&ctx.http, |response| {
+                response.kind(serenity::model::application::interaction::InteractionResponseType::DeferredChannelMessageWithSource)
+            })
+            .await?;
+
+        let response = match view.as_str() {
+            "history_24h" | "history_7d" => {
+                let hours = if view == "history_24h" { 24 } else { 168 };
+                let period_label = if view == "history_24h" { "24h" } else { "7d" };
+
+                // Fetch historical data
+                let db_size_data = self.database.get_metrics_history("db_size_bytes", hours).await?;
+                let bot_memory_data = self.database.get_metrics_history("bot_memory_bytes", hours).await?;
+                let system_memory_data = self.database.get_metrics_history("system_memory_percent", hours).await?;
+                let system_cpu_data = self.database.get_metrics_history("system_cpu_percent", hours).await?;
+
+                // Build summaries
+                let db_size = HistoricalSummary::from_data(&db_size_data);
+                let bot_memory = HistoricalSummary::from_data(&bot_memory_data);
+                let system_memory = HistoricalSummary::from_data(&system_memory_data);
+                let system_cpu = HistoricalSummary::from_data(&system_cpu_data);
+
+                format_history(db_size, bot_memory, system_memory, system_cpu, period_label)
+            }
+            _ => {
+                // Default: current system info
+                // Create a new System instance and do two CPU refreshes for accuracy
+                let mut sys = sysinfo::System::new();
+                sys.refresh_cpu_usage();
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                sys.refresh_cpu_usage();
+                sys.refresh_memory();
+
+                // Refresh process info for bot memory
+                if let Ok(pid) = sysinfo::get_current_pid() {
+                    sys.refresh_processes_specifics(
+                        sysinfo::ProcessesToUpdate::Some(&[pid]),
+                        true,
+                        sysinfo::ProcessRefreshKind::new().with_memory()
+                    );
+                }
+
+                let db_path = std::env::var("DATABASE_PATH").unwrap_or_else(|_| "persona.db".to_string());
+                let metrics = CurrentMetrics::gather(&sys, &db_path);
+                let bot_uptime_secs = self.start_time.elapsed().as_secs();
+
+                metrics.format(bot_uptime_secs)
+            }
+        };
+
+        // Edit the deferred response
+        command
+            .edit_original_interaction_response(&ctx.http, |msg| {
+                msg.content(response)
+            })
+            .await?;
+
+        self.database.log_usage(&user_id, "sysinfo", None).await?;
+        info!("[{request_id}] ✅ Sysinfo command completed");
         Ok(())
     }
 

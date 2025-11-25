@@ -13,3 +13,4 @@ pub mod message_components;
 pub mod personas;
 pub mod rate_limiter;
 pub mod reminder_scheduler;
+pub mod system_info;

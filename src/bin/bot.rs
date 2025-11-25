@@ -14,6 +14,7 @@ use persona::database::Database;
 use persona::message_components::MessageComponentHandler;
 use persona::personas::PersonaManager;
 use persona::reminder_scheduler::ReminderScheduler;
+use persona::system_info::metrics_collection_loop;
 use persona::commands::{register_global_commands, register_guild_commands};
 use serenity::model::id::GuildId;
 
@@ -316,10 +317,17 @@ async fn main() -> Result<()> {
     info!("Bot configured successfully. Connecting to Discord gateway...");
 
     // Start the reminder scheduler
-    let scheduler = ReminderScheduler::new(database, config.openai_model.clone());
+    let scheduler = ReminderScheduler::new(database.clone(), config.openai_model.clone());
     let http = client.cache_and_http.http.clone();
     tokio::spawn(async move {
         scheduler.run(http).await;
+    });
+
+    // Start the system metrics collection task
+    let metrics_db = Arc::new(database);
+    let db_path = config.database_path.clone();
+    tokio::spawn(async move {
+        metrics_collection_loop(metrics_db, db_path).await;
     });
 
     // Log gateway connection attempt
