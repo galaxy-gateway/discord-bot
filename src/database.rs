@@ -2,11 +2,12 @@
 //!
 //! SQLite database layer with multi-bot support via bot_id column.
 //!
-//! - **Version**: 2.0.0
+//! - **Version**: 3.0.0
 //! - **Since**: 0.1.0
 //! - **Toggleable**: false
 //!
 //! ## Changelog
+//! - 3.0.0: Add startup session tables and methods for combined notifications
 //! - 2.0.0: Added bot_id parameter to all methods for multi-bot support
 //! - 1.0.0: Initial database implementation
 

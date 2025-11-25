@@ -3,11 +3,12 @@
 //! Multi-bot configuration system supporting both legacy single-bot environment variables
 //! and new YAML-based multi-bot configuration files.
 //!
-//! - **Version**: 2.0.0
+//! - **Version**: 2.1.0
 //! - **Since**: 0.1.0
 //! - **Toggleable**: false
 //!
 //! ## Changelog
+//! - 2.1.0: Add startup_notification_enabled per-bot toggle
 //! - 2.0.0: Multi-bot support with YAML configuration and BotConfig/MultiConfig structs
 //! - 1.0.0: Initial single-bot environment variable configuration
 
