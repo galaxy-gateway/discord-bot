@@ -1560,7 +1560,10 @@ Use the buttons below for more help or to try custom prompts!"#;
 
     fn is_audio_attachment(&self, filename: &str) -> bool {
         let audio_extensions = [
-            ".mp3", ".wav", ".m4a", ".flac", ".ogg", ".aac", ".wma", ".mp4", ".mov", ".avi"
+            // Whisper native formats
+            ".mp3", ".mp4", ".m4a", ".wav", ".webm", ".mpeg", ".mpga",
+            // Converted via ffmpeg
+            ".flac", ".ogg", ".aac", ".wma", ".mov", ".avi", ".mkv", ".opus", ".m4v",
         ];
 
         let filename_lower = filename.to_lowercase();

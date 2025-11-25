@@ -71,10 +71,10 @@ pub const FEATURES: &[Feature] = &[
     Feature {
         id: "audio_transcription",
         name: "Audio Transcription",
-        version: "1.1.0",
+        version: "1.2.0",
         since: "0.1.0",
         toggleable: true,
-        description: "Whisper-powered transcription with configurable trigger modes",
+        description: "Whisper-powered transcription with ffmpeg format conversion",
     },
     Feature {
         id: "introspection",

@@ -10,21 +10,36 @@ The bot can automatically transcribe audio and video file attachments using Open
 
 - **OpenAI API Key** - Must be set via `OPENAI_API_KEY` environment variable
 - **curl** - System command used for downloading files and API calls
+- **ffmpeg** - Required for converting non-native formats (install with: `apt install ffmpeg`)
 - **Write access to `/tmp/`** - Temporary storage for downloaded files
 
 ## Supported Formats
 
-The following file extensions are supported:
+The bot supports 16 audio/video formats. Formats not natively supported by OpenAI Whisper are automatically converted to mp3 via ffmpeg.
 
-| Audio | Video |
-|-------|-------|
-| `.mp3` | `.mp4` |
-| `.wav` | `.mov` |
-| `.m4a` | `.avi` |
-| `.flac` | |
-| `.ogg` | |
-| `.aac` | |
-| `.wma` | |
+### Native Formats (no conversion)
+| Format | Type |
+|--------|------|
+| `.mp3` | Audio |
+| `.mp4` | Video |
+| `.m4a` | Audio |
+| `.wav` | Audio |
+| `.webm` | Video |
+| `.mpeg` | Video |
+| `.mpga` | Audio |
+
+### Converted Formats (via ffmpeg)
+| Format | Type | Converted To |
+|--------|------|--------------|
+| `.flac` | Audio | mp3 |
+| `.ogg` | Audio | mp3 |
+| `.aac` | Audio | mp3 |
+| `.wma` | Audio | mp3 |
+| `.opus` | Audio | mp3 |
+| `.mov` | Video | mp3 |
+| `.avi` | Video | mp3 |
+| `.mkv` | Video | mp3 |
+| `.m4v` | Video | mp3 |
 
 ## How It Works
 
@@ -45,11 +60,15 @@ Bot sends "🎵 Transcribing your audio..."
          ↓
 Download attachment to /tmp/discord_audio_{filename}
          ↓
+Check if format needs conversion
+         ↓ (if non-native format)
+Convert to mp3 via ffmpeg
+         ↓
 POST to OpenAI Whisper API (whisper-1 model)
          ↓
 Parse transcription from JSON response
          ↓
-Delete temp file
+Delete temp file(s)
          ↓
 Send "📝 **Transcription:** {text}" to channel
          ↓ (optional)

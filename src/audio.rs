@@ -1,20 +1,33 @@
 //! # Feature: Audio Transcription
 //!
-//! Whisper-powered transcription of audio attachments. Supports mp3, wav, m4a,
-//! flac, ogg, aac, wma, mp4, mov, and avi formats.
+//! Whisper-powered transcription of audio attachments with automatic format conversion.
+//! Supports a wide range of audio and video formats via ffmpeg conversion.
 //!
-//! - **Version**: 1.1.0
+//! - **Version**: 1.2.0
 //! - **Since**: 0.1.0
 //! - **Toggleable**: true
 //!
 //! ## Changelog
+//! - 1.2.0: Added ffmpeg conversion for broader format support
 //! - 1.1.0: Added configurable transcription modes (always/mention_only/disabled)
 //! - 1.0.0: Initial release with Whisper API integration
 
 use anyhow::Result;
-use log::{error, info};
+use log::{error, info, warn};
 use std::process::Command;
+use std::time::Instant;
 use tokio::fs;
+
+/// Formats that OpenAI Whisper supports natively (no conversion needed)
+const WHISPER_NATIVE_FORMATS: &[&str] = &[".mp3", ".mp4", ".m4a", ".wav", ".webm", ".mpeg", ".mpga"];
+
+/// All formats we accept (will convert if not native)
+const SUPPORTED_FORMATS: &[&str] = &[
+    // Whisper native
+    ".mp3", ".mp4", ".m4a", ".wav", ".webm", ".mpeg", ".mpga",
+    // Require conversion via ffmpeg
+    ".flac", ".ogg", ".aac", ".wma", ".mov", ".avi", ".mkv", ".opus", ".m4v",
+];
 
 #[derive(Clone)]
 pub struct AudioTranscriber {
@@ -50,7 +63,7 @@ impl AudioTranscriber {
         if output.status.success() {
             let response = String::from_utf8(output.stdout)?;
             let json: serde_json::Value = serde_json::from_str(&response)?;
-            
+
             if let Some(text) = json.get("text").and_then(|t| t.as_str()) {
                 info!("Transcription successful, length: {} characters", text.len());
                 Ok(text.to_string())
@@ -68,20 +81,78 @@ impl AudioTranscriber {
         }
     }
 
+    /// Check if file is a supported audio/video format
     fn is_audio_file(&self, file_path: &str) -> bool {
-        let audio_extensions = [
-            ".mp3", ".wav", ".m4a", ".flac", ".ogg", ".aac", ".wma", ".mp4", ".mov", ".avi"
-        ];
-        
         let file_path_lower = file_path.to_lowercase();
-        audio_extensions.iter().any(|ext| file_path_lower.ends_with(ext))
+        SUPPORTED_FORMATS.iter().any(|ext| file_path_lower.ends_with(ext))
+    }
+
+    /// Check if file format needs conversion before sending to Whisper
+    fn needs_conversion(&self, filename: &str) -> bool {
+        let lower = filename.to_lowercase();
+        !WHISPER_NATIVE_FORMATS.iter().any(|ext| lower.ends_with(ext))
+    }
+
+    /// Convert audio/video file to mp3 using ffmpeg
+    fn convert_to_mp3(&self, input_path: &str) -> Result<String> {
+        // Generate output path by replacing extension with .mp3
+        let output_path = if let Some(dot_pos) = input_path.rfind('.') {
+            format!("{}.mp3", &input_path[..dot_pos])
+        } else {
+            format!("{}.mp3", input_path)
+        };
+
+        info!("Converting {} to mp3 via ffmpeg", input_path);
+        let start = Instant::now();
+
+        let output = Command::new("ffmpeg")
+            .args([
+                "-i", input_path,
+                "-vn",              // No video output
+                "-acodec", "libmp3lame",
+                "-q:a", "2",        // High quality (VBR ~190kbps)
+                "-y",               // Overwrite output file
+                &output_path,
+            ])
+            .output()?;
+
+        let duration = start.elapsed();
+
+        if output.status.success() {
+            info!("FFmpeg conversion completed in {:?}", duration);
+            Ok(output_path)
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+
+            // Check if ffmpeg is not installed
+            if stderr.contains("not found") || stderr.contains("No such file") {
+                error!("FFmpeg not found. Install with: apt install ffmpeg");
+                return Err(anyhow::anyhow!(
+                    "FFmpeg is required for this format but not installed. Install with: apt install ffmpeg"
+                ));
+            }
+
+            error!("FFmpeg conversion failed: {}", stderr);
+            Err(anyhow::anyhow!("FFmpeg conversion failed: {}", stderr))
+        }
+    }
+
+    /// Check if ffmpeg is available on the system
+    pub fn is_ffmpeg_available() -> bool {
+        Command::new("ffmpeg")
+            .arg("-version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
     }
 
     pub async fn download_and_transcribe_attachment(&self, url: &str, filename: &str) -> Result<String> {
         let temp_file = format!("/tmp/discord_audio_{filename}");
-        
+        let mut converted_file: Option<String> = None;
+
         info!("Downloading audio attachment: {filename}");
-        
+
+        // Download the file
         let output = Command::new("curl")
             .args(["-o", &temp_file, url])
             .output()?;
@@ -90,10 +161,37 @@ impl AudioTranscriber {
             return Err(anyhow::anyhow!("Failed to download audio file"));
         }
 
-        let transcription = self.transcribe_file(&temp_file).await;
-        
+        // Check if conversion is needed
+        let file_to_transcribe = if self.needs_conversion(filename) {
+            info!("Format requires conversion: {}", filename);
+
+            match self.convert_to_mp3(&temp_file) {
+                Ok(mp3_path) => {
+                    converted_file = Some(mp3_path.clone());
+                    mp3_path
+                }
+                Err(e) => {
+                    // Cleanup original file before returning error
+                    let _ = fs::remove_file(&temp_file).await;
+                    return Err(e);
+                }
+            }
+        } else {
+            temp_file.clone()
+        };
+
+        // Transcribe the file
+        let transcription = self.transcribe_file(&file_to_transcribe).await;
+
+        // Cleanup temp files
         if let Err(e) = fs::remove_file(&temp_file).await {
-            error!("Failed to cleanup temp file {temp_file}: {e}");
+            warn!("Failed to cleanup temp file {temp_file}: {e}");
+        }
+
+        if let Some(ref converted) = converted_file {
+            if let Err(e) = fs::remove_file(converted).await {
+                warn!("Failed to cleanup converted file {converted}: {e}");
+            }
         }
 
         transcription
