@@ -444,6 +444,78 @@ impl Database {
              ON openai_usage_daily(user_id, date)",
         )?;
 
+        // DM Interaction Tracking Tables
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS dm_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT UNIQUE NOT NULL,
+                user_id TEXT NOT NULL,
+                channel_id TEXT NOT NULL,
+                started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                last_activity_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                ended_at DATETIME,
+                end_reason TEXT,
+                message_count INTEGER DEFAULT 0,
+                user_message_count INTEGER DEFAULT 0,
+                bot_message_count INTEGER DEFAULT 0,
+                total_user_chars INTEGER DEFAULT 0,
+                total_bot_chars INTEGER DEFAULT 0,
+                avg_response_time_ms INTEGER
+            )",
+        )?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_dm_sessions_user
+             ON dm_sessions(user_id, started_at DESC)",
+        )?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_dm_sessions_active
+             ON dm_sessions(session_id) WHERE ended_at IS NULL",
+        )?;
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS dm_session_metrics (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT UNIQUE NOT NULL,
+                total_api_calls INTEGER DEFAULT 0,
+                total_tokens INTEGER DEFAULT 0,
+                total_api_cost_usd REAL DEFAULT 0,
+                chat_calls INTEGER DEFAULT 0,
+                whisper_calls INTEGER DEFAULT 0,
+                dalle_calls INTEGER DEFAULT 0,
+                audio_transcriptions INTEGER DEFAULT 0,
+                slash_commands_used INTEGER DEFAULT 0,
+                conversation_depth INTEGER DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(session_id) REFERENCES dm_sessions(session_id)
+            )",
+        )?;
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS dm_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                channel_id TEXT NOT NULL,
+                event_data TEXT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(session_id) REFERENCES dm_sessions(session_id)
+            )",
+        )?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_dm_events_session
+             ON dm_events(session_id, timestamp)",
+        )?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_dm_events_type
+             ON dm_events(event_type, timestamp)",
+        )?;
+
         Ok(())
     }
 
@@ -1775,4 +1847,316 @@ impl Database {
         info!("Cleaned up openai_usage_daily older than {} days", days);
         Ok(())
     }
+
+    // DM Interaction Tracking Methods
+
+    /// Create a new DM session
+    pub async fn create_dm_session(&self, session_id: &str, user_id: &str, channel_id: &str) -> Result<()> {
+        let conn = self.connection.lock().await;
+        let mut statement = conn.prepare(
+            "INSERT INTO dm_sessions (session_id, user_id, channel_id) VALUES (?, ?, ?)"
+        )?;
+        statement.bind((1, session_id))?;
+        statement.bind((2, user_id))?;
+        statement.bind((3, channel_id))?;
+        statement.next()?;
+
+        // Also create metrics row
+        let mut metrics_stmt = conn.prepare(
+            "INSERT INTO dm_session_metrics (session_id) VALUES (?)"
+        )?;
+        metrics_stmt.bind((1, session_id))?;
+        metrics_stmt.next()?;
+
+        Ok(())
+    }
+
+    /// End a DM session
+    pub async fn end_dm_session(&self, session_id: &str, reason: &str) -> Result<()> {
+        let conn = self.connection.lock().await;
+        let mut statement = conn.prepare(
+            "UPDATE dm_sessions SET ended_at = CURRENT_TIMESTAMP, end_reason = ? WHERE session_id = ?"
+        )?;
+        statement.bind((1, reason))?;
+        statement.bind((2, session_id))?;
+        statement.next()?;
+        Ok(())
+    }
+
+    /// Update DM session activity
+    pub async fn update_dm_session_activity(
+        &self,
+        session_id: &str,
+        msg_count: i32,
+        user_chars: i32,
+        bot_chars: i32,
+        avg_response_time: i32,
+    ) -> Result<()> {
+        let conn = self.connection.lock().await;
+        let mut statement = conn.prepare(
+            "UPDATE dm_sessions
+             SET message_count = ?,
+                 total_user_chars = ?,
+                 total_bot_chars = ?,
+                 avg_response_time_ms = ?,
+                 last_activity_at = CURRENT_TIMESTAMP
+             WHERE session_id = ?"
+        )?;
+        statement.bind((1, msg_count as i64))?;
+        statement.bind((2, user_chars as i64))?;
+        statement.bind((3, bot_chars as i64))?;
+        statement.bind((4, avg_response_time as i64))?;
+        statement.bind((5, session_id))?;
+        statement.next()?;
+        Ok(())
+    }
+
+    /// Log a DM event
+    pub async fn log_dm_event(
+        &self,
+        session_id: &str,
+        event_type: &str,
+        user_id: &str,
+        channel_id: &str,
+        event_data: Option<&str>,
+    ) -> Result<()> {
+        let conn = self.connection.lock().await;
+        let mut statement = conn.prepare(
+            "INSERT INTO dm_events (session_id, event_type, user_id, channel_id, event_data)
+             VALUES (?, ?, ?, ?, ?)"
+        )?;
+        statement.bind((1, session_id))?;
+        statement.bind((2, event_type))?;
+        statement.bind((3, user_id))?;
+        statement.bind((4, channel_id))?;
+        statement.bind((5, event_data.unwrap_or("")))?;
+        statement.next()?;
+        Ok(())
+    }
+
+    /// Update DM session metrics
+    pub async fn update_dm_session_metrics(
+        &self,
+        session_id: &str,
+        api_type: &str,
+        tokens: u32,
+        cost: f64,
+    ) -> Result<()> {
+        let conn = self.connection.lock().await;
+
+        let (api_field, tokens_update) = match api_type {
+            "chat" => ("chat_calls = chat_calls + 1", format!("total_tokens = total_tokens + {}", tokens)),
+            "whisper" => ("whisper_calls = whisper_calls + 1", String::new()),
+            "dalle" => ("dalle_calls = dalle_calls + 1", String::new()),
+            _ => return Ok(()),
+        };
+
+        let sql = if tokens_update.is_empty() {
+            format!(
+                "UPDATE dm_session_metrics
+                 SET {},
+                     total_api_calls = total_api_calls + 1,
+                     total_api_cost_usd = total_api_cost_usd + ?,
+                     updated_at = CURRENT_TIMESTAMP
+                 WHERE session_id = ?",
+                api_field
+            )
+        } else {
+            format!(
+                "UPDATE dm_session_metrics
+                 SET {},
+                     {},
+                     total_api_calls = total_api_calls + 1,
+                     total_api_cost_usd = total_api_cost_usd + ?,
+                     updated_at = CURRENT_TIMESTAMP
+                 WHERE session_id = ?",
+                api_field, tokens_update
+            )
+        };
+
+        let mut statement = conn.prepare(&sql)?;
+        statement.bind((1, cost))?;
+        statement.bind((2, session_id))?;
+        statement.next()?;
+        Ok(())
+    }
+
+    /// Increment DM session feature counter
+    pub async fn increment_dm_session_feature(&self, session_id: &str, feature: &str) -> Result<()> {
+        let conn = self.connection.lock().await;
+
+        let field = match feature {
+            "audio" => "audio_transcriptions",
+            "slash_command" => "slash_commands_used",
+            _ => return Ok(()),
+        };
+
+        let sql = format!(
+            "UPDATE dm_session_metrics
+             SET {} = {} + 1, updated_at = CURRENT_TIMESTAMP
+             WHERE session_id = ?",
+            field, field
+        );
+
+        let mut statement = conn.prepare(&sql)?;
+        statement.bind((1, session_id))?;
+        statement.next()?;
+        Ok(())
+    }
+
+    /// Get user DM stats for the last N days
+    pub async fn get_user_dm_stats(&self, user_id: &str, days: i64) -> Result<DmStats> {
+        let conn = self.connection.lock().await;
+
+        // Get session counts and averages
+        let mut stmt = conn.prepare(
+            "SELECT
+                COUNT(*) as session_count,
+                SUM(message_count) as total_messages,
+                SUM(user_message_count) as user_messages,
+                SUM(bot_message_count) as bot_messages,
+                AVG(avg_response_time_ms) as avg_response_time,
+                AVG((julianday(ended_at) - julianday(started_at)) * 24 * 60) as avg_duration_min
+             FROM dm_sessions
+             WHERE user_id = ?
+             AND started_at >= datetime('now', ? || ' days')
+             AND ended_at IS NOT NULL"
+        )?;
+        stmt.bind((1, user_id))?;
+        stmt.bind((2, format!("-{}", days).as_str()))?;
+
+        let (session_count, total_messages, user_messages, bot_messages, avg_response_time, avg_duration) =
+            if let Ok(State::Row) = stmt.next() {
+                (
+                    stmt.read::<i64, _>(0).unwrap_or(0),
+                    stmt.read::<i64, _>(1).unwrap_or(0),
+                    stmt.read::<i64, _>(2).unwrap_or(0),
+                    stmt.read::<i64, _>(3).unwrap_or(0),
+                    stmt.read::<i64, _>(4).unwrap_or(0),
+                    stmt.read::<f64, _>(5).unwrap_or(0.0),
+                )
+            } else {
+                (0, 0, 0, 0, 0, 0.0)
+            };
+
+        // Get API metrics
+        let mut api_stmt = conn.prepare(
+            "SELECT
+                SUM(sm.total_api_calls) as api_calls,
+                SUM(sm.total_tokens) as tokens,
+                SUM(sm.total_api_cost_usd) as cost,
+                SUM(sm.chat_calls) as chat_calls,
+                SUM(sm.whisper_calls) as whisper_calls,
+                SUM(sm.dalle_calls) as dalle_calls,
+                SUM(sm.audio_transcriptions) as audio_count,
+                SUM(sm.slash_commands_used) as slash_count
+             FROM dm_session_metrics sm
+             JOIN dm_sessions s ON sm.session_id = s.session_id
+             WHERE s.user_id = ?
+             AND s.started_at >= datetime('now', ? || ' days')"
+        )?;
+        api_stmt.bind((1, user_id))?;
+        api_stmt.bind((2, format!("-{}", days).as_str()))?;
+
+        let (api_calls, tokens, cost, chat_calls, whisper_calls, dalle_calls, audio_count, slash_count) =
+            if let Ok(State::Row) = api_stmt.next() {
+                (
+                    api_stmt.read::<i64, _>(0).unwrap_or(0),
+                    api_stmt.read::<i64, _>(1).unwrap_or(0),
+                    api_stmt.read::<f64, _>(2).unwrap_or(0.0),
+                    api_stmt.read::<i64, _>(3).unwrap_or(0),
+                    api_stmt.read::<i64, _>(4).unwrap_or(0),
+                    api_stmt.read::<i64, _>(5).unwrap_or(0),
+                    api_stmt.read::<i64, _>(6).unwrap_or(0),
+                    api_stmt.read::<i64, _>(7).unwrap_or(0),
+                )
+            } else {
+                (0, 0, 0.0, 0, 0, 0, 0, 0)
+            };
+
+        Ok(DmStats {
+            session_count,
+            total_messages,
+            user_messages,
+            bot_messages,
+            avg_response_time_ms: avg_response_time,
+            avg_session_duration_min: avg_duration,
+            api_calls,
+            total_tokens: tokens,
+            total_cost_usd: cost,
+            chat_calls,
+            whisper_calls,
+            dalle_calls,
+            audio_transcriptions: audio_count,
+            slash_commands_used: slash_count,
+        })
+    }
+
+    /// Get user's recent DM sessions
+    pub async fn get_user_recent_sessions(&self, user_id: &str, limit: i64) -> Result<Vec<SessionInfo>> {
+        let conn = self.connection.lock().await;
+        let mut statement = conn.prepare(
+            "SELECT session_id, started_at, ended_at, message_count, avg_response_time_ms
+             FROM dm_sessions
+             WHERE user_id = ?
+             ORDER BY started_at DESC
+             LIMIT ?"
+        )?;
+        statement.bind((1, user_id))?;
+        statement.bind((2, limit))?;
+
+        let mut sessions = Vec::new();
+        while let Ok(State::Row) = statement.next() {
+            sessions.push(SessionInfo {
+                session_id: statement.read::<String, _>(0)?,
+                started_at: statement.read::<String, _>(1)?,
+                ended_at: statement.read::<Option<String>, _>(2)?,
+                message_count: statement.read::<i64, _>(3)?,
+                avg_response_time_ms: statement.read::<i64, _>(4).unwrap_or(0),
+            });
+        }
+
+        Ok(sessions)
+    }
+
+    /// Cleanup old DM events (keep last N days)
+    pub async fn cleanup_old_dm_events(&self, days: i64) -> Result<()> {
+        let conn = self.connection.lock().await;
+        let mut statement = conn.prepare(
+            "DELETE FROM dm_events WHERE timestamp < datetime('now', ? || ' days')"
+        )?;
+        statement.bind((1, format!("-{}", days).as_str()))?;
+        statement.next()?;
+        info!("Cleaned up dm_events older than {} days", days);
+        Ok(())
+    }
+}
+
+/// DM statistics for a user
+#[derive(Debug, Clone)]
+pub struct DmStats {
+    pub session_count: i64,
+    pub total_messages: i64,
+    pub user_messages: i64,
+    pub bot_messages: i64,
+    pub avg_response_time_ms: i64,
+    pub avg_session_duration_min: f64,
+    pub api_calls: i64,
+    pub total_tokens: i64,
+    pub total_cost_usd: f64,
+    pub chat_calls: i64,
+    pub whisper_calls: i64,
+    pub dalle_calls: i64,
+    pub audio_transcriptions: i64,
+    pub slash_commands_used: i64,
+}
+
+/// Session information
+#[derive(Debug, Clone)]
+pub struct SessionInfo {
+    pub session_id: String,
+    pub started_at: String,
+    pub ended_at: Option<String>,
+    pub message_count: i64,
+    pub avg_response_time_ms: i64,
 }

@@ -3,6 +3,7 @@ use crate::conflict_detector::ConflictDetector;
 use crate::image_gen::{ImageGenerator, ImageSize, ImageStyle};
 use crate::conflict_mediator::ConflictMediator;
 use crate::database::Database;
+use crate::interaction_tracker::InteractionTracker;
 use crate::introspection::get_component_snippet;
 use crate::message_components::MessageComponentHandler;
 use crate::personas::PersonaManager;
@@ -33,6 +34,7 @@ pub struct CommandHandler {
     conflict_sensitivity_threshold: f32,
     start_time: std::time::Instant,
     usage_tracker: UsageTracker,
+    interaction_tracker: InteractionTracker,
 }
 
 impl CommandHandler {
@@ -44,6 +46,7 @@ impl CommandHandler {
         conflict_sensitivity: &str,
         mediation_cooldown_minutes: u64,
         usage_tracker: UsageTracker,
+        interaction_tracker: InteractionTracker,
     ) -> Self {
         // Map sensitivity to threshold
         let sensitivity_threshold = match conflict_sensitivity.to_lowercase().as_str() {
@@ -66,6 +69,7 @@ impl CommandHandler {
             conflict_sensitivity_threshold: sensitivity_threshold,
             start_time: std::time::Instant::now(),
             usage_tracker,
+            interaction_tracker,
         }
     }
 
@@ -234,12 +238,27 @@ impl CommandHandler {
     }
 
     async fn handle_dm_message_with_id(&self, ctx: &Context, msg: &Message, request_id: Uuid) -> Result<()> {
+        let start_time = Instant::now();
         let user_id = msg.author.id.to_string();
         let channel_id = msg.channel_id.to_string();
         let user_message = msg.content.trim();
 
         debug!("[{}] 💬 Processing DM auto-response | User: {} | Message: '{}'",
                request_id, user_id, user_message.chars().take(100).collect::<String>());
+
+        // Get or create DM session
+        let session_id = self.interaction_tracker.get_or_create_session(&user_id, &channel_id);
+        debug!("[{request_id}] 📊 DM session: {session_id}");
+
+        // Track message received
+        self.interaction_tracker.track_message_received(
+            &session_id,
+            &user_id,
+            &channel_id,
+            &msg.id.to_string(),
+            user_message.len(),
+            !msg.attachments.is_empty(),
+        );
 
         // Get user's persona
         debug!("[{request_id}] 🎭 Fetching user persona from database");
@@ -272,7 +291,12 @@ impl CommandHandler {
 
         // Get AI response with conversation history
         info!("[{request_id}] 🚀 Calling OpenAI API for DM response");
-        match self.get_ai_response_with_context(&system_prompt, user_message, conversation_history, request_id, Some(&user_id), None, Some(&channel_id)).await {
+        let api_call_result = self.get_ai_response_with_context(&system_prompt, user_message, conversation_history, request_id, Some(&user_id), None, Some(&channel_id)).await;
+
+        // Track API call (estimate cost from usage tracker's pricing)
+        // This will be more accurate if we can access the actual usage data, but for now we'll track it after response
+
+        match api_call_result {
             Ok(ai_response) => {
                 info!("[{}] ✅ OpenAI response received | Response length: {}",
                       request_id, ai_response.len());
@@ -310,6 +334,18 @@ impl CommandHandler {
                 debug!("[{request_id}] 💾 Storing assistant response to conversation history");
                 self.database.store_message(&user_id, &channel_id, "assistant", &ai_response, Some(&user_persona)).await?;
                 debug!("[{request_id}] ✅ Assistant response stored successfully");
+
+                // Track message sent with response time
+                let response_time_ms = start_time.elapsed().as_millis() as u64;
+                self.interaction_tracker.track_message_sent(
+                    &session_id,
+                    &user_id,
+                    &channel_id,
+                    &request_id.to_string(),
+                    ai_response.len(),
+                    response_time_ms,
+                );
+                debug!("[{request_id}] 📊 Tracked message sent (response time: {}ms)", response_time_ms);
             }
             Err(e) => {
                 typing.stop();
@@ -601,6 +637,14 @@ impl CommandHandler {
             "usage" => {
                 debug!("[{request_id}] 💰 Handling usage command");
                 self.handle_slash_usage(ctx, command, request_id).await?;
+            }
+            "dm_stats" => {
+                debug!("[{request_id}] 📊 Handling dm_stats command");
+                self.handle_slash_dm_stats(ctx, command, request_id).await?;
+            }
+            "session_history" => {
+                debug!("[{request_id}] 📜 Handling session_history command");
+                self.handle_slash_session_history(ctx, command, request_id).await?;
             }
             _ => {
                 warn!("[{}] ❓ Unknown slash command: {}", request_id, command.data.name);
@@ -3092,5 +3136,185 @@ Use the buttons below for more help or to try custom prompts!"#;
             .unwrap_or_else(|| "I sense tension here. Perhaps a moment of calm reflection would serve us all well.".to_string());
 
         Ok(response)
+    }
+
+    /// Handle /dm_stats command
+    async fn handle_slash_dm_stats(
+        &self,
+        ctx: &Context,
+        command: &ApplicationCommandInteraction,
+        request_id: Uuid,
+    ) -> Result<()> {
+        let user_id = command.user.id.to_string();
+
+        // Get period option (default to week)
+        let period = get_string_option(&command.data.options, "period")
+            .unwrap_or_else(|| "week".to_string());
+
+        let days = match period.as_str() {
+            "today" => 1,
+            "week" => 7,
+            "month" => 30,
+            "all" => 36500, // ~100 years
+            _ => 7,
+        };
+
+        let period_display = match period.as_str() {
+            "today" => "Today",
+            "week" => "This Week",
+            "month" => "This Month",
+            "all" => "All Time",
+            _ => "This Week",
+        };
+
+        debug!("[{request_id}] Fetching DM stats for user {} (period: {}, days: {})", user_id, period, days);
+
+        match self.database.get_user_dm_stats(&user_id, days).await {
+            Ok(stats) => {
+                let response = if stats.session_count == 0 {
+                    format!("You don't have any DM sessions recorded for {}.", period_display.to_lowercase())
+                } else {
+                    // Format duration
+                    let duration_str = if stats.avg_session_duration_min < 1.0 {
+                        format!("{:.0}s", stats.avg_session_duration_min * 60.0)
+                    } else {
+                        format!("{:.1}m", stats.avg_session_duration_min)
+                    };
+
+                    // Format response time
+                    let response_time_str = if stats.avg_response_time_ms < 1000 {
+                        format!("{}ms", stats.avg_response_time_ms)
+                    } else {
+                        format!("{:.1}s", stats.avg_response_time_ms as f64 / 1000.0)
+                    };
+
+                    format!(
+                        "**Your DM Statistics ({})**\n\n\
+                        Sessions: {} conversations\n\
+                        Messages: {} sent, {} received\n\
+                        Avg Session: {}\n\
+                        Avg Response Time: {}\n\n\
+                        **API Usage**\n\
+                        Chat: {} calls, {}K tokens\n\
+                        Audio: {} transcriptions\n\
+                        Total Cost: ${:.4}\n\n\
+                        **Feature Usage**\n\
+                        Slash Commands: {}",
+                        period_display,
+                        stats.session_count,
+                        stats.user_messages,
+                        stats.bot_messages,
+                        duration_str,
+                        response_time_str,
+                        stats.chat_calls,
+                        stats.total_tokens / 1000,
+                        stats.whisper_calls,
+                        stats.total_cost_usd,
+                        stats.slash_commands_used
+                    )
+                };
+
+                command
+                    .create_interaction_response(&ctx.http, |r| {
+                        r
+                            .kind(serenity::model::application::interaction::InteractionResponseType::ChannelMessageWithSource)
+                            .interaction_response_data(|message| {
+                                message.content(&response).ephemeral(true)
+                            })
+                    })
+                    .await?;
+            }
+            Err(e) => {
+                error!("[{request_id}] Error fetching DM stats: {e}");
+                command
+                    .create_interaction_response(&ctx.http, |r| {
+                        r
+                            .kind(serenity::model::application::interaction::InteractionResponseType::ChannelMessageWithSource)
+                            .interaction_response_data(|message| {
+                                message
+                                    .content("Failed to fetch DM statistics. Please try again later.")
+                                    .ephemeral(true)
+                            })
+                    })
+                    .await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Handle /session_history command
+    async fn handle_slash_session_history(
+        &self,
+        ctx: &Context,
+        command: &ApplicationCommandInteraction,
+        request_id: Uuid,
+    ) -> Result<()> {
+        let user_id = command.user.id.to_string();
+        let limit = get_integer_option(&command.data.options, "limit").unwrap_or(5);
+
+        debug!("[{request_id}] Fetching session history for user {} (limit: {})", user_id, limit);
+
+        match self.database.get_user_recent_sessions(&user_id, limit).await {
+            Ok(sessions) => {
+                let resp_text = if sessions.is_empty() {
+                    "You don't have any DM sessions recorded yet.".to_string()
+                } else {
+                    let mut output = format!("**Your Recent DM Sessions ({} most recent)**\n\n", sessions.len());
+
+                    for (idx, session) in sessions.iter().enumerate() {
+                        let status = if session.ended_at.is_some() {
+                            "Ended"
+                        } else {
+                            "Active"
+                        };
+
+                        let started = session.started_at.split('T').next().unwrap_or(&session.started_at);
+                        let response_time = if session.avg_response_time_ms < 1000 {
+                            format!("{}ms", session.avg_response_time_ms)
+                        } else {
+                            format!("{:.1}s", session.avg_response_time_ms as f64 / 1000.0)
+                        };
+
+                        output.push_str(&format!(
+                            "{}. {} | {} messages | Avg response: {} | {}\n",
+                            idx + 1,
+                            started,
+                            session.message_count,
+                            response_time,
+                            status
+                        ));
+                    }
+
+                    output
+                };
+
+                command
+                    .create_interaction_response(&ctx.http, |r| {
+                        r
+                            .kind(serenity::model::application::interaction::InteractionResponseType::ChannelMessageWithSource)
+                            .interaction_response_data(|message| {
+                                message.content(&resp_text).ephemeral(true)
+                            })
+                    })
+                    .await?;
+            }
+            Err(e) => {
+                error!("[{request_id}] Error fetching session history: {e}");
+                command
+                    .create_interaction_response(&ctx.http, |r| {
+                        r
+                            .kind(serenity::model::application::interaction::InteractionResponseType::ChannelMessageWithSource)
+                            .interaction_response_data(|message| {
+                                message
+                                    .content("Failed to fetch session history. Please try again later.")
+                                    .ephemeral(true)
+                            })
+                    })
+                    .await?;
+            }
+        }
+
+        Ok(())
     }
 }

@@ -11,6 +11,7 @@ use std::sync::Arc;
 use persona::commands::CommandHandler;
 use persona::config::Config;
 use persona::database::Database;
+use persona::interaction_tracker::InteractionTracker;
 use persona::message_components::MessageComponentHandler;
 use persona::personas::PersonaManager;
 use persona::reminder_scheduler::ReminderScheduler;
@@ -301,6 +302,7 @@ async fn main() -> Result<()> {
 
     let database = Database::new(&config.database_path).await?;
     let usage_tracker = UsageTracker::new(database.clone());
+    let interaction_tracker = InteractionTracker::new(database.clone());
     let persona_manager = PersonaManager::new();
     let command_handler = CommandHandler::new(
         database.clone(),
@@ -310,6 +312,7 @@ async fn main() -> Result<()> {
         &config.conflict_sensitivity,
         config.mediation_cooldown_minutes,
         usage_tracker.clone(),
+        interaction_tracker,
     );
     let component_handler = MessageComponentHandler::new(
         command_handler.clone(),

@@ -12,6 +12,7 @@
 mod admin;
 mod chat;
 mod context_menu;
+mod dm_stats;
 mod imagine;
 mod persona;
 mod recipe;
@@ -50,6 +51,9 @@ pub fn create_slash_commands() -> Vec<CreateApplicationCommand> {
 
     // Admin commands
     commands.extend(admin::create_commands());
+
+    // DM statistics commands
+    commands.extend(dm_stats::create_commands());
 
     commands
 }

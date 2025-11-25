@@ -132,6 +132,14 @@ pub const FEATURES: &[Feature] = &[
         toggleable: false,
         description: "OpenAI API usage and cost tracking with /usage command",
     },
+    Feature {
+        id: "dm_interaction_tracking",
+        name: "DM Interaction Tracking",
+        version: "1.0.0",
+        since: "0.6.0",
+        toggleable: false,
+        description: "Comprehensive DM session and engagement metrics with user-facing analytics",
+    },
 ];
 
 /// Get all registered features
