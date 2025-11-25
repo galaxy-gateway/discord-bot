@@ -1,0 +1,84 @@
+# Multi-Bot Configuration Example
+# ================================
+#
+# This file demonstrates the multi-bot configuration format for the persona bot.
+# Copy this file to config.yaml and customize for your deployment.
+#
+# Environment Variable Interpolation:
+#   - Use ${VAR_NAME} to substitute environment variables
+#   - Use ${VAR_NAME:-default} to provide a default value if VAR_NAME is not set
+#
+# Loading Priority:
+#   1. CONFIG_FILE environment variable (explicit path)
+#   2. config.yaml in current directory
+#   3. Legacy environment variables (DISCORD_MUPPET_FRIEND, etc.)
+
+# =============================================================================
+# Bot Configurations
+# =============================================================================
+# Each bot represents a separate Discord application with its own token.
+# All bots share the same database (isolated by bot_id) and OpenAI API key.
+
+bots:
+  # Muppet Friend Bot - Chaotic, energetic personality
+  - name: "muppet"
+    discord_token: "${DISCORD_MUPPET_TOKEN}"
+    discord_public_key: "${DISCORD_MUPPET_PUBLIC_KEY:-}"  # Optional, for HTTP mode
+    default_persona: "muppet"
+    # discord_guild_id: "123456789"  # Optional: Dev guild for faster command registration
+    # openai_model: "gpt-4o"         # Optional: Override global model
+
+  # Chef Bot - Culinary-focused personality
+  - name: "chef"
+    discord_token: "${DISCORD_CHEF_TOKEN}"
+    discord_public_key: "${DISCORD_CHEF_PUBLIC_KEY:-}"
+    default_persona: "chef"
+    conflict_mediation_enabled: false  # Chef doesn't mediate conflicts
+
+  # Teacher Bot - Educational, patient personality
+  - name: "teacher"
+    discord_token: "${DISCORD_TEACHER_TOKEN}"
+    default_persona: "teacher"
+    openai_model: "gpt-4o"  # Use more capable model for educational content
+    conflict_sensitivity: "low"  # Only intervene in severe conflicts
+
+  # Obi-Wan Bot - Wise, philosophical personality (default)
+  - name: "obi"
+    discord_token: "${DISCORD_OBI_TOKEN}"
+    default_persona: "obi"
+    conflict_sensitivity: "high"  # Proactive peacekeeper
+    mediation_cooldown_minutes: 3  # Shorter cooldown for active mediation
+
+# =============================================================================
+# Shared Configuration
+# =============================================================================
+# These settings apply to all bots unless overridden per-bot.
+
+# OpenAI API key (shared across all bots)
+openai_api_key: "${OPENAI_API_KEY}"
+
+# Database path (all bots share one database, isolated by bot_id)
+database_path: "${DATABASE_PATH:-persona.db}"
+
+# Logging level: trace, debug, info, warn, error
+log_level: "${LOG_LEVEL:-info}"
+
+# Default OpenAI model (can be overridden per-bot)
+openai_model: "${OPENAI_MODEL:-gpt-4o-mini}"
+
+# =============================================================================
+# Conflict Mediation Settings (Global Defaults)
+# =============================================================================
+# These can be overridden per-bot in the bots section above.
+
+# Enable conflict mediation feature
+conflict_mediation_enabled: true
+
+# Sensitivity threshold: low, medium, high
+# - low: Only intervene in severe conflicts
+# - medium: Balanced intervention (recommended)
+# - high: Proactive peacekeeper
+conflict_sensitivity: "medium"
+
+# Cooldown between mediation attempts in the same channel (minutes)
+mediation_cooldown_minutes: 5
