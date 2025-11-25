@@ -232,6 +232,11 @@ impl EventHandler for Handler {
                                             .add_string_choice("mention_only - Only when @mentioned", "mention_only")
                                             .add_string_choice("disabled - Never transcribe", "disabled")
                                     }
+                                    "audio_transcription_output" => {
+                                        response
+                                            .add_string_choice("transcription_only - Just the transcription", "transcription_only")
+                                            .add_string_choice("with_commentary - Add AI commentary", "with_commentary")
+                                    }
                                     "mention_responses" => {
                                         response
                                             .add_string_choice("enabled - Respond when @mentioned", "enabled")

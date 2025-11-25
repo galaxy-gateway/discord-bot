@@ -3,11 +3,12 @@
 //! Whisper-powered transcription of audio attachments with automatic format conversion.
 //! Supports a wide range of audio and video formats via ffmpeg conversion.
 //!
-//! - **Version**: 1.2.0
+//! - **Version**: 1.3.0
 //! - **Since**: 0.1.0
 //! - **Toggleable**: true
 //!
 //! ## Changelog
+//! - 1.3.0: Fixed double-posting bug, added configurable output mode (transcription_only/with_commentary)
 //! - 1.2.0: Added ffmpeg conversion for broader format support
 //! - 1.1.0: Added configurable transcription modes (always/mention_only/disabled)
 //! - 1.0.0: Initial release with Whisper API integration

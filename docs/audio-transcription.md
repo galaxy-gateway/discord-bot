@@ -127,15 +127,29 @@ Control when audio files are transcribed:
 | `mention_only` | Only transcribe when bot is @mentioned (default) |
 | `disabled` | Never transcribe (same as disabling feature) |
 
+### Output Mode
+
+Control what the bot outputs after transcription:
+
+```
+/set_guild_setting setting:audio_transcription_output value:transcription_only
+```
+
+| Mode | Behavior |
+|------|----------|
+| `transcription_only` | Output only the transcription text (default) |
+| `with_commentary` | Generate AI commentary on transcription when user includes text |
+
 ### DM Behavior
 
-Audio transcription in Direct Messages always uses `always` mode - files are transcribed automatically without requiring a mention.
+Audio transcription in Direct Messages always uses `always` mode - files are transcribed automatically without requiring a mention. DMs always use `transcription_only` output mode.
 
 ### Setting Hierarchy
 
 1. Check `audio_transcription` feature flag (must be `enabled`)
 2. Check `audio_transcription_mode` setting
 3. Apply mode rules (or `always` for DMs)
+4. Check `audio_transcription_output` for response format
 
 ## Usage Examples
 

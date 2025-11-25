@@ -109,10 +109,12 @@ impl CommandHandler {
             _ => false, // "disabled" or unknown
         };
 
-        if !msg.attachments.is_empty() && should_transcribe {
+        let audio_handled = if !msg.attachments.is_empty() && should_transcribe {
             debug!("[{}] 🎵 Processing {} audio attachments (mode: {})", request_id, msg.attachments.len(), audio_mode);
-            self.handle_audio_attachments(ctx, msg).await?;
-        }
+            self.handle_audio_attachments(ctx, msg, guild_id_opt).await?
+        } else {
+            false
+        };
 
         let content = msg.content.trim();
         debug!("[{}] 🔍 Analyzing message content | Length: {} | Is DM: {} | Starts with command: {}",
@@ -142,10 +144,10 @@ impl CommandHandler {
         if content.starts_with('!') || content.starts_with('/') {
             info!("[{}] 🎯 Processing command: {}", request_id, content.split_whitespace().next().unwrap_or(""));
             self.handle_command_with_id(ctx, msg, request_id).await?;
-        } else if is_dm && !content.is_empty() {
+        } else if is_dm && !content.is_empty() && !audio_handled {
             info!("[{request_id}] 💬 Processing DM message (auto-response mode)");
             self.handle_dm_message_with_id(ctx, msg, request_id).await?;
-        } else if !is_dm && self.is_bot_mentioned(ctx, msg).await? && !content.is_empty() {
+        } else if !is_dm && !audio_handled && self.is_bot_mentioned(ctx, msg).await? && !content.is_empty() {
             // Check mention_responses guild setting
             let mention_enabled = if let Some(gid) = guild_id_opt {
                 self.database.get_guild_setting(gid, "mention_responses").await?
@@ -1488,13 +1490,24 @@ Use the buttons below for more help or to try custom prompts!"#;
         Ok(trimmed_response)
     }
 
-    async fn handle_audio_attachments(&self, ctx: &Context, msg: &Message) -> Result<()> {
+    /// Handle audio attachments, returns true if any audio was processed
+    async fn handle_audio_attachments(&self, ctx: &Context, msg: &Message, guild_id_opt: Option<&str>) -> Result<bool> {
         let user_id = msg.author.id.to_string();
-        
+        let mut audio_processed = false;
+
+        // Get output mode setting (transcription_only or with_commentary)
+        let output_mode = if let Some(gid) = guild_id_opt {
+            self.database.get_guild_setting(gid, "audio_transcription_output").await?
+                .unwrap_or_else(|| "transcription_only".to_string())
+        } else {
+            "transcription_only".to_string() // Default for DMs
+        };
+
         for attachment in &msg.attachments {
             if self.is_audio_attachment(&attachment.filename) {
                 info!("Processing audio attachment: {}", attachment.filename);
-                
+                audio_processed = true;
+
                 msg.channel_id
                     .say(&ctx.http, "🎵 Transcribing your audio... please wait!")
                     .await?;
@@ -1511,13 +1524,13 @@ Use the buttons below for more help or to try custom prompts!"#;
                                 .await?;
                         } else {
                             let response = format!("📝 **Transcription:**\n{transcription}");
-                            
+
                             if response.len() > 2000 {
                                 let chunks: Vec<&str> = response.as_bytes()
                                     .chunks(2000)
                                     .map(|chunk| std::str::from_utf8(chunk).unwrap_or(""))
                                     .collect();
-                                
+
                                 for chunk in chunks {
                                     if !chunk.trim().is_empty() {
                                         msg.channel_id.say(&ctx.http, chunk).await?;
@@ -1527,11 +1540,12 @@ Use the buttons below for more help or to try custom prompts!"#;
                                 msg.channel_id.say(&ctx.http, &response).await?;
                             }
 
-                            if !msg.content.trim().is_empty() {
+                            // Only generate AI commentary if output mode is "with_commentary"
+                            if output_mode == "with_commentary" && !msg.content.trim().is_empty() {
                                 let user_persona = self.database.get_user_persona(&user_id).await?;
                                 let system_prompt = self.persona_manager.get_system_prompt(&user_persona, None);
                                 let combined_message = format!("Based on this transcription: '{}', {}", transcription, msg.content);
-                                
+
                                 match self.get_ai_response(&system_prompt, &combined_message).await {
                                     Ok(ai_response) => {
                                         msg.channel_id.say(&ctx.http, &ai_response).await?;
@@ -1542,7 +1556,7 @@ Use the buttons below for more help or to try custom prompts!"#;
                                 }
                             }
                         }
-                        
+
                         self.database.log_usage(&user_id, "audio_transcription", None).await?;
                     }
                     Err(e) => {
@@ -1554,8 +1568,8 @@ Use the buttons below for more help or to try custom prompts!"#;
                 }
             }
         }
-        
-        Ok(())
+
+        Ok(audio_processed)
     }
 
     fn is_audio_attachment(&self, filename: &str) -> bool {
@@ -1888,6 +1902,13 @@ Use the buttons below for more help or to try custom prompts!"#;
                     (false, "Invalid mode. Use: `always`, `mention_only`, or `disabled`.")
                 }
             }
+            "audio_transcription_output" => {
+                if ["transcription_only", "with_commentary"].contains(&value.as_str()) {
+                    (true, "")
+                } else {
+                    (false, "Invalid mode. Use: `transcription_only` or `with_commentary`.")
+                }
+            }
             "mention_responses" => {
                 if ["enabled", "disabled"].contains(&value.as_str()) {
                     (true, "")
@@ -1976,6 +1997,8 @@ Use the buttons below for more help or to try custom prompts!"#;
             .unwrap_or_else(|| "enabled".to_string());
         let guild_audio_mode = self.database.get_guild_setting(&guild_id, "audio_transcription_mode").await?
             .unwrap_or_else(|| "mention_only".to_string());
+        let guild_audio_output = self.database.get_guild_setting(&guild_id, "audio_transcription_output").await?
+            .unwrap_or_else(|| "transcription_only".to_string());
         let guild_mention_responses = self.database.get_guild_setting(&guild_id, "mention_responses").await?
             .unwrap_or_else(|| "enabled".to_string());
 
@@ -2000,6 +2023,7 @@ Use the buttons below for more help or to try custom prompts!"#;
             • Max Context Messages: `{}`\n\
             • Audio Transcription: `{}`\n\
             • Audio Transcription Mode: `{}`\n\
+            • Audio Transcription Output: `{}`\n\
             • Mention Responses: `{}`\n\
             • Bot Admin Role: {}\n",
             channel_id,
@@ -2013,6 +2037,7 @@ Use the buttons below for more help or to try custom prompts!"#;
             guild_max_context,
             guild_audio_transcription,
             guild_audio_mode,
+            guild_audio_output,
             guild_mention_responses,
             admin_role_display
         );

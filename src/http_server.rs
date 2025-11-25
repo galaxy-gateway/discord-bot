@@ -389,6 +389,10 @@ async fn handle_autocomplete(
                     {"name": "mention_only - Only when @mentioned", "value": "mention_only"},
                     {"name": "disabled - Never transcribe", "value": "disabled"}
                 ]),
+                "audio_transcription_output" => json!([
+                    {"name": "transcription_only - Just the transcription", "value": "transcription_only"},
+                    {"name": "with_commentary - Add AI commentary", "value": "with_commentary"}
+                ]),
                 "mention_responses" => json!([
                     {"name": "enabled - Respond when @mentioned", "value": "enabled"},
                     {"name": "disabled - Ignore mentions", "value": "disabled"}
