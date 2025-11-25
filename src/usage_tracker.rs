@@ -10,7 +10,7 @@
 //! ## Changelog
 //! - 1.0.0: Initial release with async background logging
 
-use crate::database::Database;
+use crate::database::{Database, DEFAULT_BOT_ID};
 use log::{debug, error, warn};
 use tokio::sync::mpsc;
 
@@ -123,17 +123,29 @@ pub enum UsageEvent {
 #[derive(Clone)]
 pub struct UsageTracker {
     sender: mpsc::UnboundedSender<UsageEvent>,
+    bot_id: String,
 }
 
 impl UsageTracker {
     /// Create a new UsageTracker with a background logging task
     pub fn new(database: Database) -> Self {
+        Self::with_bot_id(DEFAULT_BOT_ID.to_string(), database)
+    }
+
+    /// Create a new UsageTracker with a specific bot_id
+    pub fn with_bot_id(bot_id: String, database: Database) -> Self {
         let (sender, receiver) = mpsc::unbounded_channel();
 
         // Spawn background task for non-blocking writes
-        tokio::spawn(Self::background_logger(database, receiver));
+        let bot_id_clone = bot_id.clone();
+        tokio::spawn(Self::background_logger(database, receiver, bot_id_clone));
 
-        UsageTracker { sender }
+        UsageTracker { sender, bot_id }
+    }
+
+    /// Get the bot_id
+    pub fn bot_id(&self) -> &str {
+        &self.bot_id
     }
 
     /// Log a ChatCompletion usage event (non-blocking)
@@ -212,16 +224,17 @@ impl UsageTracker {
     async fn background_logger(
         database: Database,
         mut receiver: mpsc::UnboundedReceiver<UsageEvent>,
+        bot_id: String,
     ) {
         while let Some(event) = receiver.recv().await {
-            if let Err(e) = Self::store_event(&database, &event).await {
+            if let Err(e) = Self::store_event(&database, &event, &bot_id).await {
                 error!("Failed to store usage event: {e}");
             }
         }
     }
 
     /// Store a usage event in the database
-    async fn store_event(database: &Database, event: &UsageEvent) -> anyhow::Result<()> {
+    async fn store_event(database: &Database, event: &UsageEvent, bot_id: &str) -> anyhow::Result<()> {
         match event {
             UsageEvent::Chat {
                 model,
@@ -237,6 +250,7 @@ impl UsageTracker {
 
                 database
                     .log_openai_chat_usage(
+                        bot_id,
                         model,
                         *input_tokens,
                         *output_tokens,
@@ -264,6 +278,7 @@ impl UsageTracker {
 
                 database
                     .log_openai_whisper_usage(
+                        bot_id,
                         *audio_duration_seconds,
                         cost,
                         user_id,
@@ -289,6 +304,7 @@ impl UsageTracker {
 
                 database
                     .log_openai_dalle_usage(
+                        bot_id,
                         size,
                         *image_count,
                         cost,

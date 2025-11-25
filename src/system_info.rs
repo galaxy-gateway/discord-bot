@@ -15,7 +15,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 use log::{info, warn, debug};
-use crate::database::Database;
+use crate::database::{Database, DEFAULT_BOT_ID};
 
 /// Information about a disk/mount point
 pub struct DiskInfo {
@@ -327,6 +327,11 @@ pub fn format_duration(total_secs: u64) -> String {
 
 /// Background task that collects system metrics periodically
 pub async fn metrics_collection_loop(db: Arc<Database>, db_path: String) {
+    metrics_collection_loop_with_bot_id(db, db_path, DEFAULT_BOT_ID.to_string()).await
+}
+
+/// Background task that collects system metrics periodically for a specific bot
+pub async fn metrics_collection_loop_with_bot_id(db: Arc<Database>, db_path: String, bot_id: String) {
     let mut interval = tokio::time::interval(Duration::from_secs(300)); // 5 minutes
     let mut sys = System::new();
     let mut cleanup_counter = 0u32;
@@ -346,7 +351,7 @@ pub async fn metrics_collection_loop(db: Arc<Database>, db_path: String) {
 
         // Record database size
         let db_size = get_db_file_size(&db_path);
-        if let Err(e) = db.store_system_metric("db_size_bytes", db_size as f64).await {
+        if let Err(e) = db.store_system_metric(&bot_id, "db_size_bytes", db_size as f64).await {
             warn!("Failed to store db_size metric: {}", e);
         }
 
@@ -358,7 +363,7 @@ pub async fn metrics_collection_loop(db: Arc<Database>, db_path: String) {
                 ProcessRefreshKind::new().with_memory()
             );
             if let Some(proc) = sys.process(pid) {
-                if let Err(e) = db.store_system_metric("bot_memory_bytes", proc.memory() as f64).await {
+                if let Err(e) = db.store_system_metric(&bot_id, "bot_memory_bytes", proc.memory() as f64).await {
                     warn!("Failed to store bot_memory metric: {}", e);
                 }
             }
@@ -368,13 +373,13 @@ pub async fn metrics_collection_loop(db: Arc<Database>, db_path: String) {
         let memory_total = sys.total_memory();
         if memory_total > 0 {
             let memory_percent = (sys.used_memory() as f64 / memory_total as f64) * 100.0;
-            if let Err(e) = db.store_system_metric("system_memory_percent", memory_percent).await {
+            if let Err(e) = db.store_system_metric(&bot_id, "system_memory_percent", memory_percent).await {
                 warn!("Failed to store system_memory metric: {}", e);
             }
         }
 
         // Record system CPU percentage
-        if let Err(e) = db.store_system_metric("system_cpu_percent", sys.global_cpu_usage() as f64).await {
+        if let Err(e) = db.store_system_metric(&bot_id, "system_cpu_percent", sys.global_cpu_usage() as f64).await {
             warn!("Failed to store system_cpu metric: {}", e);
         }
 
@@ -387,17 +392,17 @@ pub async fn metrics_collection_loop(db: Arc<Database>, db_path: String) {
             info!("Running daily cleanup tasks");
 
             // Cleanup system metrics (7 days)
-            if let Err(e) = db.cleanup_old_metrics(7).await {
+            if let Err(e) = db.cleanup_old_metrics(&bot_id, 7).await {
                 warn!("Failed to cleanup old system metrics: {}", e);
             }
 
             // Cleanup raw OpenAI usage data (7 days - detailed request-level data)
-            if let Err(e) = db.cleanup_old_openai_usage(7).await {
+            if let Err(e) = db.cleanup_old_openai_usage(&bot_id, 7).await {
                 warn!("Failed to cleanup old OpenAI usage data: {}", e);
             }
 
             // Cleanup OpenAI daily aggregates (90 days - for historical trends)
-            if let Err(e) = db.cleanup_old_openai_usage_daily(90).await {
+            if let Err(e) = db.cleanup_old_openai_usage_daily(&bot_id, 90).await {
                 warn!("Failed to cleanup old OpenAI usage daily data: {}", e);
             }
 

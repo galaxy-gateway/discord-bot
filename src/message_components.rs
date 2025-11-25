@@ -8,11 +8,12 @@ use serenity::model::application::interaction::InteractionResponseType;
 use serenity::prelude::Context;
 
 use crate::commands::CommandHandler;
-use crate::database::Database;
+use crate::database::{Database, DEFAULT_BOT_ID};
 use crate::personas::PersonaManager;
 
 /// Handler for all message component interactions
 pub struct MessageComponentHandler {
+    bot_id: String,
     command_handler: CommandHandler,
     persona_manager: PersonaManager,
     database: Database,
@@ -20,7 +21,12 @@ pub struct MessageComponentHandler {
 
 impl MessageComponentHandler {
     pub fn new(command_handler: CommandHandler, persona_manager: PersonaManager, database: Database) -> Self {
+        Self::with_bot_id(DEFAULT_BOT_ID.to_string(), command_handler, persona_manager, database)
+    }
+
+    pub fn with_bot_id(bot_id: String, command_handler: CommandHandler, persona_manager: PersonaManager, database: Database) -> Self {
         Self {
+            bot_id,
             command_handler,
             persona_manager,
             database,
@@ -237,7 +243,7 @@ impl MessageComponentHandler {
         let user_id = interaction.user.id.to_string();
         
         if self.persona_manager.get_persona(persona_name).is_some() {
-            self.database.set_user_persona(&user_id, persona_name).await?;
+            self.database.set_user_persona(&self.bot_id, &user_id, persona_name).await?;
             
             interaction
                 .create_interaction_response(&ctx.http, |response| {
@@ -419,11 +425,11 @@ impl MessageComponentHandler {
         }
 
         let user_id = interaction.user.id.to_string();
-        let user_persona = self.database.get_user_persona(&user_id).await?;
+        let user_persona = self.database.get_user_persona(&self.bot_id, &user_id).await?;
         let system_prompt = self.persona_manager.get_system_prompt(&user_persona, Some("explain"));
-        
+
         // Log the help request
-        self.database.log_usage(&user_id, "help_modal", Some(&user_persona)).await?;
+        self.database.log_usage(&self.bot_id, &user_id, "help_modal", Some(&user_persona)).await?;
         
         let combined_message = if help_details.is_empty() {
             help_topic
@@ -476,7 +482,7 @@ impl MessageComponentHandler {
         }
 
         let user_id = interaction.user.id.to_string();
-        self.database.log_usage(&user_id, "custom_prompt", None).await?;
+        self.database.log_usage(&self.bot_id, &user_id, "custom_prompt", None).await?;
 
         // Immediately defer the interaction to prevent timeout
         interaction

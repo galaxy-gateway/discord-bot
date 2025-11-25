@@ -2,7 +2,7 @@ use crate::audio::AudioTranscriber;
 use crate::conflict_detector::ConflictDetector;
 use crate::image_gen::{ImageGenerator, ImageSize, ImageStyle};
 use crate::conflict_mediator::ConflictMediator;
-use crate::database::Database;
+use crate::database::{Database, DEFAULT_BOT_ID};
 use crate::introspection::get_component_snippet;
 use crate::message_components::MessageComponentHandler;
 use crate::personas::PersonaManager;
@@ -21,6 +21,8 @@ use std::time::Duration;
 
 #[derive(Clone)]
 pub struct CommandHandler {
+    /// Bot identity for multi-bot support (Discord application_id)
+    bot_id: String,
     persona_manager: PersonaManager,
     database: Database,
     rate_limiter: RateLimiter,
@@ -45,6 +47,30 @@ impl CommandHandler {
         mediation_cooldown_minutes: u64,
         usage_tracker: UsageTracker,
     ) -> Self {
+        // Use DEFAULT_BOT_ID for backward compatibility
+        Self::with_bot_id(
+            DEFAULT_BOT_ID.to_string(),
+            database,
+            openai_api_key,
+            openai_model,
+            conflict_enabled,
+            conflict_sensitivity,
+            mediation_cooldown_minutes,
+            usage_tracker,
+        )
+    }
+
+    /// Create a new CommandHandler with a specific bot_id for multi-bot support
+    pub fn with_bot_id(
+        bot_id: String,
+        database: Database,
+        openai_api_key: String,
+        openai_model: String,
+        conflict_enabled: bool,
+        conflict_sensitivity: &str,
+        mediation_cooldown_minutes: u64,
+        usage_tracker: UsageTracker,
+    ) -> Self {
         // Map sensitivity to threshold
         let sensitivity_threshold = match conflict_sensitivity.to_lowercase().as_str() {
             "low" => 0.7,      // Only very high confidence conflicts
@@ -54,6 +80,7 @@ impl CommandHandler {
         };
 
         CommandHandler {
+            bot_id,
             persona_manager: PersonaManager::new(),
             database,
             rate_limiter: RateLimiter::new(10, Duration::from_secs(60)),
@@ -95,11 +122,11 @@ impl CommandHandler {
         // Get audio transcription mode for this guild
         let is_dm = msg.guild_id.is_none();
         let audio_mode = if let Some(gid) = guild_id_opt {
-            let feature_enabled = self.database.is_feature_enabled("audio_transcription", None, Some(gid)).await?;
+            let feature_enabled = self.database.is_feature_enabled(&self.bot_id, "audio_transcription", None, Some(gid)).await?;
             if !feature_enabled {
                 "disabled".to_string()
             } else {
-                self.database.get_guild_setting(gid, "audio_transcription_mode").await?
+                self.database.get_guild_setting(&self.bot_id, gid, "audio_transcription_mode").await?
                     .unwrap_or_else(|| "mention_only".to_string())
             }
         } else {
@@ -127,12 +154,12 @@ impl CommandHandler {
         // Store guild messages FIRST (needed for conflict detection to have data)
         if !is_dm && !content.is_empty() && !content.starts_with('!') && !content.starts_with('/') {
             debug!("[{request_id}] 💾 Storing guild message for analysis");
-            self.database.store_message(&user_id, &channel_id, "user", content, None).await?;
+            self.database.store_message(&self.bot_id, &user_id, &channel_id, "user", content, None).await?;
         }
 
         // Conflict detection - check both env var AND feature flag
         let guild_conflict_enabled = if let Some(gid) = guild_id_opt {
-            self.database.is_feature_enabled("conflict_mediation", None, Some(gid)).await?
+            self.database.is_feature_enabled(&self.bot_id, "conflict_mediation", None, Some(gid)).await?
         } else {
             false // No conflict detection in DMs
         };
@@ -154,7 +181,7 @@ impl CommandHandler {
         } else if !is_dm && !audio_handled && self.is_bot_mentioned(ctx, msg).await? && !content.is_empty() {
             // Check mention_responses guild setting
             let mention_enabled = if let Some(gid) = guild_id_opt {
-                self.database.get_guild_setting(gid, "mention_responses").await?
+                self.database.get_guild_setting(&self.bot_id, gid, "mention_responses").await?
                     .map(|v| v == "enabled")
                     .unwrap_or(true) // Default enabled
             } else {
@@ -243,17 +270,17 @@ impl CommandHandler {
 
         // Get user's persona
         debug!("[{request_id}] 🎭 Fetching user persona from database");
-        let user_persona = self.database.get_user_persona(&user_id).await?;
+        let user_persona = self.database.get_user_persona(&self.bot_id, &user_id).await?;
         debug!("[{request_id}] 🎭 User persona: {user_persona}");
 
         // Store user message in conversation history
         debug!("[{request_id}] 💾 Storing user message to conversation history");
-        self.database.store_message(&user_id, &channel_id, "user", user_message, Some(&user_persona)).await?;
+        self.database.store_message(&self.bot_id, &user_id, &channel_id, "user", user_message, Some(&user_persona)).await?;
         debug!("[{request_id}] ✅ User message stored successfully");
 
         // Retrieve conversation history (last 40 messages = ~20 exchanges)
         debug!("[{request_id}] 📚 Retrieving conversation history");
-        let conversation_history = self.database.get_conversation_history(&user_id, &channel_id, 40).await?;
+        let conversation_history = self.database.get_conversation_history(&self.bot_id, &user_id, &channel_id, 40).await?;
         info!("[{}] 📚 Retrieved {} historical messages", request_id, conversation_history.len());
 
         // Show typing indicator while processing
@@ -267,7 +294,7 @@ impl CommandHandler {
 
         // Log usage
         debug!("[{request_id}] 📊 Logging usage to database");
-        self.database.log_usage(&user_id, "dm_chat", Some(&user_persona)).await?;
+        self.database.log_usage(&self.bot_id, &user_id, "dm_chat", Some(&user_persona)).await?;
         debug!("[{request_id}] ✅ Usage logged successfully");
 
         // Get AI response with conversation history
@@ -308,7 +335,7 @@ impl CommandHandler {
 
                 // Store assistant response in conversation history
                 debug!("[{request_id}] 💾 Storing assistant response to conversation history");
-                self.database.store_message(&user_id, &channel_id, "assistant", &ai_response, Some(&user_persona)).await?;
+                self.database.store_message(&self.bot_id, &user_id, &channel_id, "assistant", &ai_response, Some(&user_persona)).await?;
                 debug!("[{request_id}] ✅ Assistant response stored successfully");
             }
             Err(e) => {
@@ -344,12 +371,12 @@ impl CommandHandler {
 
         // Get user's persona with guild default fallback
         debug!("[{request_id}] 🎭 Fetching user persona from database");
-        let user_persona = self.database.get_user_persona_with_guild(&user_id, guild_id_opt).await?;
+        let user_persona = self.database.get_user_persona_with_guild(&self.bot_id, &user_id, guild_id_opt).await?;
         debug!("[{request_id}] 🎭 User persona: {user_persona}");
 
         // Get max_context_messages from guild settings
         let max_context = if let Some(gid) = guild_id_opt {
-            self.database.get_guild_setting(gid, "max_context_messages").await?
+            self.database.get_guild_setting(&self.bot_id, gid, "max_context_messages").await?
                 .and_then(|v| v.parse::<i64>().ok())
                 .unwrap_or(40)
         } else {
@@ -371,10 +398,10 @@ impl CommandHandler {
 
             // Store user message in conversation history for channels
             debug!("[{request_id}] 💾 Storing user message to conversation history");
-            self.database.store_message(&user_id, &channel_id, "user", user_message, Some(&user_persona)).await?;
+            self.database.store_message(&self.bot_id, &user_id, &channel_id, "user", user_message, Some(&user_persona)).await?;
             debug!("[{request_id}] ✅ User message stored successfully");
 
-            self.database.get_conversation_history(&user_id, &channel_id, max_context).await?
+            self.database.get_conversation_history(&self.bot_id, &user_id, &channel_id, max_context).await?
         };
 
         info!("[{}] 📚 Retrieved {} historical messages for context", request_id, conversation_history.len());
@@ -385,7 +412,7 @@ impl CommandHandler {
 
         // Get channel verbosity for guild channels
         let verbosity = if let Some(guild_id) = msg.guild_id {
-            self.database.get_channel_verbosity(&guild_id.to_string(), &channel_id).await?
+            self.database.get_channel_verbosity(&self.bot_id, &guild_id.to_string(), &channel_id).await?
         } else {
             "concise".to_string()
         };
@@ -397,7 +424,7 @@ impl CommandHandler {
 
         // Log usage
         debug!("[{request_id}] 📊 Logging usage to database");
-        self.database.log_usage(&user_id, "mention_chat", Some(&user_persona)).await?;
+        self.database.log_usage(&self.bot_id, &user_id, "mention_chat", Some(&user_persona)).await?;
         debug!("[{request_id}] ✅ Usage logged successfully");
 
         // Get AI response with conversation history
@@ -449,7 +476,7 @@ impl CommandHandler {
                 // Store assistant response in conversation history (only for channels, not threads)
                 if !is_thread {
                     debug!("[{request_id}] 💾 Storing assistant response to conversation history");
-                    self.database.store_message(&user_id, &channel_id, "assistant", &ai_response, Some(&user_persona)).await?;
+                    self.database.store_message(&self.bot_id, &user_id, &channel_id, "assistant", &ai_response, Some(&user_persona)).await?;
                     debug!("[{request_id}] ✅ Assistant response stored successfully");
                 } else {
                     debug!("[{request_id}] 🧵 Skipping database storage for thread (will fetch from Discord next time)");
@@ -640,7 +667,7 @@ impl CommandHandler {
         match command {
             "!ping" => {
                 debug!("[{request_id}] 🏓 Processing ping command");
-                self.database.log_usage(&user_id, "ping", None).await?;
+                self.database.log_usage(&self.bot_id, &user_id, "ping", None).await?;
                 debug!("[{request_id}] 📤 Sending pong response to Discord");
                 msg.channel_id.say(&ctx.http, "Pong!").await?;
                 info!("[{request_id}] ✅ Pong response sent successfully");
@@ -676,7 +703,7 @@ impl CommandHandler {
 
     async fn handle_slash_ping(&self, ctx: &Context, command: &ApplicationCommandInteraction) -> Result<()> {
         let user_id = command.user.id.to_string();
-        self.database.log_usage(&user_id, "ping", None).await?;
+        self.database.log_usage(&self.bot_id, &user_id, "ping", None).await?;
         
         command
             .create_interaction_response(&ctx.http, |response| {
@@ -734,7 +761,7 @@ Use the buttons below for more help or to try custom prompts!"#;
         }
         
         let user_id = command.user.id.to_string();
-        let current_persona = self.database.get_user_persona(&user_id).await?;
+        let current_persona = self.database.get_user_persona(&self.bot_id, &user_id).await?;
         response.push_str(&format!("\nYour current persona: `{current_persona}`"));
         response.push_str("\n\n**Quick Switch:**\nUse the dropdown below to change your persona!");
         
@@ -770,7 +797,7 @@ Use the buttons below for more help or to try custom prompts!"#;
         }
 
         let user_id = command.user.id.to_string();
-        self.database.set_user_persona(&user_id, &persona_name).await?;
+        self.database.set_user_persona(&self.bot_id, &user_id, &persona_name).await?;
         
         command
             .create_interaction_response(&ctx.http, |response| {
@@ -807,7 +834,7 @@ Use the buttons below for more help or to try custom prompts!"#;
                request_id, user_id, user_message.chars().take(100).collect::<String>());
 
         debug!("[{request_id}] 🔍 Getting user persona from database");
-        let user_persona = self.database.get_user_persona(&user_id).await?;
+        let user_persona = self.database.get_user_persona(&self.bot_id, &user_id).await?;
         debug!("[{request_id}] 🎭 User persona: {user_persona}");
         
         let modifier = match command.data.name.as_str() {
@@ -820,7 +847,7 @@ Use the buttons below for more help or to try custom prompts!"#;
 
         // Get channel verbosity (only for guild channels)
         let verbosity = if let Some(guild_id) = command.guild_id {
-            self.database.get_channel_verbosity(&guild_id.to_string(), &command.channel_id.to_string()).await?
+            self.database.get_channel_verbosity(&self.bot_id, &guild_id.to_string(), &command.channel_id.to_string()).await?
         } else {
             "concise".to_string() // Default to concise for DMs
         };
@@ -830,7 +857,7 @@ Use the buttons below for more help or to try custom prompts!"#;
         debug!("[{}] ✅ System prompt generated | Length: {} chars", request_id, system_prompt.len());
 
         debug!("[{request_id}] 📊 Logging usage to database");
-        self.database.log_usage(&user_id, &command.data.name, Some(&user_persona)).await?;
+        self.database.log_usage(&self.bot_id, &user_id, &command.data.name, Some(&user_persona)).await?;
         debug!("[{request_id}] ✅ Usage logged successfully");
 
         // Immediately defer the interaction to prevent timeout (required within 3 seconds)
@@ -961,7 +988,7 @@ Use the buttons below for more help or to try custom prompts!"#;
         let guild_id = command.guild_id.map(|id| id.to_string());
         let guild_id_opt = guild_id.as_deref();
         let image_gen_enabled = if let Some(gid) = guild_id_opt {
-            self.database.is_feature_enabled("image_generation", None, Some(gid)).await?
+            self.database.is_feature_enabled(&self.bot_id, "image_generation", None, Some(gid)).await?
         } else {
             true // Always enabled in DMs
         };
@@ -1000,7 +1027,7 @@ Use the buttons below for more help or to try custom prompts!"#;
               prompt.chars().take(100).collect::<String>());
 
         // Log usage
-        self.database.log_usage(&user_id, "imagine", None).await?;
+        self.database.log_usage(&self.bot_id, &user_id, "imagine", None).await?;
 
         // Defer the response immediately (DALL-E can take 10-30 seconds)
         info!("[{request_id}] ⏰ Deferring Discord interaction response (DALL-E generation)");
@@ -1136,7 +1163,7 @@ Use the buttons below for more help or to try custom prompts!"#;
 
         // Clear conversation history
         info!("[{request_id}] 🗑️ Clearing conversation history");
-        self.database.clear_conversation_history(&user_id, &channel_id).await?;
+        self.database.clear_conversation_history(&self.bot_id, &user_id, &channel_id).await?;
         info!("[{request_id}] ✅ Conversation history cleared successfully");
 
         // Send confirmation response
@@ -1192,7 +1219,7 @@ Use the buttons below for more help or to try custom prompts!"#;
         // For now, we'll use a placeholder since resolved data structure varies by version
         let message_content = "Message content will be analyzed".to_string();
 
-        let user_persona = self.database.get_user_persona(&user_id).await?;
+        let user_persona = self.database.get_user_persona(&self.bot_id, &user_id).await?;
         
         let system_prompt = match command.data.name.as_str() {
             "Analyze Message" => {
@@ -1206,7 +1233,7 @@ Use the buttons below for more help or to try custom prompts!"#;
 
         let prompt = format!("Please analyze this message: \"{message_content}\"");
         
-        self.database.log_usage(&user_id, &command.data.name, Some(&user_persona)).await?;
+        self.database.log_usage(&self.bot_id, &user_id, &command.data.name, Some(&user_persona)).await?;
 
         // Immediately defer the interaction to prevent timeout
         command
@@ -1251,12 +1278,12 @@ Use the buttons below for more help or to try custom prompts!"#;
         // For now, we'll use a placeholder since resolved data structure varies by version
         let target_user = "Discord User".to_string();
 
-        let user_persona = self.database.get_user_persona(&user_id).await?;
+        let user_persona = self.database.get_user_persona(&self.bot_id, &user_id).await?;
         let system_prompt = self.persona_manager.get_system_prompt(&user_persona, Some("explain"));
         
         let prompt = format!("Please provide general information about Discord users and their roles in communities. The user being analyzed is: {target_user}");
         
-        self.database.log_usage(&user_id, "analyze_user", Some(&user_persona)).await?;
+        self.database.log_usage(&self.bot_id, &user_id, "analyze_user", Some(&user_persona)).await?;
 
         // Immediately defer the interaction to prevent timeout
         command
@@ -1325,7 +1352,7 @@ Use the buttons below for more help or to try custom prompts!"#;
         }
         
         let user_id = msg.author.id.to_string();
-        let current_persona = self.database.get_user_persona(&user_id).await?;
+        let current_persona = self.database.get_user_persona(&self.bot_id, &user_id).await?;
         response.push_str(&format!("\nYour current persona: `{current_persona}`"));
         
         msg.channel_id.say(&ctx.http, response).await?;
@@ -1349,7 +1376,7 @@ Use the buttons below for more help or to try custom prompts!"#;
         }
 
         let user_id = msg.author.id.to_string();
-        self.database.set_user_persona(&user_id, persona_name).await?;
+        self.database.set_user_persona(&self.bot_id, &user_id, persona_name).await?;
         
         msg.channel_id
             .say(&ctx.http, &format!("Your persona has been set to: `{persona_name}`"))
@@ -1366,7 +1393,7 @@ Use the buttons below for more help or to try custom prompts!"#;
         }
 
         let user_id = msg.author.id.to_string();
-        let user_persona = self.database.get_user_persona(&user_id).await?;
+        let user_persona = self.database.get_user_persona(&self.bot_id, &user_id).await?;
         
         let modifier = match command {
             "/explain" => Some("explain"),
@@ -1379,7 +1406,7 @@ Use the buttons below for more help or to try custom prompts!"#;
         let system_prompt = self.persona_manager.get_system_prompt(&user_persona, modifier);
         let user_message = args.join(" ");
 
-        self.database.log_usage(&user_id, command, Some(&user_persona)).await?;
+        self.database.log_usage(&self.bot_id, &user_id, command, Some(&user_persona)).await?;
 
         match self.get_ai_response(&system_prompt, &user_message).await {
             Ok(response) => {
@@ -1549,7 +1576,7 @@ Use the buttons below for more help or to try custom prompts!"#;
 
         // Get output mode setting (transcription_only or with_commentary)
         let output_mode = if let Some(gid) = guild_id_opt {
-            self.database.get_guild_setting(gid, "audio_transcription_output").await?
+            self.database.get_guild_setting(&self.bot_id, gid, "audio_transcription_output").await?
                 .unwrap_or_else(|| "transcription_only".to_string())
         } else {
             "transcription_only".to_string() // Default for DMs
@@ -1604,7 +1631,7 @@ Use the buttons below for more help or to try custom prompts!"#;
 
                             // Only generate AI commentary if output mode is "with_commentary"
                             if output_mode == "with_commentary" && !msg.content.trim().is_empty() {
-                                let user_persona = self.database.get_user_persona(&user_id).await?;
+                                let user_persona = self.database.get_user_persona(&self.bot_id, &user_id).await?;
                                 let system_prompt = self.persona_manager.get_system_prompt(&user_persona, None);
                                 let combined_message = format!("Based on this transcription: '{}', {}", transcription, msg.content);
 
@@ -1619,7 +1646,7 @@ Use the buttons below for more help or to try custom prompts!"#;
                             }
                         }
 
-                        self.database.log_usage(&user_id, "audio_transcription", None).await?;
+                        self.database.log_usage(&self.bot_id, &user_id, "audio_transcription", None).await?;
                     }
                     Err(e) => {
                         error!("Transcription error: {e}");
@@ -1655,7 +1682,7 @@ Use the buttons below for more help or to try custom prompts!"#;
     ) -> Result<()> {
         // Get guild-specific conflict sensitivity
         let sensitivity_threshold = if let Some(gid) = guild_id {
-            let sensitivity = self.database.get_guild_setting(gid, "conflict_sensitivity").await?
+            let sensitivity = self.database.get_guild_setting(&self.bot_id, gid, "conflict_sensitivity").await?
                 .unwrap_or_else(|| "medium".to_string());
             match sensitivity.as_str() {
                 "low" => 0.7,
@@ -1669,7 +1696,7 @@ Use the buttons below for more help or to try custom prompts!"#;
 
         // Get guild-specific mediation cooldown
         let cooldown_minutes = if let Some(gid) = guild_id {
-            self.database.get_guild_setting(gid, "mediation_cooldown").await?
+            self.database.get_guild_setting(&self.bot_id, gid, "mediation_cooldown").await?
                 .and_then(|v| v.parse::<u64>().ok())
                 .unwrap_or(5) // Default 5 minutes
         } else {
@@ -1677,15 +1704,15 @@ Use the buttons below for more help or to try custom prompts!"#;
         };
 
         // Get the timestamp of the last mediation to avoid re-analyzing same messages
-        let last_mediation_ts = self.database.get_last_mediation_timestamp(channel_id).await?;
+        let last_mediation_ts = self.database.get_last_mediation_timestamp(&self.bot_id, channel_id).await?;
 
         // Get recent messages, optionally filtering to only new messages since last mediation
         let recent_messages = if let Some(last_ts) = last_mediation_ts {
             info!("🔍 Getting messages since last mediation at timestamp {last_ts}");
-            self.database.get_recent_channel_messages_since(channel_id, last_ts, 10).await?
+            self.database.get_recent_channel_messages_since(&self.bot_id, channel_id, last_ts, 10).await?
         } else {
             info!("🔍 No previous mediation found, getting all recent messages");
-            self.database.get_recent_channel_messages(channel_id, 10).await?
+            self.database.get_recent_channel_messages(&self.bot_id, channel_id, 10).await?
         };
 
         info!("🔍 Conflict check: Found {} recent messages in channel {} (after last mediation)",
@@ -1753,6 +1780,7 @@ Use the buttons below for more help or to try custom prompts!"#;
             // Record the conflict in database
             let participants_json = serde_json::to_string(&participants)?;
             let conflict_id = self.database.record_conflict_detection(
+                &self.bot_id,
                 channel_id,
                 guild_id,
                 &participants_json,
@@ -1783,8 +1811,8 @@ Use the buttons below for more help or to try custom prompts!"#;
                     self.conflict_mediator.record_intervention(channel_id);
 
                     // Record in database
-                    self.database.mark_mediation_triggered(conflict_id, &mediation_msg.id.to_string()).await?;
-                    self.database.record_mediation(conflict_id, channel_id, &mediation_text).await?;
+                    self.database.mark_mediation_triggered(&self.bot_id, conflict_id, &mediation_msg.id.to_string()).await?;
+                    self.database.record_mediation(&self.bot_id, conflict_id, channel_id, &mediation_text).await?;
                 },
                 Err(e) => {
                     warn!("⚠️ Failed to send mediation message to Discord: {e}. Recording intervention to prevent spam.");
@@ -1793,7 +1821,7 @@ Use the buttons below for more help or to try custom prompts!"#;
                     self.conflict_mediator.record_intervention(channel_id);
 
                     // Try to record in database with no message ID
-                    if let Err(db_err) = self.database.record_mediation(conflict_id, channel_id, &mediation_text).await {
+                    if let Err(db_err) = self.database.record_mediation(&self.bot_id, conflict_id, channel_id, &mediation_text).await {
                         warn!("⚠️ Failed to record mediation in database: {db_err}");
                     }
                 }
@@ -1803,7 +1831,7 @@ Use the buttons below for more help or to try custom prompts!"#;
             if participants.len() == 2 {
                 let user_a = &participants[0];
                 let user_b = &participants[1];
-                self.database.update_user_interaction_pattern(user_a, user_b, channel_id, true).await?;
+                self.database.update_user_interaction_pattern(&self.bot_id, user_a, user_b, channel_id, true).await?;
             }
         }
 
@@ -1860,7 +1888,7 @@ Use the buttons below for more help or to try custom prompts!"#;
         info!("[{request_id}] Setting verbosity for channel {target_channel_id} to {level}");
 
         // Set the verbosity
-        self.database.set_channel_verbosity(&guild_id, &target_channel_id, &level).await?;
+        self.database.set_channel_verbosity(&self.bot_id, &guild_id, &target_channel_id, &level).await?;
 
         command
             .create_interaction_response(&ctx.http, |response| {
@@ -2027,7 +2055,7 @@ Use the buttons below for more help or to try custom prompts!"#;
             self.database.set_bot_setting(&setting, &value).await?;
         } else {
             info!("[{request_id}] Setting guild {guild_id} setting '{setting}' to '{value}'");
-            self.database.set_guild_setting(&guild_id, &setting, &value).await?;
+            self.database.set_guild_setting(&self.bot_id, &guild_id, &setting, &value).await?;
         }
 
         let scope = if is_global_setting { "Global" } else { "Guild" };
@@ -2072,32 +2100,32 @@ Use the buttons below for more help or to try custom prompts!"#;
         let channel_id = command.channel_id.to_string();
 
         // Get channel settings
-        let (channel_verbosity, conflict_enabled) = self.database.get_channel_settings(&guild_id, &channel_id).await?;
+        let (channel_verbosity, conflict_enabled) = self.database.get_channel_settings(&self.bot_id, &guild_id, &channel_id).await?;
 
         // Get guild settings with defaults
-        let guild_default_verbosity = self.database.get_guild_setting(&guild_id, "default_verbosity").await?
+        let guild_default_verbosity = self.database.get_guild_setting(&self.bot_id, &guild_id, "default_verbosity").await?
             .unwrap_or_else(|| "concise".to_string());
-        let guild_default_persona = self.database.get_guild_setting(&guild_id, "default_persona").await?
+        let guild_default_persona = self.database.get_guild_setting(&self.bot_id, &guild_id, "default_persona").await?
             .unwrap_or_else(|| "obi".to_string());
-        let guild_conflict_mediation = self.database.get_guild_setting(&guild_id, "conflict_mediation").await?
+        let guild_conflict_mediation = self.database.get_guild_setting(&self.bot_id, &guild_id, "conflict_mediation").await?
             .unwrap_or_else(|| "enabled".to_string());
-        let guild_conflict_sensitivity = self.database.get_guild_setting(&guild_id, "conflict_sensitivity").await?
+        let guild_conflict_sensitivity = self.database.get_guild_setting(&self.bot_id, &guild_id, "conflict_sensitivity").await?
             .unwrap_or_else(|| "medium".to_string());
-        let guild_mediation_cooldown = self.database.get_guild_setting(&guild_id, "mediation_cooldown").await?
+        let guild_mediation_cooldown = self.database.get_guild_setting(&self.bot_id, &guild_id, "mediation_cooldown").await?
             .unwrap_or_else(|| "5".to_string());
-        let guild_max_context = self.database.get_guild_setting(&guild_id, "max_context_messages").await?
+        let guild_max_context = self.database.get_guild_setting(&self.bot_id, &guild_id, "max_context_messages").await?
             .unwrap_or_else(|| "40".to_string());
-        let guild_audio_transcription = self.database.get_guild_setting(&guild_id, "audio_transcription").await?
+        let guild_audio_transcription = self.database.get_guild_setting(&self.bot_id, &guild_id, "audio_transcription").await?
             .unwrap_or_else(|| "enabled".to_string());
-        let guild_audio_mode = self.database.get_guild_setting(&guild_id, "audio_transcription_mode").await?
+        let guild_audio_mode = self.database.get_guild_setting(&self.bot_id, &guild_id, "audio_transcription_mode").await?
             .unwrap_or_else(|| "mention_only".to_string());
-        let guild_audio_output = self.database.get_guild_setting(&guild_id, "audio_transcription_output").await?
+        let guild_audio_output = self.database.get_guild_setting(&self.bot_id, &guild_id, "audio_transcription_output").await?
             .unwrap_or_else(|| "transcription_only".to_string());
-        let guild_mention_responses = self.database.get_guild_setting(&guild_id, "mention_responses").await?
+        let guild_mention_responses = self.database.get_guild_setting(&self.bot_id, &guild_id, "mention_responses").await?
             .unwrap_or_else(|| "enabled".to_string());
 
         // Get bot admin role
-        let admin_role = self.database.get_guild_setting(&guild_id, "bot_admin_role").await?;
+        let admin_role = self.database.get_guild_setting(&self.bot_id, &guild_id, "bot_admin_role").await?;
         let admin_role_display = match admin_role {
             Some(role_id) => format!("<@&{role_id}>"),
             None => "Not set (Discord admins only)".to_string(),
@@ -2180,7 +2208,7 @@ Use the buttons below for more help or to try custom prompts!"#;
         info!("[{request_id}] Setting bot admin role for guild {guild_id} to {role_id}");
 
         // Set the bot admin role
-        self.database.set_guild_setting(&guild_id, "bot_admin_role", &role_id.to_string()).await?;
+        self.database.set_guild_setting(&self.bot_id, &guild_id, "bot_admin_role", &role_id.to_string()).await?;
 
         command
             .create_interaction_response(&ctx.http, |response| {
@@ -2269,7 +2297,7 @@ Use the buttons below for more help or to try custom prompts!"#;
         let guild_id = command.guild_id.map(|id| id.to_string());
         let guild_id_opt = guild_id.as_deref();
         let reminders_enabled = if let Some(gid) = guild_id_opt {
-            self.database.is_feature_enabled("reminders", None, Some(gid)).await?
+            self.database.is_feature_enabled(&self.bot_id, "reminders", None, Some(gid)).await?
         } else {
             true // Always enabled in DMs
         };
@@ -2314,13 +2342,13 @@ Use the buttons below for more help or to try custom prompts!"#;
         let remind_at_str = remind_at.format("%Y-%m-%d %H:%M:%S").to_string();
 
         // Store the reminder
-        let reminder_id = self.database.add_reminder(&user_id, &channel_id, &message, &remind_at_str).await?;
+        let reminder_id = self.database.add_reminder(&self.bot_id, &user_id, &channel_id, &message, &remind_at_str).await?;
 
         info!("[{}] ⏰ Created reminder {} for user {} in {} ({})",
               request_id, reminder_id, user_id, self.format_duration(duration_seconds), remind_at_str);
 
         // Log usage
-        self.database.log_usage(&user_id, "remind", None).await?;
+        self.database.log_usage(&self.bot_id, &user_id, "remind", None).await?;
 
         let duration_display = self.format_duration(duration_seconds);
         command
@@ -2351,7 +2379,7 @@ Use the buttons below for more help or to try custom prompts!"#;
         let guild_id = command.guild_id.map(|id| id.to_string());
         let guild_id_opt = guild_id.as_deref();
         let reminders_enabled = if let Some(gid) = guild_id_opt {
-            self.database.is_feature_enabled("reminders", None, Some(gid)).await?
+            self.database.is_feature_enabled(&self.bot_id, "reminders", None, Some(gid)).await?
         } else {
             true // Always enabled in DMs
         };
@@ -2377,7 +2405,7 @@ Use the buttons below for more help or to try custom prompts!"#;
                 let reminder_id = get_integer_option(&command.data.options, "id");
 
                 if let Some(id) = reminder_id {
-                    let deleted = self.database.delete_reminder(id, &user_id).await?;
+                    let deleted = self.database.delete_reminder(&self.bot_id, id, &user_id).await?;
 
                     if deleted {
                         info!("[{request_id}] 🗑️ Deleted reminder {id} for user {user_id}");
@@ -2415,7 +2443,7 @@ Use the buttons below for more help or to try custom prompts!"#;
             }
             _ => {
                 // List reminders (default action)
-                let reminders = self.database.get_user_reminders(&user_id).await?;
+                let reminders = self.database.get_user_reminders(&self.bot_id, &user_id).await?;
 
                 if reminders.is_empty() {
                     command
@@ -2466,7 +2494,7 @@ Use the buttons below for more help or to try custom prompts!"#;
             }
         }
 
-        self.database.log_usage(&user_id, "reminders", None).await?;
+        self.database.log_usage(&self.bot_id, &user_id, "reminders", None).await?;
         Ok(())
     }
 
@@ -2493,7 +2521,7 @@ Use the buttons below for more help or to try custom prompts!"#;
             .await?;
 
         // Get user's persona
-        let persona_name = self.database.get_user_persona_with_guild(&user_id, guild_id.as_deref()).await?;
+        let persona_name = self.database.get_user_persona_with_guild(&self.bot_id, &user_id, guild_id.as_deref()).await?;
 
         // Get the code snippet for this component
         let (component_title, code_snippet) = get_component_snippet(&component);
@@ -2573,7 +2601,7 @@ Use the buttons below for more help or to try custom prompts!"#;
             })
             .await?;
 
-        self.database.log_usage(&user_id, "introspect", Some(&persona_name)).await?;
+        self.database.log_usage(&self.bot_id, &user_id, "introspect", Some(&persona_name)).await?;
 
         info!("[{request_id}] ✅ Introspection complete for component: {component}");
         Ok(())
@@ -2611,7 +2639,7 @@ Use the buttons below for more help or to try custom prompts!"#;
             })
             .await?;
 
-        self.database.log_usage(&user_id, "status", None).await?;
+        self.database.log_usage(&self.bot_id, &user_id, "status", None).await?;
         info!("[{request_id}] ✅ Status command completed");
         Ok(())
     }
@@ -2639,7 +2667,7 @@ Use the buttons below for more help or to try custom prompts!"#;
             })
             .await?;
 
-        self.database.log_usage(&user_id, "version", None).await?;
+        self.database.log_usage(&self.bot_id, &user_id, "version", None).await?;
         info!("[{request_id}] ✅ Version command completed");
         Ok(())
     }
@@ -2676,7 +2704,7 @@ Use the buttons below for more help or to try custom prompts!"#;
             })
             .await?;
 
-        self.database.log_usage(&user_id, "uptime", None).await?;
+        self.database.log_usage(&self.bot_id, &user_id, "uptime", None).await?;
         info!("[{request_id}] ✅ Uptime command completed");
         Ok(())
     }
@@ -2693,7 +2721,7 @@ Use the buttons below for more help or to try custom prompts!"#;
 
         // Get feature flags for this guild
         let flags = if let Some(ref gid) = guild_id {
-            self.database.get_guild_feature_flags(gid).await.unwrap_or_default()
+            self.database.get_guild_feature_flags(&self.bot_id, gid).await.unwrap_or_default()
         } else {
             std::collections::HashMap::new()
         };
@@ -2725,7 +2753,7 @@ Use the buttons below for more help or to try custom prompts!"#;
             })
             .await?;
 
-        self.database.log_usage(&user_id, "features", None).await?;
+        self.database.log_usage(&self.bot_id, &user_id, "features", None).await?;
         info!("[{request_id}] ✅ Features command completed");
         Ok(())
     }
@@ -2761,14 +2789,15 @@ Use the buttons below for more help or to try custom prompts!"#;
 
         // Get current status
         let guild_id_str = guild_id.as_deref().unwrap_or("");
-        let current_enabled = self.database.is_feature_enabled(&feature_id, None, Some(guild_id_str)).await?;
+        let current_enabled = self.database.is_feature_enabled(&self.bot_id, &feature_id, None, Some(guild_id_str)).await?;
 
         // Toggle it
         let new_enabled = !current_enabled;
-        self.database.set_feature_flag(&feature_id, new_enabled, None, Some(guild_id_str)).await?;
+        self.database.set_feature_flag(&self.bot_id, &feature_id, new_enabled, None, Some(guild_id_str)).await?;
 
         // Record in audit trail
         self.database.record_feature_toggle(
+            &self.bot_id,
             &feature_id,
             feature.version,
             Some(guild_id_str),
@@ -2789,7 +2818,7 @@ Use the buttons below for more help or to try custom prompts!"#;
             })
             .await?;
 
-        self.database.log_usage(&user_id, "toggle", None).await?;
+        self.database.log_usage(&self.bot_id, &user_id, "toggle", None).await?;
         info!("[{request_id}] ✅ Toggle command completed: {feature_id} -> {new_enabled}");
         Ok(())
     }
@@ -2824,10 +2853,10 @@ Use the buttons below for more help or to try custom prompts!"#;
                 let period_label = if view == "history_24h" { "24h" } else { "7d" };
 
                 // Fetch historical data
-                let db_size_data = self.database.get_metrics_history("db_size_bytes", hours).await?;
-                let bot_memory_data = self.database.get_metrics_history("bot_memory_bytes", hours).await?;
-                let system_memory_data = self.database.get_metrics_history("system_memory_percent", hours).await?;
-                let system_cpu_data = self.database.get_metrics_history("system_cpu_percent", hours).await?;
+                let db_size_data = self.database.get_metrics_history(&self.bot_id, "db_size_bytes", hours).await?;
+                let bot_memory_data = self.database.get_metrics_history(&self.bot_id, "bot_memory_bytes", hours).await?;
+                let system_memory_data = self.database.get_metrics_history(&self.bot_id, "system_memory_percent", hours).await?;
+                let system_cpu_data = self.database.get_metrics_history(&self.bot_id, "system_cpu_percent", hours).await?;
 
                 // Build summaries
                 let db_size = HistoricalSummary::from_data(&db_size_data);
@@ -2870,7 +2899,7 @@ Use the buttons below for more help or to try custom prompts!"#;
             })
             .await?;
 
-        self.database.log_usage(&user_id, "sysinfo", None).await?;
+        self.database.log_usage(&self.bot_id, &user_id, "sysinfo", None).await?;
         info!("[{request_id}] ✅ Sysinfo command completed");
         Ok(())
     }
@@ -2900,16 +2929,16 @@ Use the buttons below for more help or to try custom prompts!"#;
 
         let response = match scope.as_str() {
             "personal_today" => {
-                let stats = self.database.get_user_usage_stats(&user_id, 1).await?;
+                let stats = self.database.get_user_usage_stats(&self.bot_id, &user_id, 1).await?;
                 Self::format_usage_stats("Your Usage Today", &stats, None)
             }
             "personal_7d" => {
-                let stats = self.database.get_user_usage_stats(&user_id, 7).await?;
+                let stats = self.database.get_user_usage_stats(&self.bot_id, &user_id, 7).await?;
                 Self::format_usage_stats("Your Usage (7 days)", &stats, None)
             }
             "server_today" => {
                 if let Some(gid) = &guild_id {
-                    let stats = self.database.get_guild_usage_stats(gid, 1).await?;
+                    let stats = self.database.get_guild_usage_stats(&self.bot_id, gid, 1).await?;
                     Self::format_usage_stats("Server Usage Today", &stats, None)
                 } else {
                     "Server usage is only available in guild channels.".to_string()
@@ -2917,7 +2946,7 @@ Use the buttons below for more help or to try custom prompts!"#;
             }
             "server_7d" => {
                 if let Some(gid) = &guild_id {
-                    let stats = self.database.get_guild_usage_stats(gid, 7).await?;
+                    let stats = self.database.get_guild_usage_stats(&self.bot_id, gid, 7).await?;
                     Self::format_usage_stats("Server Usage (7 days)", &stats, None)
                 } else {
                     "Server usage is only available in guild channels.".to_string()
@@ -2925,7 +2954,7 @@ Use the buttons below for more help or to try custom prompts!"#;
             }
             "top_users" => {
                 if let Some(gid) = &guild_id {
-                    let top_users = self.database.get_guild_top_users_by_cost(gid, 7, 10).await?;
+                    let top_users = self.database.get_guild_top_users_by_cost(&self.bot_id, gid, 7, 10).await?;
                     Self::format_top_users("Top Users by Cost (7 days)", &top_users)
                 } else {
                     "Top users is only available in guild channels.".to_string()
@@ -2941,7 +2970,7 @@ Use the buttons below for more help or to try custom prompts!"#;
             })
             .await?;
 
-        self.database.log_usage(&user_id, "usage", None).await?;
+        self.database.log_usage(&self.bot_id, &user_id, "usage", None).await?;
         info!("[{request_id}] ✅ Usage command completed");
         Ok(())
     }

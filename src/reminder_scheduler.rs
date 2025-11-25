@@ -12,7 +12,7 @@
 //! - 1.1.0: Added OpenAI usage tracking for reminder message generation
 //! - 1.0.0: Initial release with time parsing (30m, 2h, 1d, 1h30m) and persona delivery
 
-use crate::database::Database;
+use crate::database::{Database, DEFAULT_BOT_ID};
 use crate::personas::PersonaManager;
 use crate::usage_tracker::UsageTracker;
 use anyhow::Result;
@@ -25,6 +25,7 @@ use std::time::Duration;
 use tokio::time::interval;
 
 pub struct ReminderScheduler {
+    bot_id: String,
     database: Database,
     persona_manager: PersonaManager,
     openai_model: String,
@@ -33,7 +34,12 @@ pub struct ReminderScheduler {
 
 impl ReminderScheduler {
     pub fn new(database: Database, openai_model: String, usage_tracker: UsageTracker) -> Self {
+        Self::with_bot_id(DEFAULT_BOT_ID.to_string(), database, openai_model, usage_tracker)
+    }
+
+    pub fn with_bot_id(bot_id: String, database: Database, openai_model: String, usage_tracker: UsageTracker) -> Self {
         Self {
+            bot_id,
             database,
             persona_manager: PersonaManager::new(),
             openai_model,
@@ -58,7 +64,7 @@ impl ReminderScheduler {
     }
 
     async fn process_due_reminders(&self, http: &Arc<Http>) -> Result<()> {
-        let reminders = self.database.get_pending_reminders().await?;
+        let reminders = self.database.get_pending_reminders(&self.bot_id).await?;
 
         if reminders.is_empty() {
             debug!("⏰ No pending reminders to process");
@@ -75,7 +81,7 @@ impl ReminderScheduler {
                 Err(e) => {
                     warn!("⚠️ Failed to deliver reminder #{id}: {e}");
                     // Still mark as complete to avoid spam - user can set a new reminder
-                    if let Err(e) = self.database.complete_reminder(id).await {
+                    if let Err(e) = self.database.complete_reminder(&self.bot_id, id).await {
                         error!("❌ Failed to mark reminder {id} as complete: {e}");
                     }
                 }
@@ -94,7 +100,7 @@ impl ReminderScheduler {
         reminder_text: &str,
     ) -> Result<()> {
         // Get user's preferred persona
-        let persona_name = self.database.get_user_persona(user_id).await.unwrap_or_else(|_| "obi".to_string());
+        let persona_name = self.database.get_user_persona(&self.bot_id, user_id).await.unwrap_or_else(|_| "obi".to_string());
 
         // Get the persona's system prompt
         let persona = self.persona_manager.get_persona(&persona_name);
@@ -113,7 +119,7 @@ impl ReminderScheduler {
         channel.say(http, &message).await?;
 
         // Mark reminder as complete
-        self.database.complete_reminder(reminder_id).await?;
+        self.database.complete_reminder(&self.bot_id, reminder_id).await?;
 
         Ok(())
     }
