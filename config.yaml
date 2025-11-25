@@ -1,0 +1,41 @@
+# Persona Bot Configuration
+# =========================
+#
+# Environment variables are interpolated using ${VAR_NAME} syntax.
+# Use ${VAR_NAME:-default} to provide a default value.
+
+# =============================================================================
+# Bot Configurations
+# =============================================================================
+
+bots:
+  # Main bot using existing DISCORD_SPACE_CADET token
+  - name: "space-cadet"
+    discord_token: "${DISCORD_SPACE_CADET}"
+    default_persona: "space-cadet"
+    # Uncomment for dev mode (faster slash command registration):
+    # discord_guild_id: "${DISCORD_GUILD_ID:-}"
+
+# =============================================================================
+# Shared Configuration
+# =============================================================================
+
+# OpenAI API key (required)
+openai_api_key: "${OPENAI_API_KEY}"
+
+# Database path
+database_path: "${DATABASE_PATH:-persona.db}"
+
+# Logging level: trace, debug, info, warn, error
+log_level: "${LOG_LEVEL:-info}"
+
+# Default OpenAI model
+openai_model: "${OPENAI_MODEL:-gpt-4o-mini}"
+
+# =============================================================================
+# Conflict Mediation Settings
+# =============================================================================
+
+conflict_mediation_enabled: true
+conflict_sensitivity: "medium"
+mediation_cooldown_minutes: 5

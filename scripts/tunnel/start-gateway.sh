@@ -24,7 +24,7 @@ fi
 if [ ! -f ".env" ]; then
     echo -e "${YELLOW}⚠️  .env file not found. Make sure environment variables are set.${NC}"
     echo "Required variables:"
-    echo "  - DISCORD_MUPPET_FRIEND"
+    echo "  - DISCORD_SPACE_CADET"
     echo "  - OPENAI_API_KEY" 
     echo "  - DATABASE_PATH (optional)"
     echo "  - LOG_LEVEL (optional)"

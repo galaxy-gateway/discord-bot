@@ -108,7 +108,7 @@ impl CommandHandler {
               msg.content.chars().take(100).collect::<String>());
 
         debug!("[{request_id}] 🔍 Checking rate limit for user: {user_id}");
-        if !self.rate_limiter.wait_for_rate_limit(&user_id).await {
+        if !self.rate_limiter.wait_for_rate_limit(&self.bot_id, &user_id).await {
             warn!("[{request_id}] 🚫 Rate limit exceeded for user: {user_id}");
             debug!("[{request_id}] 📤 Sending rate limit message to Discord");
             msg.channel_id
@@ -513,7 +513,7 @@ impl CommandHandler {
               request_id, command.data.name, user_id, channel_id, guild_id);
         
         debug!("[{request_id}] 🔍 Checking rate limit for user: {user_id}");
-        if !self.rate_limiter.wait_for_rate_limit(&user_id).await {
+        if !self.rate_limiter.wait_for_rate_limit(&self.bot_id, &user_id).await {
             warn!("[{request_id}] 🚫 Rate limit exceeded for user: {user_id} in slash command");
             debug!("[{request_id}] 📤 Sending rate limit response to Discord");
             command

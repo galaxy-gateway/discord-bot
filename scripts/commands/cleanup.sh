@@ -6,7 +6,7 @@ set -e
 # Load environment variables
 source /home/caavere/Projects/bot/persona/.env
 
-BOT_TOKEN="$DISCORD_MUPPET_FRIEND"
+BOT_TOKEN="$DISCORD_SPACE_CADET"
 APP_ID="1133318314949628007"
 GUILD_ID="1028101463274164274"
 

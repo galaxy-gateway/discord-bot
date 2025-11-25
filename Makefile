@@ -119,10 +119,10 @@ env-check: ## Check if required environment variables are set
 		echo "   Run: cp .env.example .env"; \
 		exit 1; \
 	fi
-	@if ! grep -q "DISCORD_MUPPET_FRIEND=your_discord_bot_token_here" $(PROJECT_DIR)/.env; then \
-		echo "✓ DISCORD_MUPPET_FRIEND is configured"; \
+	@if ! grep -q "DISCORD_SPACE_CADET=your_discord_bot_token_here" $(PROJECT_DIR)/.env; then \
+		echo "✓ DISCORD_SPACE_CADET is configured"; \
 	else \
-		echo "❌ DISCORD_MUPPET_FRIEND needs to be configured in .env"; \
+		echo "❌ DISCORD_SPACE_CADET needs to be configured in .env"; \
 	fi
 	@if ! grep -q "OPENAI_API_KEY=your_openai_api_key_here" $(PROJECT_DIR)/.env; then \
 		echo "✓ OPENAI_API_KEY is configured"; \

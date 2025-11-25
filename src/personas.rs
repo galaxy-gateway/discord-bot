@@ -1,13 +1,14 @@
 //! # Feature: Persona System
 //!
-//! Multi-personality AI responses with 5 distinct personas (obi, muppet, chef, teacher, analyst).
+//! Multi-personality AI responses with 6 distinct personas (obi, muppet, chef, teacher, analyst, space-cadet).
 //! Each persona has a unique system prompt loaded from prompt/*.md files at compile time.
 //!
-//! - **Version**: 1.0.0
+//! - **Version**: 1.1.0
 //! - **Since**: 0.1.0
 //! - **Toggleable**: false
 //!
 //! ## Changelog
+//! - 1.1.0: Added space-cadet persona - curious, righteous starbase crew member
 //! - 1.0.0: Initial release with 5 personas and verbosity modifiers
 
 use serde::{Deserialize, Serialize};
@@ -64,6 +65,12 @@ impl PersonaManager {
             name: "Step-by-Step Analyst".to_string(),
             system_prompt: include_str!("../prompt/analyst.md").to_string(),
             description: "An analyst who breaks things down into clear steps".to_string(),
+        });
+
+        personas.insert("space-cadet".to_string(), Persona {
+            name: "Space Cadet".to_string(),
+            system_prompt: include_str!("../prompt/space-cadet.md").to_string(),
+            description: "A curious and righteous starbase crew member exploring the cosmos with wonder".to_string(),
         });
 
         PersonaManager { personas }
@@ -129,6 +136,7 @@ mod tests {
         assert!(manager.get_persona("chef").is_some());
         assert!(manager.get_persona("teacher").is_some());
         assert!(manager.get_persona("analyst").is_some());
+        assert!(manager.get_persona("space-cadet").is_some());
         assert!(manager.get_persona("nonexistent").is_none());
     }
 

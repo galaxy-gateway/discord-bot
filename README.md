@@ -120,7 +120,7 @@ Quick text-based commands for power users:
 
 3. Edit `.env` with your actual tokens:
    ```
-   DISCORD_MUPPET_FRIEND=your_discord_bot_token_here
+   DISCORD_SPACE_CADET=your_discord_bot_token_here
    OPENAI_API_KEY=your_openai_api_key_here
    ```
 
@@ -164,7 +164,7 @@ See [NGROK_SETUP.md](NGROK_SETUP.md) for detailed instructions.
 
 ### Environment Variables
 
-- `DISCORD_MUPPET_FRIEND` - Your Discord bot token (required)
+- `DISCORD_SPACE_CADET` - Your Discord bot token (required)
 - `OPENAI_API_KEY` - Your OpenAI API key (required)
 - `OPENAI_MODEL` - OpenAI model to use (optional, defaults to "gpt-5.1")
   - Options: gpt-4o, gpt-4o-mini, gpt-4-turbo, gpt-3.5-turbo, etc.

@@ -79,7 +79,7 @@
   - Basic bot functionality implemented
   - Command system working
   - OpenAI integration functional
-  - Requires environment variables: DISCORD_MUPPET_FRIEND (Discord token) and OPENAI_API_KEY
+  - Requires environment variables: DISCORD_SPACE_CADET (Discord token) and OPENAI_API_KEY
                                                                                                                     
 ●User approved Claude's plan:
   ⎿  Project Development Plan
@@ -385,7 +385,7 @@
         56    #[tokio::main]
         57 -  async fn main() {
         58 -      // Configure the client with your Discord bot token in the environment.
-        59 -      let token = env::var("DISCORD_MUPPET_FRIEND").expect("Expected a token in the environment");
+        59 -      let token = env::var("DISCORD_SPACE_CADET").expect("Expected a token in the environment");
         60 -      // Set gateway intents, which decides what events the bot will be notified about
         57 +  async fn main() -> Result<()> {
         58 +      let config = Config::from_env()?;
@@ -461,7 +461,7 @@
   ⎿  Wrote 14 lines to .env.example                             
      # Discord Bot Token
      # Get this from https://discord.com/developers/applications
-     DISCORD_MUPPET_FRIEND=your_discord_bot_token_here
+     DISCORD_SPACE_CADET=your_discord_bot_token_here
      # OpenAI API Key
      # Get this from https://platform.openai.com/api-keys
      OPENAI_API_KEY=your_openai_api_key_here
@@ -813,7 +813,7 @@
        30 +  
        31 +      #[test]
        32 +      fn test_config_from_env_missing_required() {
-       33 +          env::remove_var("DISCORD_MUPPET_FRIEND");
+       33 +          env::remove_var("DISCORD_SPACE_CADET");
        34 +          env::remove_var("OPENAI_API_KEY");
        35 +          
        36 +          let result = Config::from_env();
@@ -822,7 +822,7 @@
        39 +  
        40 +      #[test]
        41 +      fn test_config_with_defaults() {
-       42 +          env::set_var("DISCORD_MUPPET_FRIEND", "test_discord_token");
+       42 +          env::set_var("DISCORD_SPACE_CADET", "test_discord_token");
        43 +          env::set_var("OPENAI_API_KEY", "test_openai_key");
        44 +          env::remove_var("DATABASE_PATH");
        45 +          env::remove_var("LOG_LEVEL");
@@ -833,7 +833,7 @@
        50 +          assert_eq!(config.database_path, "persona.db");
        51 +          assert_eq!(config.log_level, "info");
        52 +          
-       53 +          env::remove_var("DISCORD_MUPPET_FRIEND");
+       53 +          env::remove_var("DISCORD_SPACE_CADET");
        54 +          env::remove_var("OPENAI_API_KEY");
        55 +      }
        56    }

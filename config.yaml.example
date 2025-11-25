@@ -11,7 +11,7 @@
 # Loading Priority:
 #   1. CONFIG_FILE environment variable (explicit path)
 #   2. config.yaml in current directory
-#   3. Legacy environment variables (DISCORD_MUPPET_FRIEND, etc.)
+#   3. Legacy environment variables (DISCORD_SPACE_CADET, etc.)
 
 # =============================================================================
 # Bot Configurations

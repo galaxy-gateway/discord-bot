@@ -70,7 +70,7 @@ tunnels:
 Make sure your `.env` file contains:
 
 ```env
-DISCORD_MUPPET_FRIEND=your_discord_bot_token
+DISCORD_SPACE_CADET=your_discord_bot_token
 OPENAI_API_KEY=your_openai_api_key
 DATABASE_PATH=persona.db
 LOG_LEVEL=info
