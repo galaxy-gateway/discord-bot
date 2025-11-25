@@ -57,9 +57,12 @@ const MODAL_SUBMIT: u8 = 5;
 const PONG: u8 = 1;
 const CHANNEL_MESSAGE_WITH_SOURCE: u8 = 4;
 const DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE: u8 = 5;
+#[allow(dead_code)] // Reserved for future component update features
 const DEFERRED_UPDATE_MESSAGE: u8 = 6;
+#[allow(dead_code)] // Reserved for future message update features
 const UPDATE_MESSAGE: u8 = 7;
 const APPLICATION_COMMAND_AUTOCOMPLETE_RESULT: u8 = 8;
+#[allow(dead_code)] // Reserved for future modal dialog features
 const MODAL: u8 = 9;
 
 pub async fn create_server(config: &Config, command_handler: CommandHandler) -> Result<Router> {

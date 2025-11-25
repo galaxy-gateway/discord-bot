@@ -25,7 +25,6 @@ pub struct CommandHandler {
     rate_limiter: RateLimiter,
     audio_transcriber: AudioTranscriber,
     image_generator: ImageGenerator,
-    openai_api_key: String,
     openai_model: String,
     conflict_detector: ConflictDetector,
     conflict_mediator: ConflictMediator,
@@ -56,8 +55,7 @@ impl CommandHandler {
             database,
             rate_limiter: RateLimiter::new(10, Duration::from_secs(60)),
             audio_transcriber: AudioTranscriber::new(openai_api_key.clone()),
-            image_generator: ImageGenerator::new(openai_api_key.clone()),
-            openai_api_key,
+            image_generator: ImageGenerator::new(openai_api_key),
             openai_model,
             conflict_detector: ConflictDetector::new(),
             conflict_mediator: ConflictMediator::new(999, mediation_cooldown_minutes), // High limit for testing
@@ -759,10 +757,6 @@ Use the buttons below for more help or to try custom prompts!"#;
         Ok(())
     }
 
-    async fn handle_slash_ai_command(&self, ctx: &Context, command: &ApplicationCommandInteraction) -> Result<()> {
-        self.handle_slash_ai_command_with_id(ctx, command, Uuid::new_v4()).await
-    }
-
     async fn handle_slash_ai_command_with_id(&self, ctx: &Context, command: &ApplicationCommandInteraction, request_id: Uuid) -> Result<()> {
         let start_time = Instant::now();
         
@@ -1254,46 +1248,6 @@ Use the buttons below for more help or to try custom prompts!"#;
                     .edit_original_interaction_response(&ctx.http, |response| {
                         response.content(error_message)
                     })
-                    .await?;
-            }
-        }
-
-        Ok(())
-    }
-
-    async fn handle_command(&self, ctx: &Context, msg: &Message) -> Result<()> {
-        let user_id = msg.author.id.to_string();
-        let parts: Vec<&str> = msg.content.split_whitespace().collect();
-        
-        if parts.is_empty() {
-            return Ok(());
-        }
-
-        let command = parts[0];
-        let args = &parts[1..];
-
-        info!("Processing command: {} from user: {}", command, user_id);
-
-        match command {
-            "!ping" => {
-                self.database.log_usage(&user_id, "ping", None).await?;
-                msg.channel_id.say(&ctx.http, "Pong!").await?;
-            }
-            "/help" => {
-                self.handle_help_command(ctx, msg).await?;
-            }
-            "/personas" => {
-                self.handle_personas_command(ctx, msg).await?;
-            }
-            "/set_persona" => {
-                self.handle_set_persona_command(ctx, msg, args).await?;
-            }
-            "/hey" | "/explain" | "/simple" | "/steps" | "/recipe" => {
-                self.handle_ai_command(ctx, msg, command, args).await?;
-            }
-            _ => {
-                msg.channel_id
-                    .say(&ctx.http, "Unknown command. Use `/help` to see available commands.")
                     .await?;
             }
         }
