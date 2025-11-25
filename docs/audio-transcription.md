@@ -54,7 +54,6 @@ Bot checks audio_transcription_mode setting
          ↓
 Mode = "always"? → Continue
 Mode = "mention_only"? → Check if bot was @mentioned
-Mode = "disabled"? → Stop
          ↓ (if should transcribe)
 Bot sends "🎵 Transcribing your audio..."
          ↓
@@ -125,7 +124,8 @@ Control when audio files are transcribed:
 |------|----------|
 | `always` | Transcribe all audio attachments automatically |
 | `mention_only` | Only transcribe when bot is @mentioned (default) |
-| `disabled` | Never transcribe (same as disabling feature) |
+
+**Note:** To disable transcription entirely, use `audio_transcription: disabled` instead.
 
 ### Output Mode
 

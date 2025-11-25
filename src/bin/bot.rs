@@ -239,7 +239,6 @@ impl EventHandler for Handler {
                                         response
                                             .add_string_choice("always - Transcribe all audio files", "always")
                                             .add_string_choice("mention_only - Only when @mentioned", "mention_only")
-                                            .add_string_choice("disabled - Never transcribe", "disabled")
                                     }
                                     "audio_transcription_output" => {
                                         response

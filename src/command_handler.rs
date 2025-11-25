@@ -1896,10 +1896,10 @@ Use the buttons below for more help or to try custom prompts!"#;
                 }
             }
             "audio_transcription_mode" => {
-                if ["always", "mention_only", "disabled"].contains(&value.as_str()) {
+                if ["always", "mention_only"].contains(&value.as_str()) {
                     (true, "")
                 } else {
-                    (false, "Invalid mode. Use: `always`, `mention_only`, or `disabled`.")
+                    (false, "Invalid mode. Use: `always` or `mention_only`.")
                 }
             }
             "audio_transcription_output" => {
