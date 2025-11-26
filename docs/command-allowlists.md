@@ -7,10 +7,11 @@ Command allowlists enable fine-grained control over which slash commands each bo
 **Key Features:**
 - Per-bot command filtering via YAML configuration
 - Automatic overlap detection for bots sharing guilds
+- **Shared commands** - Allow specific commands to be registered by multiple bots
 - Fail-fast validation with helpful error messages
 - Backward compatible (no allowlist = all commands)
 
-**Version:** 1.0.0 (Initial implementation)
+**Version:** 2.0.0 (Added shared_commands support)
 
 ---
 
@@ -59,7 +60,84 @@ bots:
       - "sysinfo"
 ```
 
-**Important:** Bots sharing a guild **must have non-overlapping command lists** or the bot will fail to start.
+**Important:** Bots sharing a guild **must have non-overlapping command lists** unless those commands are in `shared_commands`. See the [Shared Commands](#shared-commands) section below.
+
+---
+
+## Shared Commands
+
+Discord natively supports multiple applications registering the same slash command name in the same guild. When a user types a shared command, Discord shows both bots' versions in autocomplete, and the user explicitly chooses which bot responds.
+
+### Configuring Shared Commands
+
+Add a top-level `shared_commands` list to your config:
+
+```yaml
+# Commands that can be registered by multiple bots in the same guild
+shared_commands:
+  - "ping"       # Health check - both bots respond to their own ping
+  - "help"       # Each bot shows its own available commands
+  - "hey"        # Core chat - users choose which personality to talk to
+  - "explain"    # Different explanation styles per persona
+  - "forget"     # Clear conversation with that specific bot
+
+bots:
+  # Space-cadet bot
+  - name: "space-cadet"
+    discord_token: "${DISCORD_SPACE_CADET}"
+    discord_guild_id: "123456789"
+    default_persona: "space-cadet"
+    commands:
+      - "ping"      # Shared - OK!
+      - "help"      # Shared - OK!
+      - "hey"       # Shared - OK!
+      - "explain"   # Shared - OK!
+      - "forget"    # Shared - OK!
+      - "imagine"   # Unique to space-cadet
+      - "remind"
+
+  # Obi-wan bot
+  - name: "obi-wan"
+    discord_token: "${DISCORD_OBI_WAN}"
+    discord_guild_id: "123456789"  # Same guild!
+    default_persona: "obi"
+    commands:
+      - "ping"      # Shared - OK!
+      - "help"      # Shared - OK!
+      - "hey"       # Shared - OK!
+      - "explain"   # Shared - OK!
+      - "forget"    # Shared - OK!
+      - "recipe"    # Unique to obi-wan
+      - "settings"
+```
+
+### How It Works in Discord
+
+When a user types `/hey` in a guild with both bots:
+
+1. Discord shows the command autocomplete with both bots listed
+2. Each entry shows the bot's name and avatar
+3. User clicks on the specific bot's command
+4. That bot handles the interaction
+
+### Recommended Shared Commands
+
+| Command | Why Share? |
+|---------|------------|
+| `ping` | Both bots should respond to health checks |
+| `help` | Each bot shows its own command list |
+| `version`, `uptime`, `status` | Bot-specific info each should report |
+| `forget` | Clear conversation with that specific bot |
+| `hey` | Core chat - users pick which personality |
+| `explain`, `simple`, `steps` | Different styles per persona |
+
+### Commands to Keep Unique
+
+| Command | Why Unique? |
+|---------|-------------|
+| `recipe` | May fit one persona better than another |
+| `imagine` | Assign to creative-focused bot |
+| Admin commands | Centralize on one bot for clarity |
 
 ---
 
@@ -264,26 +342,30 @@ bots:
 
 ### Error: "Command overlap detected"
 
-**Problem:** Two bots in the same guild both have the same command in their allowlists.
+**Problem:** Two bots in the same guild both have the same command in their allowlists, and that command is not in `shared_commands`.
 
-**Solution:** Remove the duplicate command from one bot's list.
+**Solutions:**
 
-**Example:**
+1. **Add to shared_commands** (if both bots should have it):
 ```yaml
-# Before (ERROR):
+shared_commands:
+  - "ping"  # Now both bots can register ping
+
 bots:
   - name: "bot1"
     discord_guild_id: "123"
     commands: ["ping", "hey"]
   - name: "bot2"
     discord_guild_id: "123"
-    commands: ["ping", "help"]  # "ping" overlaps!
+    commands: ["ping", "help"]  # OK now!
+```
 
-# After (FIXED):
+2. **Remove from one bot's list** (if only one bot needs it):
+```yaml
 bots:
   - name: "bot1"
     discord_guild_id: "123"
-    commands: ["hey"]
+    commands: ["hey"]  # Removed ping
   - name: "bot2"
     discord_guild_id: "123"
     commands: ["ping", "help"]

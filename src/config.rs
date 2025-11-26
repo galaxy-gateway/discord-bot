@@ -3,11 +3,12 @@
 //! Multi-bot configuration system supporting both legacy single-bot environment variables
 //! and new YAML-based multi-bot configuration files.
 //!
-//! - **Version**: 2.1.0
+//! - **Version**: 2.2.0
 //! - **Since**: 0.1.0
 //! - **Toggleable**: false
 //!
 //! ## Changelog
+//! - 2.2.0: Add shared_commands for allowing command overlap between bots in same guild
 //! - 2.1.0: Add startup_notification_enabled per-bot toggle
 //! - 2.0.0: Multi-bot support with YAML configuration and BotConfig/MultiConfig structs
 //! - 1.0.0: Initial single-bot environment variable configuration
@@ -186,6 +187,12 @@ pub struct MultiConfig {
     /// Default mediation cooldown in minutes (can be overridden per-bot)
     #[serde(default = "default_mediation_cooldown")]
     pub mediation_cooldown_minutes: u64,
+
+    /// Commands that may be registered by multiple bots in the same guild.
+    /// Discord natively supports this - users see both bots' commands in
+    /// autocomplete and explicitly choose which bot responds.
+    #[serde(default)]
+    pub shared_commands: Vec<String>,
 }
 
 // Default value functions for serde
@@ -272,6 +279,7 @@ impl MultiConfig {
             conflict_mediation_enabled: legacy_config.conflict_mediation_enabled,
             conflict_sensitivity: legacy_config.conflict_sensitivity,
             mediation_cooldown_minutes: legacy_config.mediation_cooldown_minutes,
+            shared_commands: Vec::new(), // Single bot mode doesn't need shared commands
         })
     }
 
@@ -366,7 +374,7 @@ impl MultiConfig {
             }
         }
 
-        // Detect overlaps
+        // Detect overlaps (excluding shared_commands)
         for (guild_id, bots_in_guild) in &guild_commands {
             let bot_names: Vec<_> = bots_in_guild.keys().collect();
 
@@ -377,8 +385,10 @@ impl MultiConfig {
                     let cmds1 = &bots_in_guild[bot1];
                     let cmds2 = &bots_in_guild[bot2];
 
+                    // Find overlaps, excluding commands in shared_commands
                     let overlaps: Vec<_> = cmds1.iter()
                         .filter(|cmd| cmds2.contains(cmd))
+                        .filter(|cmd| !self.shared_commands.contains(cmd))
                         .cloned()
                         .collect();
 
@@ -386,7 +396,8 @@ impl MultiConfig {
                         anyhow::bail!(
                             "Command overlap detected in guild '{}':\n  \
                             Bot '{}' and '{}' both register: {}\n\n  \
-                            Fix: Remove overlapping commands from one bot's allowlist",
+                            Fix: Remove overlapping commands from one bot's allowlist, \
+                            or add them to 'shared_commands' if intentional sharing is desired.",
                             guild_id, bot1, bot2, overlaps.join(", ")
                         );
                     }
@@ -395,6 +406,11 @@ impl MultiConfig {
         }
 
         Ok(())
+    }
+
+    /// Check if a command is designated as shared
+    pub fn is_shared_command(&self, command_name: &str) -> bool {
+        self.shared_commands.iter().any(|c| c == command_name)
     }
 
     /// Get a bot configuration by name
@@ -673,6 +689,7 @@ mediation_cooldown_minutes: 10
             conflict_mediation_enabled: true,
             conflict_sensitivity: "medium".to_string(),
             mediation_cooldown_minutes: 5,
+            shared_commands: vec![],
         };
 
         let result = config.validate();
@@ -703,6 +720,7 @@ mediation_cooldown_minutes: 10
             conflict_mediation_enabled: true,
             conflict_sensitivity: "medium".to_string(),
             mediation_cooldown_minutes: 5,
+            shared_commands: vec![],
         };
 
         let result = config.validate();
@@ -735,6 +753,7 @@ mediation_cooldown_minutes: 10
             conflict_mediation_enabled: true,
             conflict_sensitivity: "low".to_string(),
             mediation_cooldown_minutes: 5,
+            shared_commands: vec![],
         };
 
         let legacy = multi.to_legacy_config(&bot);
@@ -748,5 +767,139 @@ mediation_cooldown_minutes: 10
         assert!(!legacy.conflict_mediation_enabled);
         assert_eq!(legacy.conflict_sensitivity, "high");
         assert_eq!(legacy.mediation_cooldown_minutes, 10);
+    }
+
+    #[test]
+    fn test_shared_commands_allow_overlap() {
+        // Two bots in same guild with overlapping commands should pass
+        // if the overlapping commands are in shared_commands
+        let config = MultiConfig {
+            bots: vec![
+                BotConfig {
+                    application_id: None,
+                    name: "bot1".to_string(),
+                    discord_token: "token1".to_string(),
+                    default_persona: None,
+                    discord_guild_id: Some("guild123".to_string()),
+                    openai_model: None,
+                    conflict_mediation_enabled: None,
+                    conflict_sensitivity: None,
+                    mediation_cooldown_minutes: None,
+                    commands: Some(vec!["ping".to_string(), "help".to_string(), "hey".to_string()]),
+                    startup_notification_enabled: Some(true),
+                },
+                BotConfig {
+                    application_id: None,
+                    name: "bot2".to_string(),
+                    discord_token: "token2".to_string(),
+                    default_persona: None,
+                    discord_guild_id: Some("guild123".to_string()), // Same guild
+                    openai_model: None,
+                    conflict_mediation_enabled: None,
+                    conflict_sensitivity: None,
+                    mediation_cooldown_minutes: None,
+                    commands: Some(vec!["ping".to_string(), "help".to_string(), "recipe".to_string()]),
+                    startup_notification_enabled: Some(true),
+                },
+            ],
+            openai_api_key: "key".to_string(),
+            database_path: "db".to_string(),
+            log_level: "info".to_string(),
+            openai_model: "gpt-4".to_string(),
+            conflict_mediation_enabled: true,
+            conflict_sensitivity: "medium".to_string(),
+            mediation_cooldown_minutes: 5,
+            shared_commands: vec!["ping".to_string(), "help".to_string()], // Allow these to overlap
+        };
+
+        // Should pass validation - ping and help are shared
+        let result = config.validate();
+        assert!(result.is_ok(), "Expected validation to pass: {:?}", result);
+    }
+
+    #[test]
+    fn test_non_shared_commands_still_error() {
+        // Two bots in same guild with overlapping commands that are NOT shared
+        // should fail validation
+        let config = MultiConfig {
+            bots: vec![
+                BotConfig {
+                    application_id: None,
+                    name: "bot1".to_string(),
+                    discord_token: "token1".to_string(),
+                    default_persona: None,
+                    discord_guild_id: Some("guild123".to_string()),
+                    openai_model: None,
+                    conflict_mediation_enabled: None,
+                    conflict_sensitivity: None,
+                    mediation_cooldown_minutes: None,
+                    commands: Some(vec!["ping".to_string(), "hey".to_string()]),
+                    startup_notification_enabled: Some(true),
+                },
+                BotConfig {
+                    application_id: None,
+                    name: "bot2".to_string(),
+                    discord_token: "token2".to_string(),
+                    default_persona: None,
+                    discord_guild_id: Some("guild123".to_string()), // Same guild
+                    openai_model: None,
+                    conflict_mediation_enabled: None,
+                    conflict_sensitivity: None,
+                    mediation_cooldown_minutes: None,
+                    commands: Some(vec!["ping".to_string(), "hey".to_string()]), // hey overlaps but not shared
+                    startup_notification_enabled: Some(true),
+                },
+            ],
+            openai_api_key: "key".to_string(),
+            database_path: "db".to_string(),
+            log_level: "info".to_string(),
+            openai_model: "gpt-4".to_string(),
+            conflict_mediation_enabled: true,
+            conflict_sensitivity: "medium".to_string(),
+            mediation_cooldown_minutes: 5,
+            shared_commands: vec!["ping".to_string()], // Only ping is shared, not hey
+        };
+
+        // Should fail - hey is not in shared_commands
+        let result = config.validate();
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("hey"), "Error should mention 'hey': {}", err_msg);
+        // The overlap list should only contain 'hey', not 'ping' (which is shared)
+        assert!(err_msg.contains("both register: hey"),
+            "Error should say 'both register: hey' (not include 'ping'): {}", err_msg);
+    }
+
+    #[test]
+    fn test_is_shared_command() {
+        let config = MultiConfig {
+            bots: vec![BotConfig {
+                application_id: None,
+                name: "test".to_string(),
+                discord_token: "token".to_string(),
+                default_persona: None,
+                discord_guild_id: None,
+                openai_model: None,
+                conflict_mediation_enabled: None,
+                conflict_sensitivity: None,
+                mediation_cooldown_minutes: None,
+                commands: None,
+                startup_notification_enabled: Some(true),
+            }],
+            openai_api_key: "key".to_string(),
+            database_path: "db".to_string(),
+            log_level: "info".to_string(),
+            openai_model: "gpt-4".to_string(),
+            conflict_mediation_enabled: true,
+            conflict_sensitivity: "medium".to_string(),
+            mediation_cooldown_minutes: 5,
+            shared_commands: vec!["ping".to_string(), "help".to_string(), "hey".to_string()],
+        };
+
+        assert!(config.is_shared_command("ping"));
+        assert!(config.is_shared_command("help"));
+        assert!(config.is_shared_command("hey"));
+        assert!(!config.is_shared_command("recipe"));
+        assert!(!config.is_shared_command("imagine"));
     }
 }

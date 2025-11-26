@@ -19,10 +19,11 @@
 # Each bot represents a separate Discord application with its own token.
 # All bots share the same database (isolated by bot_id) and OpenAI API key.
 #
-# IMPORTANT: Command Allowlists
+# IMPORTANT: Command Allowlists & Shared Commands
 # If multiple bots share the same discord_guild_id, they MUST have non-overlapping
-# command allowlists. Overlapping commands will cause a validation error on startup.
-# Bots without discord_guild_id (global scope) don't conflict with each other.
+# command allowlists UNLESS those commands are in the 'shared_commands' list.
+# Shared commands allow both bots to register the same command - Discord shows both
+# in autocomplete and users choose which bot responds.
 # See docs/command-allowlists.md for detailed documentation.
 
 bots:
@@ -130,3 +131,27 @@ conflict_sensitivity: "medium"
 
 # Cooldown between mediation attempts in the same channel (minutes)
 mediation_cooldown_minutes: 5
+
+# =============================================================================
+# Shared Commands
+# =============================================================================
+# Commands that may be registered by multiple bots in the same guild.
+# Discord natively supports this - when users type these commands, they see
+# both bots' versions in autocomplete and can explicitly choose which bot responds.
+#
+# This is useful for:
+# - Utility commands (ping, help, status) that make sense for any bot to handle
+# - Chat commands (hey, explain) where users might want different personalities
+#
+# Without shared_commands, overlapping commands in the same guild cause an error.
+shared_commands:
+  - "ping"       # Health check - both bots respond to their own ping
+  - "help"       # Each bot shows its own available commands
+  - "version"    # Bot-specific version info
+  - "uptime"     # Bot-specific uptime
+  - "status"     # Bot-specific status
+  - "forget"     # Clear conversation with that specific bot
+  - "hey"        # Core chat - users choose which personality to talk to
+  - "explain"    # Different explanation styles per persona
+  - "simple"     # Different simplification styles
+  - "steps"      # Different breakdown approaches

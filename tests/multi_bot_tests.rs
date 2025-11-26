@@ -282,6 +282,7 @@ fn test_multi_config_multiple_bots() {
         conflict_mediation_enabled: true,
         conflict_sensitivity: "medium".to_string(),
         mediation_cooldown_minutes: 5,
+        shared_commands: vec![],
     };
 
     assert!(config.validate().is_ok());
