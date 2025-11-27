@@ -38,31 +38,31 @@ impl PersonaManager {
         // Load all personas with prompts embedded at compile time
         personas.insert("obi".to_string(), Persona {
             name: "Obi-Wan".to_string(),
-            system_prompt: include_str!("../prompt/obi.md").to_string(),
+            system_prompt: include_str!("../../../prompt/obi.md").to_string(),
             description: "A wise Jedi Master who speaks with patience, diplomacy, and philosophical insight".to_string(),
         });
 
         personas.insert("muppet".to_string(), Persona {
             name: "Muppet Friend".to_string(),
-            system_prompt: include_str!("../prompt/muppet.md").to_string(),
+            system_prompt: include_str!("../../../prompt/muppet.md").to_string(),
             description: "A warm, enthusiastic friend who brings Muppet-style joy, humor, and heart to every conversation!".to_string(),
         });
 
         personas.insert("chef".to_string(), Persona {
             name: "Chef".to_string(),
-            system_prompt: include_str!("../prompt/chef.md").to_string(),
+            system_prompt: include_str!("../../../prompt/chef.md").to_string(),
             description: "A passionate chef who shares recipes and cooking wisdom".to_string(),
         });
 
         personas.insert("teacher".to_string(), Persona {
             name: "Teacher".to_string(),
-            system_prompt: include_str!("../prompt/teacher.md").to_string(),
+            system_prompt: include_str!("../../../prompt/teacher.md").to_string(),
             description: "A patient teacher who explains things clearly".to_string(),
         });
 
         personas.insert("analyst".to_string(), Persona {
             name: "Step-by-Step Analyst".to_string(),
-            system_prompt: include_str!("../prompt/analyst.md").to_string(),
+            system_prompt: include_str!("../../../prompt/analyst.md").to_string(),
             description: "An analyst who breaks things down into clear steps".to_string(),
         });
 

@@ -9,7 +9,7 @@ use serenity::prelude::Context;
 
 use crate::commands::CommandHandler;
 use crate::database::Database;
-use crate::personas::PersonaManager;
+use crate::features::personas::PersonaManager;
 
 /// Handler for all message component interactions
 pub struct MessageComponentHandler {

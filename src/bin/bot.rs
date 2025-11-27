@@ -8,17 +8,14 @@ use serenity::model::gateway::Ready;
 use serenity::prelude::*;
 use std::sync::Arc;
 
-use persona::commands::CommandHandler;
-use persona::config::Config;
+use persona::commands::{CommandHandler, register_global_commands, register_guild_commands};
+use persona::core::Config;
 use persona::database::Database;
-use persona::interaction_tracker::InteractionTracker;
+use persona::features::analytics::{InteractionTracker, UsageTracker, metrics_collection_loop};
+use persona::features::personas::PersonaManager;
+use persona::features::reminders::ReminderScheduler;
+use persona::features::startup::StartupNotifier;
 use persona::message_components::MessageComponentHandler;
-use persona::personas::PersonaManager;
-use persona::reminder_scheduler::ReminderScheduler;
-use persona::startup_notification::StartupNotifier;
-use persona::system_info::metrics_collection_loop;
-use persona::usage_tracker::UsageTracker;
-use persona::commands::{register_global_commands, register_guild_commands};
 use serenity::model::id::GuildId;
 
 struct Handler {

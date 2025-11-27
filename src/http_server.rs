@@ -16,7 +16,7 @@ use uuid;
 use log::{info, error, warn, debug};
 
 use crate::commands::CommandHandler;
-use crate::config::Config;
+use crate::core::Config;
 
 #[derive(Clone)]
 pub struct AppState {

@@ -1,14 +1,13 @@
-use crate::audio::AudioTranscriber;
-use crate::conflict_detector::ConflictDetector;
-use crate::image_gen::{ImageGenerator, ImageSize, ImageStyle};
-use crate::conflict_mediator::ConflictMediator;
+use crate::features::audio::transcriber::AudioTranscriber;
+use crate::features::conflict::{ConflictDetector, ConflictMediator};
+use crate::features::image_gen::generator::{ImageGenerator, ImageSize, ImageStyle};
+use crate::features::analytics::InteractionTracker;
+use crate::features::introspection::get_component_snippet;
+use crate::features::personas::PersonaManager;
+use crate::features::rate_limiting::RateLimiter;
+use crate::features::analytics::UsageTracker;
 use crate::database::Database;
-use crate::interaction_tracker::InteractionTracker;
-use crate::introspection::get_component_snippet;
 use crate::message_components::MessageComponentHandler;
-use crate::personas::PersonaManager;
-use crate::rate_limiter::RateLimiter;
-use crate::usage_tracker::UsageTracker;
 use crate::commands::slash::{get_string_option, get_channel_option, get_role_option, get_integer_option};
 use anyhow::Result;
 use log::{debug, error, info, warn};
@@ -126,10 +125,10 @@ impl CommandHandler {
 
         let content = msg.content.trim();
         debug!("[{}] 🔍 Analyzing message content | Length: {} | Is DM: {} | Starts with command: {}",
-               request_id, content.len(), is_dm, content.starts_with('!') || content.starts_with('/'));
+               request_id, content.len(), is_dm, content.starts_with('/'));
 
         // Store guild messages FIRST (needed for conflict detection to have data)
-        if !is_dm && !content.is_empty() && !content.starts_with('!') && !content.starts_with('/') {
+        if !is_dm && !content.is_empty() && !content.starts_with('/') {
             debug!("[{request_id}] 💾 Storing guild message for analysis");
             self.database.store_message(&user_id, &channel_id, "user", content, None).await?;
         }
@@ -141,7 +140,7 @@ impl CommandHandler {
             false // No conflict detection in DMs
         };
 
-        if !is_dm && self.conflict_enabled && guild_conflict_enabled && !content.is_empty() && !content.starts_with('!') && !content.starts_with('/') {
+        if !is_dm && self.conflict_enabled && guild_conflict_enabled && !content.is_empty() && !content.starts_with('/') {
             debug!("[{request_id}] 🔍 Running conflict detection analysis");
             if let Err(e) = self.check_and_mediate_conflicts(ctx, msg, &channel_id, guild_id_opt).await {
                 warn!("[{request_id}] ⚠️ Conflict detection error: {e}");
@@ -149,9 +148,9 @@ impl CommandHandler {
             }
         }
 
-        if content.starts_with('!') || content.starts_with('/') {
-            info!("[{}] 🎯 Processing command: {}", request_id, content.split_whitespace().next().unwrap_or(""));
-            self.handle_command_with_id(ctx, msg, request_id).await?;
+        if content.starts_with('/') {
+            info!("[{}] 🎯 Processing text command: {}", request_id, content.split_whitespace().next().unwrap_or(""));
+            self.handle_text_command_with_id(ctx, msg, request_id).await?;
         } else if is_dm && !content.is_empty() && !audio_handled {
             info!("[{request_id}] 💬 Processing DM message (auto-response mode)");
             self.handle_dm_message_with_id(ctx, msg, request_id).await?;
@@ -666,10 +665,10 @@ impl CommandHandler {
         Ok(())
     }
 
-    async fn handle_command_with_id(&self, ctx: &Context, msg: &Message, request_id: Uuid) -> Result<()> {
+    async fn handle_text_command_with_id(&self, ctx: &Context, msg: &Message, request_id: Uuid) -> Result<()> {
         let user_id = msg.author.id.to_string();
         let parts: Vec<&str> = msg.content.split_whitespace().collect();
-        
+
         if parts.is_empty() {
             debug!("[{request_id}] 🔍 Empty command parts array");
             return Ok(());
@@ -678,17 +677,10 @@ impl CommandHandler {
         let command = parts[0];
         let args = &parts[1..];
 
-        info!("[{}] 🎯 Processing text command: {} | Args: {} | User: {}", 
+        info!("[{}] 🎯 Processing text command: {} | Args: {} | User: {}",
               request_id, command, args.len(), user_id);
 
         match command {
-            "!ping" => {
-                debug!("[{request_id}] 🏓 Processing ping command");
-                self.database.log_usage(&user_id, "ping", None).await?;
-                debug!("[{request_id}] 📤 Sending pong response to Discord");
-                msg.channel_id.say(&ctx.http, "Pong!").await?;
-                info!("[{request_id}] ✅ Pong response sent successfully");
-            }
             "/help" => {
                 debug!("[{request_id}] 📚 Processing help command");
                 self.handle_help_command_with_id(ctx, msg, request_id).await?;
@@ -2845,7 +2837,7 @@ Use the buttons below for more help or to try custom prompts!"#;
         command: &ApplicationCommandInteraction,
         request_id: Uuid,
     ) -> Result<()> {
-        use crate::system_info::{CurrentMetrics, HistoricalSummary, format_history};
+        use crate::features::analytics::system_info::{CurrentMetrics, HistoricalSummary, format_history};
 
         let user_id = command.user.id.to_string();
 

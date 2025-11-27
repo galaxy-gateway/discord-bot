@@ -2,12 +2,11 @@ use anyhow::Result;
 use dotenvy::dotenv;
 use log::{info, error};
 
-use persona::config::Config;
+use persona::core::Config;
 use persona::database::Database;
 use persona::commands::CommandHandler;
 use persona::http_server::start_http_server;
-use persona::interaction_tracker::InteractionTracker;
-use persona::usage_tracker::UsageTracker;
+use persona::features::analytics::{InteractionTracker, UsageTracker};
 
 #[tokio::main]
 async fn main() -> Result<()> {

@@ -1,13 +1,45 @@
-//! # Feature Registry
+//! # Features Module
 //!
-//! Central registry for all bot features with version tracking and runtime toggles.
+//! Central registry for all bot features with version tracking and runtime toggles,
+//! plus all feature module declarations.
 //!
-//! - **Version**: 1.0.0
+//! - **Version**: 2.0.0
 //! - **Since**: 0.2.0
 //! - **Toggleable**: false
 //!
 //! ## Changelog
+//! - 2.0.0: Reorganized as parent module with feature subdirectories
 //! - 1.0.0: Initial feature registry implementation
+
+// Feature submodules
+pub mod analytics;
+pub mod audio;
+pub mod conflict;
+pub mod image_gen;
+pub mod introspection;
+pub mod personas;
+pub mod rate_limiting;
+pub mod reminders;
+pub mod startup;
+
+// Re-export commonly used items from submodules
+pub use analytics::{
+    metrics_collection_loop, InteractionTracker, UsageTracker, CurrentMetrics,
+    format_bytes, format_bytes_signed, format_duration, format_history,
+    get_db_file_size, DiskInfo, HistoricalSummary,
+};
+pub use audio::{AudioTranscriber, TranscriptionResult};
+pub use conflict::{ConflictDetector, ConflictMediator};
+pub use image_gen::{ImageGenerator, ImageSize, ImageStyle, GeneratedImage};
+pub use introspection::get_component_snippet;
+pub use personas::{Persona, PersonaManager};
+pub use rate_limiting::RateLimiter;
+pub use reminders::ReminderScheduler;
+pub use startup::StartupNotifier;
+
+// ============================================================================
+// Feature Registry
+// ============================================================================
 
 /// Describes a versioned bot feature
 #[derive(Debug, Clone)]

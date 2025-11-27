@@ -13,8 +13,8 @@
 //! - 1.0.0: Initial release with time parsing (30m, 2h, 1d, 1h30m) and persona delivery
 
 use crate::database::Database;
-use crate::personas::PersonaManager;
-use crate::usage_tracker::UsageTracker;
+use crate::features::personas::PersonaManager;
+use crate::features::analytics::UsageTracker;
 use anyhow::Result;
 use log::{debug, error, info, warn};
 use openai::chat::{ChatCompletion, ChatCompletionMessage, ChatCompletionMessageRole};

@@ -1,19 +1,41 @@
-pub mod audio;
+// Core layer - shared types and configuration
+pub mod core;
+
+// Features layer - all feature modules
+pub mod features;
+
+// UI components (to be moved to presentation/)
+pub mod message_components;
+
+// Infrastructure (to be reorganized)
+pub mod database;
+pub mod http_server;
+
+// Application layer
 pub mod command_handler;
 pub mod commands;
-pub mod config;
-pub mod conflict_detector;
-pub mod conflict_mediator;
-pub mod database;
-pub mod features;
-pub mod http_server;
-pub mod image_gen;
-pub mod interaction_tracker;
-pub mod introspection;
-pub mod message_components;
-pub mod personas;
-pub mod rate_limiter;
-pub mod reminder_scheduler;
-pub mod startup_notification;
-pub mod system_info;
-pub mod usage_tracker;
+
+// Re-export core config for backwards compatibility
+pub use core::Config;
+
+// Re-export feature items for backwards compatibility
+pub use features::{
+    // Analytics
+    metrics_collection_loop, InteractionTracker, UsageTracker, CurrentMetrics,
+    // Audio
+    AudioTranscriber, TranscriptionResult,
+    // Conflict
+    ConflictDetector, ConflictMediator,
+    // Image generation
+    ImageGenerator, ImageSize, ImageStyle, GeneratedImage,
+    // Introspection
+    get_component_snippet,
+    // Personas
+    Persona, PersonaManager,
+    // Rate limiting
+    RateLimiter,
+    // Reminders
+    ReminderScheduler,
+    // Startup
+    StartupNotifier,
+};
