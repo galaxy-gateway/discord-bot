@@ -4,8 +4,8 @@
 
 This document outlines a comprehensive plan to enable the persona bot to support multiple Discord applications simultaneously. Currently, the bot is designed for a single Discord application with one token and one identity. This plan details the architectural changes needed to run multiple bots concurrently while sharing resources efficiently.
 
-**Estimated Timeline**: 2 weeks
-**Complexity**: Medium
+**Estimated Timeline**: 2.5-3 weeks
+**Complexity**: Medium-High
 **Risk Level**: Medium (primarily database migration)
 
 ---
@@ -36,17 +36,31 @@ This document outlines a comprehensive plan to enable the persona bot to support
 
 **Problem**: No bot identity tracking
 
-Current tables lack `bot_id` column:
-- `user_preferences`: Keyed only by `user_id`
-  - Issue: Same user across multiple bots would conflict
-- `conversation_history`: Keyed by `user_id` + `channel_id`
-  - Issue: Can't distinguish which bot had which conversation
-- `guild_settings`: Keyed by `guild_id` + `setting_key`
-  - Issue: Same guild could have different settings per bot
-- `usage_stats`: No bot identifier
-  - Issue: Can't track usage per bot
+Current tables lack `bot_id` column. **All 27 tables** need migration:
 
-**Impact**: HIGH - Requires schema migration and ~50 method updates
+**Core Tables**:
+- `user_preferences`: Keyed only by `user_id` - conflicts across bots
+- `user_profiles`: User profile data per bot
+- `conversation_history`: Keyed by `user_id` + `channel_id` - can't distinguish bots
+- `message_metadata`: Message context per bot
+- `interaction_sessions`: Session tracking per bot
+
+**Feature Tables**:
+- `user_bookmarks`, `reminders`, `custom_commands`
+- `daily_analytics`, `performance_metrics`, `error_logs`
+- `feature_flags`, `feature_versions`, `bot_settings`, `extended_user_preferences`
+
+**Conflict System**:
+- `conflict_detection`, `mediation_history`, `user_interaction_patterns`, `channel_settings`
+
+**Usage Tracking**:
+- `openai_usage`, `openai_usage_daily`
+- `dm_sessions`, `dm_session_metrics`, `dm_events`
+
+**Guild Settings**:
+- `guild_settings`: Keyed by `guild_id` + `setting_key` - same guild needs different settings per bot
+
+**Impact**: HIGH - Requires schema migration for 27 tables and ~90+ method updates
 
 #### 2. Configuration System ([src/config.rs](../src/config.rs))
 
@@ -99,20 +113,48 @@ client.start().await?;  // Blocks forever - can't start another bot
 
 #### 1.1 Schema Migration
 
-Add `bot_id TEXT NOT NULL` to all tables:
+Add `bot_id TEXT NOT NULL` to all 27 tables. **Important**: SQLite does not support modifying primary keys with `ALTER TABLE`. Tables must be recreated.
 
 ```sql
--- Migration script
-ALTER TABLE user_preferences ADD COLUMN bot_id TEXT NOT NULL DEFAULT 'default';
-ALTER TABLE conversation_history ADD COLUMN bot_id TEXT NOT NULL DEFAULT 'default';
-ALTER TABLE guild_settings ADD COLUMN bot_id TEXT NOT NULL DEFAULT 'default';
-ALTER TABLE usage_stats ADD COLUMN bot_id TEXT NOT NULL DEFAULT 'default';
+-- migrations/001_add_bot_id.sql
+-- SQLite requires table recreation to modify primary keys
 
--- Update primary keys
--- user_preferences: (user_id) -> (bot_id, user_id)
--- conversation_history: (id) -> keep id, add index on (bot_id, user_id, channel_id)
--- guild_settings: (guild_id, setting_key) -> (bot_id, guild_id, setting_key)
+PRAGMA foreign_keys=OFF;
+BEGIN TRANSACTION;
+
+-- Example: user_preferences table migration pattern
+-- Apply this pattern to all 27 tables
+
+-- 1. Create new table with bot_id in primary key
+CREATE TABLE user_preferences_new (
+    bot_id TEXT NOT NULL DEFAULT 'default',
+    user_id TEXT NOT NULL,
+    persona TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (bot_id, user_id)
+);
+
+-- 2. Copy existing data with default bot_id
+INSERT INTO user_preferences_new (bot_id, user_id, persona, created_at)
+SELECT 'default', user_id, persona, created_at FROM user_preferences;
+
+-- 3. Drop old table and rename new
+DROP TABLE user_preferences;
+ALTER TABLE user_preferences_new RENAME TO user_preferences;
+
+-- Repeat for all other tables...
+-- (See Appendix B for complete schema)
+
+COMMIT;
+PRAGMA foreign_keys=ON;
+
+-- Enable WAL mode for better concurrent access
+PRAGMA journal_mode=WAL;
+PRAGMA busy_timeout=5000;
+PRAGMA synchronous=NORMAL;
 ```
+
+**Note**: The migration script generator should be created to handle all 27 tables automatically.
 
 #### 1.2 Database Method Updates
 
@@ -128,16 +170,30 @@ pub async fn get_user_persona(&self, user_id: &str) -> Result<Option<String>>
 pub async fn get_user_persona(&self, bot_id: &str, user_id: &str) -> Result<Option<String>>
 ```
 
-Affected methods (~50 total):
-- `get_user_persona`
-- `set_user_persona`
-- `get_conversation_history`
-- `store_message`
-- `clear_conversation_history`
-- `get_guild_setting`
-- `set_guild_setting`
-- `record_command_usage`
-- All other database operations
+Affected methods (~90+ total across all features):
+
+**Core Methods**:
+- `get_user_persona`, `set_user_persona`
+- `get_conversation_history`, `store_message`, `clear_conversation_history`
+- `get_guild_setting`, `set_guild_setting`
+
+**Usage Tracking**:
+- `record_command_usage`, `get_usage_stats`
+- OpenAI usage methods (raw and daily aggregates)
+
+**DM Session Tracking**:
+- `create_dm_session`, `end_dm_session`, `get_dm_stats`
+- `record_dm_event`, `get_dm_session_metrics`
+
+**Conflict System**:
+- `store_conflict_detection`, `get_mediation_history`
+- `get_user_interaction_patterns`, `get_channel_settings`
+
+**Feature Flags & Analytics**:
+- `get_feature_flag`, `set_feature_flag`
+- `record_analytics`, `get_daily_analytics`
+
+**And all other database operations...**
 
 #### 1.3 Migration Strategy
 
@@ -156,13 +212,14 @@ Affected methods (~50 total):
 
 #### 1.4 Deliverables
 
-- [ ] SQL migration script: `migrations/001_add_bot_id.sql`
+- [ ] SQL migration script generator for all 27 tables: `migrations/001_add_bot_id.sql`
 - [ ] Updated database schema in `database.rs`
-- [ ] All database methods accept `bot_id` parameter
+- [ ] All ~90+ database methods accept `bot_id` parameter
 - [ ] Integration tests for multi-bot data isolation
 - [ ] Migration guide for production databases
+- [ ] Rollback script for failed migrations
 
-**Estimated Time**: 3-5 days
+**Estimated Time**: 5-7 days (due to 27 tables, ~90+ methods)
 
 ---
 
@@ -175,10 +232,11 @@ Affected methods (~50 total):
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct BotConfig {
-    /// Unique identifier for this bot instance
+    /// Unique identifier for this bot instance (used in database)
+    /// This is separate from `name` to allow friendly display names
     pub bot_id: String,
 
-    /// Friendly name for logging
+    /// Friendly name for logging and display
     pub name: String,
 
     /// Discord bot token
@@ -186,6 +244,9 @@ pub struct BotConfig {
 
     /// Optional: Default persona for this bot
     pub default_persona: Option<String>,
+
+    /// Optional: Development guild ID for faster slash command registration
+    pub discord_guild_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -199,19 +260,43 @@ pub struct MultiConfig {
     /// Shared database path
     pub database_path: String,
 
+    /// Default OpenAI model
+    pub openai_model: String,
+
     /// Logging configuration
     pub log_level: String,
+
+    /// Conflict mediation settings
+    pub conflict_mediation_enabled: bool,
+    pub conflict_sensitivity: String,
+    pub mediation_cooldown_minutes: u64,
+
+    /// Health check configuration (required for production)
+    pub health_check_port: u16,
 }
 
 impl MultiConfig {
-    /// Load from YAML/JSON file
+    /// Load from YAML/JSON file with environment variable interpolation
     pub fn from_file(path: &str) -> Result<Self> {
-        // Implementation
+        let content = std::fs::read_to_string(path)?;
+        let interpolated = Self::interpolate_env_vars(&content);
+        serde_yaml::from_str(&interpolated)
     }
 
     /// Load from environment variables (backward compatible)
     pub fn from_env_single_bot() -> Result<Self> {
         // Creates MultiConfig with single bot from DISCORD_MUPPET_FRIEND
+    }
+
+    /// Interpolate ${VAR_NAME} and ${VAR_NAME:-default} patterns
+    fn interpolate_env_vars(content: &str) -> String {
+        use regex::{Regex, Captures};
+        let re = Regex::new(r"\$\{([^}:-]+)(?::-([^}]*))?\}").unwrap();
+        re.replace_all(content, |caps: &Captures| {
+            let var_name = &caps[1];
+            let default = caps.get(2).map(|m| m.as_str()).unwrap_or("");
+            std::env::var(var_name).unwrap_or_else(|_| default.to_string())
+        }).to_string()
     }
 }
 ```
@@ -221,10 +306,13 @@ impl MultiConfig {
 **config.yaml**:
 ```yaml
 bots:
+  # bot_id is the database identifier (lowercase, no spaces)
+  # name is the friendly display name for logging
   - bot_id: "muppet"
     name: "Muppet Friend"
     discord_token: "${DISCORD_MUPPET_TOKEN}"
     default_persona: "muppet"
+    # discord_guild_id: "${DISCORD_GUILD_ID}"  # Optional: for dev mode
 
   - bot_id: "chef"
     name: "Chef Bot"
@@ -236,9 +324,19 @@ bots:
     discord_token: "${DISCORD_TEACHER_TOKEN}"
     default_persona: "teacher"
 
+# Shared configuration
 openai_api_key: "${OPENAI_API_KEY}"
-database_path: "./persona.db"
-log_level: "info"
+openai_model: "${OPENAI_MODEL:-gpt-4o-mini}"
+database_path: "${DATABASE_PATH:-./persona.db}"
+log_level: "${LOG_LEVEL:-info}"
+
+# Conflict mediation (shared settings)
+conflict_mediation_enabled: true
+conflict_sensitivity: "medium"
+mediation_cooldown_minutes: 5
+
+# Health check endpoint (required for production)
+health_check_port: 8080
 ```
 
 #### 2.3 Backward Compatibility
@@ -391,20 +489,74 @@ async fn run_bot_with_retry(/* ... */) -> Result<()> {
 
 #### 3.3 Graceful Shutdown
 
+Proper shutdown is critical for multi-bot deployments to avoid message loss and ensure clean disconnection.
+
 ```rust
 use tokio::signal;
+use std::time::Duration;
+
+// Shutdown configuration
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
 
 // In main()
+let shutdown_token = CancellationToken::new();
+
+// Clone for each bot task
+for bot_config in config.bots {
+    let token = shutdown_token.clone();
+    let handle = tokio::spawn(async move {
+        run_bot_with_shutdown(bot_config, db, pm, api_key, token).await
+    });
+    handles.push(handle);
+}
+
+// Wait for shutdown signal or bot completion
 tokio::select! {
     _ = signal::ctrl_c() => {
-        info!("Received Ctrl+C, shutting down all bots...");
-        // Cancel all bot tasks
+        info!("Received Ctrl+C, initiating graceful shutdown...");
+        shutdown_token.cancel();
+
+        // Wait for bots to finish with timeout
+        match tokio::time::timeout(SHUTDOWN_TIMEOUT, async {
+            // 1. Stop accepting new messages
+            info!("Stopping message processing...");
+
+            // 2. Wait for in-flight requests to complete
+            for (bot_id, shard_manager) in &shard_managers {
+                info!("Disconnecting bot: {}", bot_id);
+                shard_manager.shutdown_all().await;
+            }
+
+            // 3. Flush database writes
+            info!("Flushing database...");
+            database.flush().await;
+
+            // 4. Wait for all bot tasks
+            futures::future::join_all(handles).await
+        }).await {
+            Ok(_) => info!("Graceful shutdown completed"),
+            Err(_) => warn!("Shutdown timed out after {:?}", SHUTDOWN_TIMEOUT),
+        }
     }
     results = futures::future::join_all(handles) => {
-        // Handle normal completion
+        // Handle normal completion (all bots exited)
+        for (i, result) in results.into_iter().enumerate() {
+            match result {
+                Ok(Ok(())) => info!("Bot {} exited successfully", i),
+                Ok(Err(e)) => error!("Bot {} failed: {}", i, e),
+                Err(e) => error!("Bot {} task panicked: {}", i, e),
+            }
+        }
     }
 }
 ```
+
+**Shutdown Sequence**:
+1. Signal all bots to stop accepting new messages
+2. Wait for in-flight requests to complete (with timeout)
+3. Disconnect from Discord Gateway cleanly
+4. Flush pending database writes
+5. Exit process
 
 #### 3.4 Deliverables
 
@@ -493,28 +645,41 @@ Apply this pattern to all methods:
 
 #### 4.3 Update Rate Limiter
 
-**Current**:
+The rate limiter already uses `DashMap` for thread-safe concurrent access. Only the key type needs updating.
+
+**Current** (in `src/features/rate_limiting/limiter.rs`):
 ```rust
-// Rate limiter keyed by user_id only
+// Rate limiter keyed by user_id only - already thread-safe with DashMap
 pub struct RateLimiter {
-    last_interaction: HashMap<String, Instant>,
+    requests: DashMap<String, Vec<Instant>>,  // Key: user_id
+    max_requests: usize,
+    time_window: Duration,
 }
 ```
 
 **New**:
 ```rust
-// Rate limiter keyed by (bot_id, user_id)
+// Rate limiter keyed by "bot_id:user_id" composite key
 pub struct RateLimiter {
-    last_interaction: HashMap<(String, String), Instant>,
+    requests: DashMap<String, Vec<Instant>>,  // Key: "bot_id:user_id"
+    max_requests: usize,
+    time_window: Duration,
 }
 
 impl RateLimiter {
-    pub fn check_rate_limit(&mut self, bot_id: &str, user_id: &str) -> bool {
-        let key = (bot_id.to_string(), user_id.to_string());
-        // ... rest of logic
+    pub fn check_rate_limit(&self, bot_id: &str, user_id: &str) -> bool {
+        let key = format!("{}:{}", bot_id, user_id);
+        // ... rest of logic unchanged
+    }
+
+    pub async fn wait_for_rate_limit(&self, bot_id: &str, user_id: &str) {
+        let key = format!("{}:{}", bot_id, user_id);
+        // ... rest of logic unchanged
     }
 }
 ```
+
+**Note**: Using a composite string key (`"bot_id:user_id"`) is simpler than a tuple key and maintains DashMap compatibility.
 
 #### 4.4 Update All Database Calls
 
@@ -534,7 +699,211 @@ self.database.method_name(&self.bot_id, /* other params */).await?;
 - [ ] Add integration tests for context isolation
 - [ ] Verify no conversation bleeding between bots
 
+**Estimated Time**: 3-4 days (more features to update)
+
+---
+
+### Phase 5: Feature-Specific Updates
+
+Several existing features require bot_id context propagation beyond the core command handler.
+
+#### 5.1 Conflict Detection & Mediation
+
+Location: `src/features/conflict/`
+
+```rust
+// detector.rs - Add bot_id to conflict tracking
+impl ConflictDetector {
+    pub async fn detect_conflict(
+        &self,
+        bot_id: &str,  // NEW
+        channel_id: &str,
+        user_id: &str,
+        message: &str,
+    ) -> Result<Option<ConflictEvent>> {
+        // Store conflict with bot context
+        self.database.store_conflict_detection(bot_id, channel_id, user_id, ...).await?;
+    }
+}
+
+// mediator.rs - Add bot_id to mediation history
+impl ConflictMediator {
+    pub async fn mediate(
+        &self,
+        bot_id: &str,  // NEW
+        conflict: &ConflictEvent,
+    ) -> Result<MediationResponse> {
+        // Track mediation per bot
+        self.database.record_mediation(bot_id, ...).await?;
+    }
+}
+```
+
+#### 5.2 Reminders Scheduler
+
+Location: `src/features/reminders/scheduler.rs`
+
+The background scheduler needs bot context to send reminders from the correct bot.
+
+```rust
+pub struct ReminderScheduler {
+    bot_id: String,  // NEW: Which bot owns these reminders
+    database: Arc<Database>,
+    http: Arc<Http>,  // Bot-specific HTTP client
+}
+
+impl ReminderScheduler {
+    pub fn new(bot_id: String, database: Arc<Database>, http: Arc<Http>) -> Self {
+        Self { bot_id, database, http }
+    }
+
+    pub async fn check_and_send_reminders(&self) -> Result<()> {
+        // Only fetch reminders for this bot
+        let reminders = self.database
+            .get_pending_reminders(&self.bot_id)
+            .await?;
+        // ...
+    }
+}
+```
+
+#### 5.3 DM Session Tracking
+
+Location: `src/database.rs` (DM-related methods)
+
+DM sessions must be tracked per-bot since users may DM multiple bots.
+
+```rust
+// All DM methods need bot_id
+pub async fn create_dm_session(
+    &self,
+    bot_id: &str,  // NEW
+    user_id: &str,
+    channel_id: &str,
+) -> Result<i64>;
+
+pub async fn get_dm_stats(
+    &self,
+    bot_id: &str,  // NEW
+    user_id: Option<&str>,
+) -> Result<DmStats>;
+```
+
+#### 5.4 Analytics & Usage Tracking
+
+Location: `src/features/analytics/`
+
+```rust
+// interaction_tracker.rs
+impl InteractionTracker {
+    pub async fn record_interaction(
+        &self,
+        bot_id: &str,  // NEW
+        user_id: &str,
+        command: &str,
+    ) -> Result<()>;
+}
+
+// usage_tracker.rs
+impl UsageTracker {
+    pub async fn record_openai_usage(
+        &self,
+        bot_id: &str,  // NEW
+        tokens: u32,
+        cost: f64,
+    ) -> Result<()>;
+}
+```
+
+#### 5.5 Feature Flags
+
+Location: `src/database.rs`
+
+Feature flags can be per-bot for gradual rollouts.
+
+```rust
+pub async fn get_feature_flag(
+    &self,
+    bot_id: &str,  // NEW
+    flag_name: &str,
+) -> Result<Option<bool>>;
+
+pub async fn set_feature_flag(
+    &self,
+    bot_id: &str,  // NEW
+    flag_name: &str,
+    enabled: bool,
+) -> Result<()>;
+```
+
+#### 5.6 Deliverables
+
+- [ ] Update ConflictDetector with bot_id context
+- [ ] Update ConflictMediator with bot_id context
+- [ ] Update ReminderScheduler to be bot-aware
+- [ ] Update all DM session methods
+- [ ] Update InteractionTracker and UsageTracker
+- [ ] Update feature flag methods
+- [ ] Add tests for feature isolation
+
 **Estimated Time**: 2-3 days
+
+---
+
+### Phase 6: Sharding Considerations
+
+For bots in 5000+ guilds, Discord requires sharding. Each shard handles a subset of guilds.
+
+#### 6.1 Sharding Architecture
+
+```rust
+use serenity::client::bridge::gateway::ShardManager;
+
+async fn run_bot(
+    bot_config: BotConfig,
+    database: Arc<Database>,
+    // ...
+) -> Result<()> {
+    let mut client = Client::builder(&bot_config.discord_token, intents)
+        .event_handler(handler)
+        .await?;
+
+    // For large bots, access shard manager
+    let shard_manager = client.shard_manager.clone();
+
+    // Store for graceful shutdown
+    SHARD_MANAGERS.lock().await.insert(
+        bot_config.bot_id.clone(),
+        shard_manager,
+    );
+
+    client.start_autosharded().await?;  // Auto-shard based on guild count
+    Ok(())
+}
+```
+
+#### 6.2 Shard-Aware Logging
+
+```rust
+use tracing::{info, Span};
+
+// Include shard ID in logs
+info!(
+    bot_id = %self.bot_id,
+    shard_id = %ctx.shard_id,
+    "Processing message"
+);
+```
+
+#### 6.3 When to Consider Sharding
+
+| Guilds | Recommendation |
+|--------|---------------|
+| < 2,500 | No sharding needed |
+| 2,500 - 5,000 | Optional, may improve responsiveness |
+| > 5,000 | Required by Discord |
+
+**Note**: Each bot in a multi-bot setup shards independently based on its own guild count.
 
 ---
 
@@ -591,6 +960,87 @@ mod tests {
 3. **Concurrent Operations**: Stress test with simultaneous requests to all bots
 4. **Bot Failure Recovery**: Kill one bot, verify others continue
 5. **Configuration Loading**: Test both YAML and env var configurations
+
+### Test Mocking Strategy
+
+Running integration tests without real Discord tokens requires mocking. Here's the recommended approach:
+
+#### Test Fixtures
+
+```rust
+#[cfg(test)]
+mod test_fixtures {
+    use super::*;
+
+    /// Create an in-memory database for testing
+    pub async fn test_database() -> Database {
+        Database::new(":memory:").await.expect("Failed to create test database")
+    }
+
+    /// Create test bot configurations
+    pub fn test_bot_configs() -> (BotConfig, BotConfig) {
+        let bot1 = BotConfig {
+            bot_id: "test_bot_1".to_string(),
+            name: "Test Bot 1".to_string(),
+            discord_token: "fake_token_1".to_string(),
+            default_persona: Some("muppet".to_string()),
+            discord_guild_id: None,
+        };
+        let bot2 = BotConfig {
+            bot_id: "test_bot_2".to_string(),
+            name: "Test Bot 2".to_string(),
+            discord_token: "fake_token_2".to_string(),
+            default_persona: Some("chef".to_string()),
+            discord_guild_id: None,
+        };
+        (bot1, bot2)
+    }
+
+    /// Setup multi-bot test environment
+    pub async fn setup_multi_bot_test() -> (Database, BotConfig, BotConfig) {
+        let db = test_database().await;
+        let (bot1, bot2) = test_bot_configs();
+        (db, bot1, bot2)
+    }
+}
+```
+
+#### Mocking Discord API (Optional)
+
+For tests that need Discord API responses, use `mockito` or similar:
+
+```rust
+#[cfg(test)]
+mod discord_mock_tests {
+    use mockito::{Server, Mock};
+
+    #[tokio::test]
+    async fn test_bot_connection() {
+        let mut server = Server::new();
+
+        // Mock Discord gateway
+        let _m = server.mock("GET", "/gateway")
+            .with_status(200)
+            .with_body(r#"{"url": "wss://gateway.discord.gg"}"#)
+            .create();
+
+        // Test connection logic...
+    }
+}
+```
+
+#### Running Tests Without Discord
+
+```bash
+# Run database-only tests (no Discord connection)
+cargo test --lib database::
+
+# Run all unit tests
+cargo test --lib
+
+# Run with test logging
+RUST_LOG=debug cargo test -- --nocapture
+```
 
 ### Manual Testing Checklist
 
@@ -672,18 +1122,70 @@ Per bot:
 - Errors encountered
 - API latency (OpenAI, Discord)
 
-### Health Checks
+### Health Checks (Required)
+
+A health check endpoint is **required** for production deployments. This enables load balancers, container orchestrators, and monitoring systems to verify bot health.
 
 ```rust
-// Optional: Add health check endpoint
-async fn health_check(registry: Arc<BotRegistry>) -> Json<HealthStatus> {
-    let status = registry.bots.iter().map(|(id, bot)| {
-        (id.clone(), bot.is_connected())
+use axum::{Router, routing::get, Json, extract::State};
+use std::sync::Arc;
+
+#[derive(Debug, Serialize)]
+pub struct HealthStatus {
+    pub status: &'static str,
+    pub bots: Vec<BotHealth>,
+    pub database_connected: bool,
+    pub uptime_seconds: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BotHealth {
+    pub bot_id: String,
+    pub name: String,
+    pub connected: bool,
+    pub guilds: usize,
+    pub latency_ms: Option<u64>,
+}
+
+// Health check endpoint - spawned alongside bots
+async fn health_check(State(registry): State<Arc<BotRegistry>>) -> Json<HealthStatus> {
+    let bots = registry.bots.iter().map(|(id, bot)| {
+        BotHealth {
+            bot_id: id.clone(),
+            name: bot.name.clone(),
+            connected: bot.is_connected(),
+            guilds: bot.guild_count(),
+            latency_ms: bot.latency(),
+        }
     }).collect();
 
-    Json(HealthStatus { bots: status })
+    Json(HealthStatus {
+        status: "ok",
+        bots,
+        database_connected: registry.database.is_connected().await,
+        uptime_seconds: registry.uptime().as_secs(),
+    })
 }
+
+// In main() - spawn health check server
+let health_app = Router::new()
+    .route("/health", get(health_check))
+    .route("/ready", get(readiness_check))
+    .with_state(Arc::clone(&registry));
+
+tokio::spawn(async move {
+    let addr = format!("0.0.0.0:{}", config.health_check_port);
+    info!("Health check endpoint starting on {}", addr);
+    axum::Server::bind(&addr.parse().unwrap())
+        .serve(health_app.into_make_service())
+        .await
+        .expect("Health check server failed");
+});
 ```
+
+**Endpoints**:
+- `GET /health` - Overall system health (for monitoring)
+- `GET /ready` - Readiness probe (for Kubernetes/load balancers)
 
 ---
 
@@ -808,25 +1310,43 @@ If multi-bot deployment fails:
 
 ---
 
-## Open Questions for Discussion
+## Open Questions - Decisions Made
 
-Before implementing, we should decide:
+The following decisions have been made for implementation:
+
+| Question | Decision | Rationale |
+|----------|----------|-----------|
+| **Data Sharing** | Per-bot by default, no sharing | Prevents accidental data leakage; simpler mental model |
+| **Bot Identification** | Use custom `bot_id` field | More flexible than Discord app_id; human-readable |
+| **Config Management** | Support both file and env vars | Backward compatible; env vars for simple deployments |
+| **Deployment Model** | Single process for all bots | Simpler operations; shared resources; easier debugging |
+| **Health Check** | Required (not optional) | Essential for production monitoring and orchestration |
+
+### Detailed Decisions
 
 1. **Data Sharing Philosophy**
-   - Should user preferences be per-bot or global with bot-specific overrides?
-   - Should conversation history ever be shared between bots?
+   - **Decision**: All data is per-bot by default
+   - User preferences, conversation history, and settings are completely isolated
+   - No cross-bot data sharing in initial implementation
+   - Future enhancement could add opt-in sharing
 
 2. **Bot Identification**
-   - Use Discord application_id or custom bot_id?
-   - How to handle bot_id in logs/metrics?
+   - **Decision**: Use custom `bot_id` string (e.g., "muppet", "chef")
+   - Separate from display `name` field for flexibility
+   - Used as database key, log identifier, and metrics label
+   - Must be lowercase, alphanumeric, no spaces
 
 3. **Configuration Management**
-   - Require config file or support 100% env vars?
-   - Support remote config (HTTP, S3, etc.)?
+   - **Decision**: Support both methods with file taking precedence
+   - If `config.yaml` exists, use it (with env var interpolation)
+   - Otherwise, fall back to `DISCORD_MUPPET_FRIEND` for single-bot mode
+   - Remote config (S3, HTTP) deferred to future enhancement
 
 4. **Deployment Model**
-   - Single process for all bots or ability to run separately?
-   - Docker container per bot or monolithic?
+   - **Decision**: Single monolithic process
+   - All bots run in one process with shared database connection
+   - Simpler Docker setup (one container)
+   - Per-bot processes can be added later if needed
 
 ---
 
@@ -834,26 +1354,38 @@ Before implementing, we should decide:
 
 ### Major Changes Required
 
-| File | Changes | Lines | Complexity |
-|------|---------|-------|------------|
-| `src/config.rs` | Complete rewrite | ~100 | High |
-| `src/database.rs` | Add bot_id to all methods | ~300 | High |
-| `src/bin/bot.rs` | Multi-client spawning | ~150 | Medium |
-| `src/commands.rs` | Add bot_id context | ~200 | Medium |
-| `src/rate_limiter.rs` | Composite keys | ~50 | Low |
+| File | Changes | Estimated Lines | Complexity |
+|------|---------|-----------------|------------|
+| `src/core/config.rs` | Add MultiConfig, YAML parsing, env interpolation | ~150 | High |
+| `src/database.rs` | Add bot_id to all ~90 methods, 27 table migrations | ~500 | High |
+| `src/bin/bot.rs` | Multi-client spawning, health endpoint, shutdown | ~250 | High |
+| `src/command_handler.rs` | Add bot_id field, update all methods | ~200 | Medium |
+| `src/features/rate_limiting/limiter.rs` | Composite string keys | ~30 | Low |
+| `src/features/conflict/detector.rs` | Add bot_id to detection | ~50 | Medium |
+| `src/features/conflict/mediator.rs` | Add bot_id to mediation | ~50 | Medium |
+| `src/features/reminders/scheduler.rs` | Bot-aware scheduling | ~80 | Medium |
+| `src/features/analytics/*.rs` | Bot-aware tracking | ~100 | Medium |
 
 ### New Files Needed
 
-- `migrations/001_add_bot_id.sql` - Database migration
-- `config.yaml.example` - Example configuration
+- `migrations/001_add_bot_id.sql` - Database migration (all 27 tables)
+- `config.yaml.example` - Example multi-bot configuration
+- `src/health.rs` - Health check endpoint (required)
 - `docs/multi-bot-setup.md` - User-facing setup guide
 - `tests/integration/multi_bot_tests.rs` - Integration tests
+- `tests/fixtures/mod.rs` - Test fixtures for multi-bot scenarios
 
 ### No Changes Required
 
-- `src/personas.rs` - Already multi-bot compatible ✅
-- `src/audio.rs` - Stateless ✅
-- `src/message_components.rs` - Minor context updates only
+- `src/features/personas/` - Already stateless and multi-bot compatible ✅
+- `src/features/audio/transcriber.rs` - Stateless, shareable ✅
+- `src/features/image_gen/` - Stateless, shareable ✅
+- `src/commands/slash/` - Command definitions are stateless ✅
+
+### Minor Updates Only
+
+- `src/handler.rs` - Pass bot_id to command handler
+- `src/features/message_components/` - Minor context updates
 
 ---
 
@@ -946,11 +1478,23 @@ log_level: "info"
 This implementation plan provides a comprehensive roadmap to enable multi-Discord-app support. The phased approach minimizes risk while delivering incremental value. The architecture maintains the existing persona system's elegance while adding the flexibility to run multiple bot identities simultaneously.
 
 **Key Success Factors**:
-- Careful database migration with rollback plan
-- Comprehensive testing at each phase
-- Backward compatibility during transition
+- Careful database migration with rollback plan (27 tables require recreation)
+- Comprehensive testing at each phase with proper test fixtures
+- Backward compatibility during transition (env vars still work)
 - Clear separation of shared vs. per-bot resources
+- Required health check endpoint for production monitoring
+- Proper graceful shutdown handling
 
-**Estimated Total Effort**: ~2 weeks for core implementation (Phases 1-4 using Gateway mode)
+**Estimated Total Effort**:
 
-**Questions?** Review the "Open Questions" section and make decisions before beginning implementation.
+| Phase | Description | Time |
+|-------|-------------|------|
+| Phase 1 | Database Multi-Tenancy | 5-7 days |
+| Phase 2 | Configuration System | 1-2 days |
+| Phase 3 | Multi-Client Architecture | 3-4 days |
+| Phase 4 | Context Propagation | 3-4 days |
+| Phase 5 | Feature-Specific Updates | 2-3 days |
+| Phase 6 | Sharding (if needed) | 1-2 days |
+| **Total** | | **~2.5-3 weeks** |
+
+**Ready to Implement**: All open questions have been decided. See "Open Questions - Decisions Made" section for details.
