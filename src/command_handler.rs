@@ -873,9 +873,12 @@ impl CommandHandler {
         }
 
         // Defer the response (command will take a while)
+        // Use ephemeral response so only the thread appears in the channel
         command
             .create_interaction_response(&ctx.http, |response| {
-                response.kind(InteractionResponseType::DeferredChannelMessageWithSource)
+                response
+                    .kind(InteractionResponseType::DeferredChannelMessageWithSource)
+                    .interaction_response_data(|data| data.ephemeral(true))
             })
             .await?;
 

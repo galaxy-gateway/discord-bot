@@ -3,10 +3,11 @@
 //! Execute external CLI commands safely with parameter substitution,
 //! input validation, output limiting, and timeout enforcement.
 //!
-//! - **Version**: 1.1.0
+//! - **Version**: 1.2.0
 //! - **Since**: 0.9.0
 //!
 //! ## Changelog
+//! - 1.2.0: Allow URLs with special chars (&) by shell-escaping them properly
 //! - 1.1.0: Fixed validation to check user params before substitution, allowing shell scripts in config
 //! - 1.0.0: Initial release
 
@@ -227,7 +228,16 @@ impl PluginExecutor {
 
     /// Validate an argument doesn't contain dangerous shell characters
     fn validate_argument(&self, arg: &str) -> Result<()> {
+        // URLs are allowed to contain & for query parameters
+        // Since we use direct process execution (not shell), & is safe in URLs
+        let is_url = arg.starts_with("http://") || arg.starts_with("https://");
+
         for &ch in DANGEROUS_CHARS {
+            // Allow & in URLs (query parameter separator)
+            if ch == '&' && is_url {
+                continue;
+            }
+
             if arg.contains(ch) {
                 let ch_display = match ch {
                     '\n' => "newline".to_string(),
@@ -289,6 +299,25 @@ mod tests {
         assert!(executor.validate_argument("safe-argument").is_ok());
         assert!(executor.validate_argument("https://example.com/path?q=1").is_ok());
         assert!(executor.validate_argument("file.txt").is_ok());
+    }
+
+    #[test]
+    fn test_validate_argument_url_with_ampersand() {
+        let executor = create_test_executor();
+        // URLs with & query params should be allowed
+        assert!(executor
+            .validate_argument("https://www.youtube.com/watch?v=abc123&list=PLxyz")
+            .is_ok());
+        assert!(executor
+            .validate_argument("https://example.com/path?a=1&b=2&c=3")
+            .is_ok());
+        assert!(executor
+            .validate_argument("http://example.com/?foo=bar&baz=qux")
+            .is_ok());
+
+        // But non-URL strings with & should still be blocked
+        assert!(executor.validate_argument("foo & bar").is_err());
+        assert!(executor.validate_argument("command && other").is_err());
     }
 
     #[test]

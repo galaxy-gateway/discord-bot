@@ -4,11 +4,12 @@
 //! Supports YAML-based configuration, secure execution, background jobs, and thread-based output.
 //! Now includes multi-video playlist transcription with progress tracking.
 //!
-//! - **Version**: 2.0.0
+//! - **Version**: 2.1.0
 //! - **Since**: 0.9.0
 //! - **Toggleable**: true
 //!
 //! ## Changelog
+//! - 2.1.0: Thread-first output - ephemeral responses, minimal starter messages, content in thread
 //! - 2.0.0: Added playlist support with multi-video transcription and progress tracking
 //! - 1.5.0: If command used inside thread, append to existing thread instead of creating new
 //! - 1.4.0: Consolidated to single post - interaction response becomes thread starter
@@ -273,100 +274,59 @@ impl PluginManager {
                     thread_name
                 };
 
-                // Format the starter message: **Video Title**\nURL
-                let starter_content = if let Some(ref url) = source_url {
-                    format!("**{}**\n{}", thread_name, url)
-                } else {
-                    format!("🔄 `{}` output", plugin.command.name)
-                };
-
-                // Use interaction response as thread starter (one consolidated post)
-                let thread_channel = if let Some((app_id, ref token)) = interaction_info {
+                // Edit ephemeral interaction response with confirmation (only user sees this)
+                if let Some((app_id, ref token)) = interaction_info {
                     let client = reqwest::Client::new();
                     let edit_url = format!(
                         "https://discord.com/api/v10/webhooks/{}/{}/messages/@original",
                         app_id, token
                     );
-
-                    // Edit the deferred response to show the URL (this becomes thread starter)
-                    let edit_resp = client
+                    let _ = client
                         .patch(&edit_url)
                         .header("Content-Type", "application/json")
-                        .json(&serde_json::json!({ "content": starter_content }))
+                        .json(&serde_json::json!({ "content": format!("Starting transcription for \"{}\"...", thread_name) }))
                         .send()
                         .await;
+                }
 
-                    match edit_resp {
-                        Ok(resp) => {
-                            match resp.json::<serde_json::Value>().await {
-                                Ok(msg_json) => {
-                                    if let Some(msg_id_str) = msg_json.get("id").and_then(|v| v.as_str()) {
-                                        if let Ok(msg_id) = msg_id_str.parse::<u64>() {
-                                            let message_id = serenity::model::id::MessageId(msg_id);
-                                            info!("Edited interaction response, creating thread from message {}", msg_id);
+                // Send minimal thread starter message to channel (this is what others see)
+                let starter_content = "Transcription";
 
-                                            match output_handler
-                                                .create_output_thread(&http, channel_id, message_id, &thread_name, plugin.output.auto_archive_minutes)
-                                                .await
-                                            {
-                                                Ok(thread) => {
-                                                    info!("Created thread: {} ({})", thread_name, thread.id);
-                                                    job_manager.set_thread_id(&job_id_clone, thread.id.to_string());
-                                                    Some(ChannelId(thread.id.0))
-                                                }
-                                                Err(e) => {
-                                                    error!("Failed to create thread from interaction: {}", e);
-                                                    None
-                                                }
-                                            }
-                                        } else {
-                                            error!("Failed to parse message ID");
-                                            None
-                                        }
-                                    } else {
-                                        error!("No message ID in response: {:?}", msg_json);
-                                        None
-                                    }
+                // Create thread from a new message (not the ephemeral response)
+                let thread_channel = match channel_id.say(&http, starter_content).await {
+                    Ok(msg) => {
+                        match output_handler
+                            .create_output_thread(&http, channel_id, msg.id, &thread_name, plugin.output.auto_archive_minutes)
+                            .await
+                        {
+                            Ok(thread) => {
+                                info!("Created thread: {} ({})", thread_name, thread.id);
+                                job_manager.set_thread_id(&job_id_clone, thread.id.to_string());
+
+                                // Post URL inside the thread (first message in thread)
+                                let thread_id = ChannelId(thread.id.0);
+                                if let Some(ref url) = source_url {
+                                    let url_content = format!("**{}**\n{}", thread_name, url);
+                                    let _ = thread_id.say(&http, &url_content).await;
                                 }
-                                Err(e) => {
-                                    error!("Failed to parse edit response: {}", e);
-                                    None
-                                }
+
+                                Some(thread_id)
                             }
-                        }
-                        Err(e) => {
-                            error!("Failed to edit interaction response: {}", e);
-                            None
+                            Err(e) => {
+                                error!("Failed to create thread: {}", e);
+                                None
+                            }
                         }
                     }
-                } else {
-                    // Fallback: send new message and create thread from it
-                    match channel_id.say(&http, &starter_content).await {
-                        Ok(msg) => {
-                            match output_handler
-                                .create_output_thread(&http, channel_id, msg.id, &thread_name, plugin.output.auto_archive_minutes)
-                                .await
-                            {
-                                Ok(thread) => {
-                                    job_manager.set_thread_id(&job_id_clone, thread.id.to_string());
-                                    Some(ChannelId(thread.id.0))
-                                }
-                                Err(e) => {
-                                    error!("Failed to create thread: {}", e);
-                                    None
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            error!("Failed to send message: {}", e);
-                            None
-                        }
+                    Err(e) => {
+                        error!("Failed to send thread starter message: {}", e);
+                        None
                     }
                 };
 
                 thread_channel.unwrap_or(channel_id)
             } else if is_thread && plugin.output.create_thread {
-                // Already in a thread - post the URL here and edit interaction response
+                // Already in a thread - edit ephemeral response and post to this thread
                 if let Some(ref url) = source_url {
                     // Fetch title for display
                     let title = if url.contains("youtube.com") || url.contains("youtu.be") {
@@ -374,9 +334,8 @@ impl PluginManager {
                     } else {
                         "Content".to_string()
                     };
-                    let content = format!("**{}**\n{}", title, url);
 
-                    // Edit interaction response to show we're posting to this thread
+                    // Edit ephemeral interaction response with confirmation (only user sees this)
                     if let Some((app_id, ref token)) = interaction_info {
                         let client = reqwest::Client::new();
                         let edit_url = format!(
@@ -386,13 +345,14 @@ impl PluginManager {
                         let _ = client
                             .patch(&edit_url)
                             .header("Content-Type", "application/json")
-                            .json(&serde_json::json!({ "content": content }))
+                            .json(&serde_json::json!({ "content": format!("Transcribing \"{}\" in this thread...", title) }))
                             .send()
                             .await;
-                    } else {
-                        // No interaction, just post the URL
-                        let _ = channel_id.say(&http, &content).await;
                     }
+
+                    // Post the URL to the thread (this is visible to everyone in the thread)
+                    let content = format!("**{}**\n{}", title, url);
+                    let _ = channel_id.say(&http, &content).await;
                 }
                 channel_id
             } else {
@@ -559,71 +519,51 @@ impl PluginManager {
                 thread_name
             };
 
-            let starter_content = format!("**{}**\n{}", playlist_title, playlist_url);
-
-            // Create thread from interaction response
-            let thread_channel = if let Some((app_id, ref token)) = interaction_info {
+            // Edit ephemeral interaction response with confirmation (only user sees this)
+            if let Some((app_id, ref token)) = interaction_info {
                 let client = reqwest::Client::new();
                 let edit_url = format!(
                     "https://discord.com/api/v10/webhooks/{}/{}/messages/@original",
                     app_id, token
                 );
-
-                let edit_resp = client
+                let _ = client
                     .patch(&edit_url)
                     .header("Content-Type", "application/json")
-                    .json(&serde_json::json!({ "content": starter_content }))
+                    .json(&serde_json::json!({ "content": format!("Starting playlist transcription for \"{}\" ({} videos)...", playlist_title, total_videos) }))
                     .send()
                     .await;
+            }
 
-                match edit_resp {
-                    Ok(resp) => {
-                        match resp.json::<serde_json::Value>().await {
-                            Ok(msg_json) => {
-                                if let Some(msg_id_str) = msg_json.get("id").and_then(|v| v.as_str()) {
-                                    if let Ok(msg_id) = msg_id_str.parse::<u64>() {
-                                        let message_id = serenity::model::id::MessageId(msg_id);
-                                        match output_handler
-                                            .create_output_thread(&http, channel_id, message_id, &thread_name, 1440)
-                                            .await
-                                        {
-                                            Ok(thread) => {
-                                                job_manager.set_playlist_thread_id(&playlist_job_id_clone, thread.id.to_string());
-                                                Some(ChannelId(thread.id.0))
-                                            }
-                                            Err(e) => {
-                                                error!("Failed to create thread: {}", e);
-                                                None
-                                            }
-                                        }
-                                    } else {
-                                        None
-                                    }
-                                } else {
-                                    None
-                                }
-                            }
-                            Err(_) => None
+            // Send minimal thread starter message to channel
+            let starter_content = "Playlist transcription";
+
+            // Create thread from a new message (not the ephemeral response)
+            let thread_channel = match channel_id.say(&http, starter_content).await {
+                Ok(msg) => {
+                    match output_handler
+                        .create_output_thread(&http, channel_id, msg.id, &thread_name, 1440)
+                        .await
+                    {
+                        Ok(thread) => {
+                            info!("Created playlist thread: {} ({})", thread_name, thread.id);
+                            job_manager.set_playlist_thread_id(&playlist_job_id_clone, thread.id.to_string());
+
+                            // Post playlist URL inside the thread (first message in thread)
+                            let thread_id = ChannelId(thread.id.0);
+                            let url_content = format!("**{}**\n{}", playlist_title, playlist_url);
+                            let _ = thread_id.say(&http, &url_content).await;
+
+                            Some(thread_id)
+                        }
+                        Err(e) => {
+                            error!("Failed to create thread: {}", e);
+                            None
                         }
                     }
-                    Err(_) => None
                 }
-            } else {
-                // Fallback: send message and create thread
-                match channel_id.say(&http, &starter_content).await {
-                    Ok(msg) => {
-                        match output_handler
-                            .create_output_thread(&http, channel_id, msg.id, &thread_name, 1440)
-                            .await
-                        {
-                            Ok(thread) => {
-                                job_manager.set_playlist_thread_id(&playlist_job_id_clone, thread.id.to_string());
-                                Some(ChannelId(thread.id.0))
-                            }
-                            Err(_) => None
-                        }
-                    }
-                    Err(_) => None
+                Err(e) => {
+                    error!("Failed to send thread starter message: {}", e);
+                    None
                 }
             };
 
