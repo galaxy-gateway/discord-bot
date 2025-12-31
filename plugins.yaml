@@ -19,20 +19,25 @@ plugins:
           type: string
           required: true
           validation:
-            pattern: "^https?://(www\\.)?(youtube\\.com/watch\\?v=|youtu\\.be/)[a-zA-Z0-9_-]+"
+            pattern: "^https?://(www\\.)?(youtube\\.com/(watch\\?v=|shorts/)|youtu\\.be/)[a-zA-Z0-9_-]+"
             max_length: 200
 
     execution:
       # Use shell to chain commands: create temp dir, run transcription, output result
+      # Progress logs go to /dev/null, errors are captured, transcript is output
       command: sh
       args:
         - "-c"
         - |
-          TMPDIR=$(mktemp -d) && \
-          docker run --rm -v "$TMPDIR:/data/output" whisper-transcribe:latest "${url}" -m base -f txt -o /data/output 2>&1 && \
-          echo "---TRANSCRIPT---" && \
-          cat "$TMPDIR"/*.txt && \
-          rm -rf "$TMPDIR"
+          TMPDIR=$(mktemp -d)
+          ERRFILE=$(mktemp)
+          if docker run --rm -v "$TMPDIR:/data/output" whisper-transcribe:latest "${url}" -m base -f txt -o /data/output >/dev/null 2>"$ERRFILE"; then
+            cat "$TMPDIR"/*.txt 2>/dev/null || echo "No transcript generated"
+          else
+            echo "Transcription failed:"
+            cat "$ERRFILE"
+          fi
+          rm -rf "$TMPDIR" "$ERRFILE"
       timeout_seconds: 600      # 10 minutes max
       max_output_bytes: 10485760  # 10MB
 
@@ -47,9 +52,17 @@ plugins:
       post_as_file: true
       file_name_template: "transcript-${timestamp}.txt"
       max_inline_length: 1500
+      # Use structured output: thread starter is URL, then summary, then file
+      source_param: url
       summary_prompt: |
-        Summarize this video transcript in 2-3 bullet points.
-        Focus on the main topics and key takeaways.
+        Provide a detailed summary of this video transcript:
+
+        1. **Overview**: A 2-3 sentence description of what the video is about
+        2. **Key Points**: List the main topics and important points discussed (5-8 bullet points)
+        3. **Notable Quotes/Moments**: Any significant statements or memorable moments
+        4. **Conclusion**: What was the main takeaway or call to action
+
+        Be thorough but concise. Use markdown formatting.
 
         Transcript:
         ${output}

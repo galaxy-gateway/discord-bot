@@ -891,7 +891,19 @@ impl CommandHandler {
         let user_id_owned = user_id.clone();
         let guild_id_owned = guild_id.clone();
 
+        // Check if we're already in a thread
+        let is_thread = match discord_channel_id.to_channel(&ctx.http).await {
+            Ok(channel) => {
+                use serenity::model::channel::Channel;
+                matches!(channel, Channel::Guild(gc) if gc.kind.name() == "public_thread" || gc.kind.name() == "private_thread")
+            }
+            Err(_) => false,
+        };
+
         // Spawn background task to execute the plugin
+        // Pass interaction info so the thread can be created from the interaction response
+        let interaction_info = Some((application_id, interaction_token.clone()));
+
         tokio::spawn(async move {
             match plugin_manager.execute_plugin(
                 http,
@@ -900,32 +912,12 @@ impl CommandHandler {
                 user_id_owned,
                 guild_id_owned,
                 discord_channel_id,
+                interaction_info,
+                is_thread,
             ).await {
                 Ok(job_id) => {
                     info!("[{}] ✅ Plugin job started: {} (job_id: {})", request_id, plugin.name, job_id);
-
-                    // Edit the deferred response with status
-                    let edit_url = format!(
-                        "https://discord.com/api/v10/webhooks/{}/{}/messages/@original",
-                        application_id, interaction_token
-                    );
-
-                    let status_message = if plugin.output.create_thread {
-                        format!("🔄 Processing `{}` command... Output will appear in a new thread.", plugin.command.name)
-                    } else {
-                        format!("🔄 Processing `{}` command...", plugin.command.name)
-                    };
-
-                    // Use reqwest to edit the interaction response
-                    let client = reqwest::Client::new();
-                    let _ = client
-                        .patch(&edit_url)
-                        .header("Content-Type", "application/json")
-                        .json(&serde_json::json!({
-                            "content": status_message
-                        }))
-                        .send()
-                        .await;
+                    // Note: execute_plugin now handles editing the interaction response
                 }
                 Err(e) => {
                     error!("[{}] ❌ Plugin execution failed: {} - {}", request_id, plugin.name, e);

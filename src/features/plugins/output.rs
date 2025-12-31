@@ -3,8 +3,12 @@
 //! Create Discord threads for plugin output, handle large responses with file attachments,
 //! and generate AI summaries.
 //!
-//! - **Version**: 1.0.0
+//! - **Version**: 1.1.0
 //! - **Since**: 0.9.0
+//!
+//! ## Changelog
+//! - 1.1.0: Added structured output posting (URL -> summary -> file)
+//! - 1.0.0: Initial release
 
 use crate::features::plugins::config::OutputConfig;
 use anyhow::Result;
@@ -172,6 +176,73 @@ impl OutputHandler {
         };
 
         channel_id.say(http, &message).await?;
+        Ok(())
+    }
+
+    /// Post structured result: URL -> Summary -> File
+    /// Used for transcription-style plugins where we want the source first
+    ///
+    /// Set `url_already_posted` to true if the URL was already posted (e.g., as thread starter)
+    pub async fn post_structured_result(
+        &self,
+        http: &Arc<Http>,
+        channel_id: ChannelId,
+        source_url: &str,
+        output: &str,
+        config: &OutputConfig,
+        url_already_posted: bool,
+    ) -> Result<()> {
+        // 1. Post the source URL first (so it can embed/preview), unless already posted
+        if !url_already_posted {
+            channel_id.say(http, source_url).await?;
+            info!("Posted source URL: {}", source_url);
+        }
+
+        if output.is_empty() {
+            channel_id.say(http, "*No transcript generated*").await?;
+            return Ok(());
+        }
+
+        // 2. Generate and post the summary
+        if let Some(ref prompt) = config.summary_prompt {
+            match self.generate_summary(output, prompt).await {
+                Ok(summary) => {
+                    // Post summary, splitting if needed
+                    let summary_chunks = split_message(&summary, 1900);
+                    for chunk in summary_chunks {
+                        channel_id.say(http, &chunk).await?;
+                    }
+                    info!("Posted AI summary");
+                }
+                Err(e) => {
+                    warn!("Failed to generate summary: {}", e);
+                    channel_id.say(http, "*Summary generation failed*").await?;
+                }
+            }
+        }
+
+        // 3. Post the full transcript as a file attachment
+        let filename = config
+            .file_name_template
+            .as_deref()
+            .unwrap_or("transcript.txt")
+            .replace(
+                "${timestamp}",
+                &chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string(),
+            );
+
+        let file_bytes = output.as_bytes().to_vec();
+        channel_id
+            .send_message(http, |m| {
+                m.content(format!("📄 **Full transcript** ({} characters)", output.len()))
+                    .add_file(AttachmentType::Bytes {
+                        data: Cow::Owned(file_bytes),
+                        filename,
+                    })
+            })
+            .await?;
+
+        info!("Posted transcript file attachment");
         Ok(())
     }
 

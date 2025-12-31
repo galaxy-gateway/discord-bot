@@ -3,11 +3,16 @@
 //! Extensible plugin architecture for executing CLI commands via Discord slash commands.
 //! Supports YAML-based configuration, secure execution, background jobs, and thread-based output.
 //!
-//! - **Version**: 1.0.0
+//! - **Version**: 1.5.0
 //! - **Since**: 0.9.0
 //! - **Toggleable**: true
 //!
 //! ## Changelog
+//! - 1.5.0: If command used inside thread, append to existing thread instead of creating new
+//! - 1.4.0: Consolidated to single post - interaction response becomes thread starter
+//! - 1.3.0: Fetch YouTube title via oEmbed for thread name, simpler thread creation flow
+//! - 1.2.0: Thread created immediately with URL, progress status posted before execution
+//! - 1.1.0: Added structured output posting with source_param, thread from interaction response
 //! - 1.0.0: Initial release with config-based plugins, CLI executor, and job system
 
 pub mod commands;
@@ -187,6 +192,10 @@ impl PluginManager {
 
     /// Execute a plugin in the background
     /// Returns the job ID synchronously, then continues execution asynchronously
+    ///
+    /// When `interaction_info` is provided, the thread will be created from the
+    /// interaction's original response message (edited to show the source URL).
+    /// If `is_thread` is true, skips thread creation and posts directly to the channel.
     pub async fn execute_plugin(
         &self,
         http: Arc<Http>,
@@ -195,6 +204,8 @@ impl PluginManager {
         user_id: String,
         guild_id: Option<String>,
         channel_id: ChannelId,
+        interaction_info: Option<(u64, String)>, // (application_id, interaction_token)
+        is_thread: bool, // If true, we're already in a thread - skip creation
     ) -> Result<String> {
         // Create job record synchronously so we can return the job_id
         let job_id = self.job_manager
@@ -218,17 +229,38 @@ impl PluginManager {
                 warn!("Failed to mark job as running: {}", e);
             }
 
-            // Create output thread if configured
-            let output_channel = if plugin.output.create_thread {
-                let thread_name = plugin
-                    .output
-                    .thread_name_template
-                    .as_deref()
-                    .unwrap_or("Plugin Output")
-                    .to_string();
+            // Determine source URL for structured output
+            let source_url = plugin.output.source_param.as_ref()
+                .and_then(|param| params.get(param))
+                .cloned();
 
-                // Substitute params in thread name
-                let thread_name = substitute_params(&thread_name, &params);
+            // STEP 1: Create thread IMMEDIATELY (before execution) if configured
+            // Skip thread creation if we're already inside a thread
+            let output_channel = if plugin.output.create_thread && !is_thread {
+                // Fetch video title if we have a YouTube URL
+                let thread_name = if let Some(ref url) = source_url {
+                    if url.contains("youtube.com") || url.contains("youtu.be") {
+                        match fetch_youtube_title(url).await {
+                            Some(title) => {
+                                info!("Fetched YouTube title: {}", title);
+                                title
+                            }
+                            None => {
+                                let template = plugin.output.thread_name_template.as_deref()
+                                    .unwrap_or("Plugin Output");
+                                substitute_params(template, &params)
+                            }
+                        }
+                    } else {
+                        let template = plugin.output.thread_name_template.as_deref()
+                            .unwrap_or("Plugin Output");
+                        substitute_params(template, &params)
+                    }
+                } else {
+                    let template = plugin.output.thread_name_template.as_deref()
+                        .unwrap_or("Plugin Output");
+                    substitute_params(template, &params)
+                };
 
                 // Truncate thread name to 100 chars (Discord limit)
                 let thread_name = if thread_name.len() > 100 {
@@ -237,42 +269,162 @@ impl PluginManager {
                     thread_name
                 };
 
-                // Create a starter message and thread from it
-                let starter_msg = format!("🔄 Processing `{}` command...", plugin.command.name);
-                match output_handler
-                    .create_thread_with_starter(
-                        &http,
-                        channel_id,
-                        &thread_name,
-                        &starter_msg,
-                        plugin.output.auto_archive_minutes,
-                    )
-                    .await
-                {
-                    Ok(thread) => {
-                        job_manager.set_thread_id(&job_id_clone, thread.id.to_string());
-                        ChannelId(thread.id.0)
+                // Format the starter message: **Video Title**\nURL
+                let starter_content = if let Some(ref url) = source_url {
+                    format!("**{}**\n{}", thread_name, url)
+                } else {
+                    format!("🔄 `{}` output", plugin.command.name)
+                };
+
+                // Use interaction response as thread starter (one consolidated post)
+                let thread_channel = if let Some((app_id, ref token)) = interaction_info {
+                    let client = reqwest::Client::new();
+                    let edit_url = format!(
+                        "https://discord.com/api/v10/webhooks/{}/{}/messages/@original",
+                        app_id, token
+                    );
+
+                    // Edit the deferred response to show the URL (this becomes thread starter)
+                    let edit_resp = client
+                        .patch(&edit_url)
+                        .header("Content-Type", "application/json")
+                        .json(&serde_json::json!({ "content": starter_content }))
+                        .send()
+                        .await;
+
+                    match edit_resp {
+                        Ok(resp) => {
+                            match resp.json::<serde_json::Value>().await {
+                                Ok(msg_json) => {
+                                    if let Some(msg_id_str) = msg_json.get("id").and_then(|v| v.as_str()) {
+                                        if let Ok(msg_id) = msg_id_str.parse::<u64>() {
+                                            let message_id = serenity::model::id::MessageId(msg_id);
+                                            info!("Edited interaction response, creating thread from message {}", msg_id);
+
+                                            match output_handler
+                                                .create_output_thread(&http, channel_id, message_id, &thread_name, plugin.output.auto_archive_minutes)
+                                                .await
+                                            {
+                                                Ok(thread) => {
+                                                    info!("Created thread: {} ({})", thread_name, thread.id);
+                                                    job_manager.set_thread_id(&job_id_clone, thread.id.to_string());
+                                                    Some(ChannelId(thread.id.0))
+                                                }
+                                                Err(e) => {
+                                                    error!("Failed to create thread from interaction: {}", e);
+                                                    None
+                                                }
+                                            }
+                                        } else {
+                                            error!("Failed to parse message ID");
+                                            None
+                                        }
+                                    } else {
+                                        error!("No message ID in response: {:?}", msg_json);
+                                        None
+                                    }
+                                }
+                                Err(e) => {
+                                    error!("Failed to parse edit response: {}", e);
+                                    None
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            error!("Failed to edit interaction response: {}", e);
+                            None
+                        }
                     }
-                    Err(e) => {
-                        warn!("Failed to create thread, using channel: {}", e);
-                        channel_id
+                } else {
+                    // Fallback: send new message and create thread from it
+                    match channel_id.say(&http, &starter_content).await {
+                        Ok(msg) => {
+                            match output_handler
+                                .create_output_thread(&http, channel_id, msg.id, &thread_name, plugin.output.auto_archive_minutes)
+                                .await
+                            {
+                                Ok(thread) => {
+                                    job_manager.set_thread_id(&job_id_clone, thread.id.to_string());
+                                    Some(ChannelId(thread.id.0))
+                                }
+                                Err(e) => {
+                                    error!("Failed to create thread: {}", e);
+                                    None
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            error!("Failed to send message: {}", e);
+                            None
+                        }
+                    }
+                };
+
+                thread_channel.unwrap_or(channel_id)
+            } else if is_thread && plugin.output.create_thread {
+                // Already in a thread - post the URL here and edit interaction response
+                if let Some(ref url) = source_url {
+                    // Fetch title for display
+                    let title = if url.contains("youtube.com") || url.contains("youtu.be") {
+                        fetch_youtube_title(url).await.unwrap_or_else(|| "Video".to_string())
+                    } else {
+                        "Content".to_string()
+                    };
+                    let content = format!("**{}**\n{}", title, url);
+
+                    // Edit interaction response to show we're posting to this thread
+                    if let Some((app_id, ref token)) = interaction_info {
+                        let client = reqwest::Client::new();
+                        let edit_url = format!(
+                            "https://discord.com/api/v10/webhooks/{}/{}/messages/@original",
+                            app_id, token
+                        );
+                        let _ = client
+                            .patch(&edit_url)
+                            .header("Content-Type", "application/json")
+                            .json(&serde_json::json!({ "content": content }))
+                            .send()
+                            .await;
+                    } else {
+                        // No interaction, just post the URL
+                        let _ = channel_id.say(&http, &content).await;
                     }
                 }
+                channel_id
             } else {
                 channel_id
             };
 
-            // Execute the command
+            // STEP 2: Post progress status BEFORE execution
+            // Post to thread (either new or existing)
+            let should_post_status = plugin.output.create_thread && (is_thread || output_channel != channel_id);
+            if should_post_status {
+                let status_msg = "⏳ Transcribing video... This may take a few minutes.";
+                if let Err(e) = output_channel.say(&http, status_msg).await {
+                    warn!("Failed to post progress status: {}", e);
+                }
+            }
+
+            // STEP 3: Execute the command (this is the long-running part)
             let result = executor.execute(&plugin.execution, &params).await;
 
+            // STEP 4: Post results in thread
             match result {
                 Ok(exec_result) => {
                     if exec_result.success {
-                        // Post successful output
-                        if let Err(e) = output_handler
-                            .post_result(&http, output_channel, &exec_result.stdout, &plugin.output)
-                            .await
-                        {
+                        // URL is already posted as thread starter, so skip it in structured output
+                        let url_already_posted = plugin.output.create_thread;
+                        let post_result = if let Some(ref url) = source_url {
+                            output_handler
+                                .post_structured_result(&http, output_channel, url, &exec_result.stdout, &plugin.output, url_already_posted)
+                                .await
+                        } else {
+                            output_handler
+                                .post_result(&http, output_channel, &exec_result.stdout, &plugin.output)
+                                .await
+                        };
+
+                        if let Err(e) = post_result {
                             error!("Failed to post result: {}", e);
                         }
 
@@ -343,4 +495,30 @@ fn substitute_params(template: &str, params: &HashMap<String, String>) -> String
         result = result.replace(&placeholder, value);
     }
     result
+}
+
+/// Fetch YouTube video title via oEmbed API
+async fn fetch_youtube_title(url: &str) -> Option<String> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .get("https://www.youtube.com/oembed")
+        .query(&[("url", url), ("format", "json")])
+        .send()
+        .await;
+
+    match resp {
+        Ok(r) => {
+            if let Ok(json) = r.json::<serde_json::Value>().await {
+                json.get("title")
+                    .and_then(|t| t.as_str())
+                    .map(|s| s.to_string())
+            } else {
+                None
+            }
+        }
+        Err(e) => {
+            warn!("Failed to fetch YouTube title: {}", e);
+            None
+        }
+    }
 }

@@ -2,8 +2,12 @@
 //!
 //! YAML-based plugin configuration with full schema validation.
 //!
-//! - **Version**: 1.0.0
+//! - **Version**: 1.1.0
 //! - **Since**: 0.9.0
+//!
+//! ## Changelog
+//! - 1.1.0: Added source_param for structured output posting
+//! - 1.0.0: Initial release
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -282,6 +286,10 @@ pub struct OutputConfig {
 
     /// Custom error message template with ${error} placeholder
     pub error_template: Option<String>,
+
+    /// Parameter name containing the source URL to post first in thread
+    /// When set, uses structured output: URL -> Summary -> File
+    pub source_param: Option<String>,
 }
 
 // Default value functions
