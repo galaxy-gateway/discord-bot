@@ -8,11 +8,16 @@ use serenity::model::gateway::Ready;
 use serenity::prelude::*;
 use std::sync::Arc;
 
-use persona::commands::{CommandHandler, register_global_commands, register_guild_commands};
+use persona::commands::{
+    CommandHandler,
+    register_global_commands_with_plugins,
+    register_guild_commands_with_plugins,
+};
 use persona::core::Config;
 use persona::database::Database;
 use persona::features::analytics::{InteractionTracker, UsageTracker, metrics_collection_loop};
 use persona::features::personas::PersonaManager;
+use persona::features::plugins::{Plugin, PluginConfig, PluginManager, JobManager, PluginExecutor, OutputHandler};
 use persona::features::reminders::ReminderScheduler;
 use persona::features::startup::StartupNotifier;
 use persona::message_components::MessageComponentHandler;
@@ -23,6 +28,7 @@ struct Handler {
     component_handler: Arc<MessageComponentHandler>,
     guild_id: Option<GuildId>,
     startup_notifier: StartupNotifier,
+    plugins: Vec<Plugin>,
 }
 
 impl Handler {
@@ -31,12 +37,14 @@ impl Handler {
         component_handler: MessageComponentHandler,
         guild_id: Option<GuildId>,
         startup_notifier: StartupNotifier,
+        plugins: Vec<Plugin>,
     ) -> Self {
         Handler {
             command_handler: Arc::new(command_handler),
             component_handler: Arc::new(component_handler),
             guild_id,
             startup_notifier,
+            plugins,
         }
     }
 }
@@ -72,17 +80,26 @@ impl EventHandler for Handler {
             info!("⚡ Shard: {}/{}", shard[0] + 1, shard[1]);
         }
 
+        // Log plugin information
+        let enabled_plugins: Vec<_> = self.plugins.iter().filter(|p| p.enabled).collect();
+        if !enabled_plugins.is_empty() {
+            info!("🔌 {} plugins loaded ({} enabled)", self.plugins.len(), enabled_plugins.len());
+            for plugin in &enabled_plugins {
+                info!("   - /{} ({})", plugin.command.name, plugin.name);
+            }
+        }
+
         // Register slash commands - use guild commands for development (instant), global for production
         if let Some(guild_id) = self.guild_id {
             info!("🔧 Development mode: Registering commands for guild {guild_id}");
-            if let Err(e) = register_guild_commands(&ctx, guild_id).await {
+            if let Err(e) = register_guild_commands_with_plugins(&ctx, guild_id, &self.plugins).await {
                 error!("❌ Failed to register guild slash commands: {e}");
             } else {
                 info!("✅ Successfully registered slash commands for guild {guild_id} (instant update)");
             }
         } else {
             info!("🌍 Production mode: Registering commands globally");
-            if let Err(e) = register_global_commands(&ctx).await {
+            if let Err(e) = register_global_commands_with_plugins(&ctx, &self.plugins).await {
                 error!("❌ Failed to register global slash commands: {e}");
             } else {
                 info!("✅ Successfully registered slash commands globally (may take up to 1 hour to propagate)");
@@ -301,7 +318,7 @@ async fn main() -> Result<()> {
     let usage_tracker = UsageTracker::new(database.clone());
     let interaction_tracker = InteractionTracker::new(database.clone());
     let persona_manager = PersonaManager::new();
-    let command_handler = CommandHandler::new(
+    let mut command_handler = CommandHandler::new(
         database.clone(),
         config.openai_api_key.clone(),
         config.openai_model.clone(),
@@ -311,6 +328,44 @@ async fn main() -> Result<()> {
         usage_tracker.clone(),
         interaction_tracker,
     );
+
+    // Load plugins from config file
+    let plugins_path = std::env::var("PLUGINS_CONFIG_PATH").unwrap_or_else(|_| "plugins.yaml".to_string());
+    let (plugins, _plugin_manager): (Vec<Plugin>, Option<Arc<PluginManager>>) = match PluginConfig::load(&plugins_path) {
+        Ok(plugin_config) => {
+            info!("📄 Loaded plugin config from {}", plugins_path);
+            let plugins = plugin_config.plugins.clone();
+
+            // Create allowed commands list
+            let allowed_commands = vec!["docker".to_string(), "sh".to_string()];
+
+            // Create plugin manager
+            let job_manager = Arc::new(JobManager::new(database.clone()));
+            let executor = PluginExecutor::new(allowed_commands);
+            let output_handler = OutputHandler::new(config.openai_model.clone());
+
+            let pm = Arc::new(PluginManager {
+                config: plugin_config,
+                executor,
+                job_manager,
+                output_handler,
+            });
+
+            // Set plugin manager on command handler
+            command_handler.set_plugin_manager(pm.clone());
+
+            (plugins, Some(pm))
+        }
+        Err(e) => {
+            if std::path::Path::new(&plugins_path).exists() {
+                error!("❌ Failed to load plugins from {}: {}", plugins_path, e);
+            } else {
+                info!("📄 No plugins.yaml found at {} - plugin system disabled", plugins_path);
+            }
+            (vec![], None)
+        }
+    };
+
     let component_handler = MessageComponentHandler::new(
         command_handler.clone(),
         persona_manager,
@@ -323,7 +378,7 @@ async fn main() -> Result<()> {
     // Create startup notifier (reads config from database)
     let startup_notifier = StartupNotifier::new(Arc::new(database.clone()));
 
-    let handler = Handler::new(command_handler, component_handler, guild_id, startup_notifier);
+    let handler = Handler::new(command_handler, component_handler, guild_id, startup_notifier, plugins);
 
     let intents = GatewayIntents::GUILD_MESSAGES
         | GatewayIntents::DIRECT_MESSAGES

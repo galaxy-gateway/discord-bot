@@ -1,0 +1,309 @@
+//! # Thread Output Handler
+//!
+//! Create Discord threads for plugin output, handle large responses with file attachments,
+//! and generate AI summaries.
+//!
+//! - **Version**: 1.0.0
+//! - **Since**: 0.9.0
+
+use crate::features::plugins::config::OutputConfig;
+use anyhow::Result;
+use log::{info, warn};
+use openai::chat::{ChatCompletion, ChatCompletionMessage, ChatCompletionMessageRole};
+use serenity::http::Http;
+use serenity::model::channel::{AttachmentType, ChannelType, GuildChannel};
+use serenity::model::id::{ChannelId, MessageId};
+use std::borrow::Cow;
+use std::sync::Arc;
+
+/// Handler for plugin output posting
+#[derive(Clone)]
+pub struct OutputHandler {
+    openai_model: String,
+}
+
+impl OutputHandler {
+    /// Create a new output handler
+    pub fn new(openai_model: String) -> Self {
+        Self { openai_model }
+    }
+
+    /// Create a thread for plugin output attached to a message
+    pub async fn create_output_thread(
+        &self,
+        http: &Arc<Http>,
+        channel_id: ChannelId,
+        message_id: MessageId,
+        thread_name: &str,
+        auto_archive_minutes: u64,
+    ) -> Result<GuildChannel> {
+        // Map to valid Discord auto-archive durations
+        let archive_duration = match auto_archive_minutes {
+            0..=60 => 60,
+            61..=1440 => 1440,
+            1441..=4320 => 4320,
+            _ => 10080,
+        };
+
+        info!(
+            "Creating thread '{}' in channel {} from message {} (archive: {} min)",
+            thread_name, channel_id, message_id, archive_duration
+        );
+
+        channel_id
+            .create_public_thread(http, message_id, |t| {
+                t.name(thread_name)
+                    .kind(ChannelType::PublicThread)
+                    .auto_archive_duration(archive_duration as u16)
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to create thread: {}", e))
+    }
+
+    /// Create a thread for plugin output by first sending a starter message
+    pub async fn create_thread_with_starter(
+        &self,
+        http: &Arc<Http>,
+        channel_id: ChannelId,
+        thread_name: &str,
+        starter_message: &str,
+        auto_archive_minutes: u64,
+    ) -> Result<GuildChannel> {
+        // First send a message to attach the thread to
+        let message = channel_id.say(http, starter_message).await
+            .map_err(|e| anyhow::anyhow!("Failed to send starter message: {}", e))?;
+
+        // Then create a thread from that message
+        self.create_output_thread(http, channel_id, message.id, thread_name, auto_archive_minutes).await
+    }
+
+    /// Post result to a channel with optional file attachment
+    pub async fn post_result(
+        &self,
+        http: &Arc<Http>,
+        channel_id: ChannelId,
+        output: &str,
+        config: &OutputConfig,
+    ) -> Result<()> {
+        if output.is_empty() {
+            channel_id.say(http, "*No output*").await?;
+            return Ok(());
+        }
+
+        // Check if we should use file attachment
+        let use_file = config.post_as_file && output.len() > config.max_inline_length;
+
+        if use_file {
+            // Generate summary if configured
+            let summary = if let Some(ref prompt) = config.summary_prompt {
+                match self.generate_summary(output, prompt).await {
+                    Ok(s) => s,
+                    Err(e) => {
+                        warn!("Failed to generate summary: {}", e);
+                        format!("**Output** ({} characters)", output.len())
+                    }
+                }
+            } else {
+                format!("**Output** ({} characters)", output.len())
+            };
+
+            // Post summary
+            channel_id.say(http, &summary).await?;
+
+            // Generate filename
+            let filename = config
+                .file_name_template
+                .as_deref()
+                .unwrap_or("output.txt")
+                .replace(
+                    "${timestamp}",
+                    &chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string(),
+                );
+
+            // Post file attachment
+            let file_bytes = output.as_bytes().to_vec();
+            channel_id
+                .send_message(http, |m| {
+                    m.add_file(AttachmentType::Bytes {
+                        data: Cow::Owned(file_bytes),
+                        filename,
+                    })
+                })
+                .await?;
+
+            info!("Posted output as file attachment");
+        } else {
+            // Post inline, splitting if necessary
+            let chunks = split_message(output, 1900);
+
+            for (i, chunk) in chunks.iter().enumerate() {
+                if i == 0 {
+                    channel_id.say(http, chunk).await?;
+                } else {
+                    channel_id.say(http, chunk).await?;
+                }
+            }
+
+            info!("Posted output inline ({} chunks)", chunks.len());
+        }
+
+        Ok(())
+    }
+
+    /// Post an error message to a channel
+    pub async fn post_error(
+        &self,
+        http: &Arc<Http>,
+        channel_id: ChannelId,
+        error: &str,
+        error_template: Option<&str>,
+    ) -> Result<()> {
+        let message = if let Some(template) = error_template {
+            template.replace("${error}", error)
+        } else {
+            format!("**Error:** {}", error)
+        };
+
+        // Truncate if too long
+        let message = if message.len() > 1900 {
+            format!("{}...", &message[..1897])
+        } else {
+            message
+        };
+
+        channel_id.say(http, &message).await?;
+        Ok(())
+    }
+
+    /// Generate an AI summary of the output
+    async fn generate_summary(&self, output: &str, prompt_template: &str) -> Result<String> {
+        // Truncate output for summary to avoid token limits
+        let truncated = if output.len() > 8000 {
+            format!(
+                "{}...\n\n[Content truncated for summarization]",
+                &output[..8000]
+            )
+        } else {
+            output.to_string()
+        };
+
+        // Build the prompt
+        let prompt = prompt_template.replace("${output}", &truncated);
+
+        info!("Generating AI summary for output ({} chars)", output.len());
+
+        let completion = ChatCompletion::builder(
+            &self.openai_model,
+            vec![
+                ChatCompletionMessage {
+                    role: ChatCompletionMessageRole::System,
+                    content: Some(
+                        "You are a helpful assistant that creates concise summaries. \
+                         Keep summaries brief and focused on the key points."
+                            .to_string(),
+                    ),
+                    name: None,
+                    function_call: None,
+                    tool_call_id: None,
+                    tool_calls: None,
+                },
+                ChatCompletionMessage {
+                    role: ChatCompletionMessageRole::User,
+                    content: Some(prompt),
+                    name: None,
+                    function_call: None,
+                    tool_call_id: None,
+                    tool_calls: None,
+                },
+            ],
+        )
+        .create()
+        .await?;
+
+        let summary = completion
+            .choices
+            .first()
+            .and_then(|c| c.message.content.clone())
+            .unwrap_or_else(|| "Summary unavailable.".to_string());
+
+        Ok(summary)
+    }
+}
+
+/// Split a message into chunks that fit within Discord's character limit
+fn split_message(content: &str, max_len: usize) -> Vec<String> {
+    if content.len() <= max_len {
+        return vec![content.to_string()];
+    }
+
+    let mut chunks = Vec::new();
+    let mut current = String::new();
+
+    for line in content.lines() {
+        // Check if adding this line would exceed the limit
+        if current.len() + line.len() + 1 > max_len {
+            if !current.is_empty() {
+                chunks.push(current);
+            }
+
+            // If a single line is too long, split it
+            if line.len() > max_len {
+                let mut remaining = line;
+                while remaining.len() > max_len {
+                    chunks.push(remaining[..max_len].to_string());
+                    remaining = &remaining[max_len..];
+                }
+                current = remaining.to_string();
+            } else {
+                current = line.to_string();
+            }
+        } else {
+            if !current.is_empty() {
+                current.push('\n');
+            }
+            current.push_str(line);
+        }
+    }
+
+    if !current.is_empty() {
+        chunks.push(current);
+    }
+
+    chunks
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_split_message_short() {
+        let chunks = split_message("hello world", 100);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0], "hello world");
+    }
+
+    #[test]
+    fn test_split_message_long() {
+        let content = "line 1\nline 2\nline 3\nline 4\nline 5";
+        let chunks = split_message(content, 15);
+        assert!(chunks.len() > 1);
+
+        // Verify all content is preserved
+        let rejoined: String = chunks.join("\n");
+        // Some newlines may differ but content should be there
+        assert!(rejoined.contains("line 1"));
+        assert!(rejoined.contains("line 5"));
+    }
+
+    #[test]
+    fn test_split_message_very_long_line() {
+        let content = "a".repeat(100);
+        let chunks = split_message(&content, 30);
+        assert!(chunks.len() > 1);
+
+        // Total length should match
+        let total_len: usize = chunks.iter().map(|c| c.len()).sum();
+        assert_eq!(total_len, 100);
+    }
+}

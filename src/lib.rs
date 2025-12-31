@@ -31,6 +31,8 @@ pub use features::{
     get_component_snippet,
     // Personas
     Persona, PersonaManager,
+    // Plugins
+    Plugin, PluginConfig, PluginManager, PluginExecutor, JobManager, OutputHandler,
     // Rate limiting
     RateLimiter,
     // Reminders

@@ -19,6 +19,7 @@ mod recipe;
 mod remind;
 mod utility;
 
+use crate::features::plugins::{create_plugin_commands, Plugin};
 use anyhow::Result;
 use log::info;
 use serenity::builder::CreateApplicationCommand;
@@ -27,8 +28,13 @@ use serenity::model::application::interaction::application_command::CommandDataO
 use serenity::model::id::GuildId;
 use serenity::prelude::Context;
 
-/// Creates all slash command definitions
+/// Creates all slash command definitions (without plugins)
 pub fn create_slash_commands() -> Vec<CreateApplicationCommand> {
+    create_slash_commands_with_plugins(&[])
+}
+
+/// Creates all slash command definitions with plugin commands
+pub fn create_slash_commands_with_plugins(plugins: &[Plugin]) -> Vec<CreateApplicationCommand> {
     let mut commands = Vec::new();
 
     // Utility commands
@@ -55,6 +61,9 @@ pub fn create_slash_commands() -> Vec<CreateApplicationCommand> {
     // DM statistics commands
     commands.extend(dm_stats::create_commands());
 
+    // Plugin-generated commands
+    commands.extend(create_plugin_commands(plugins));
+
     commands
 }
 
@@ -63,9 +72,14 @@ pub fn create_context_menu_commands() -> Vec<CreateApplicationCommand> {
     context_menu::create_commands()
 }
 
-/// Registers all slash commands globally
+/// Registers all slash commands globally (without plugins)
 pub async fn register_global_commands(ctx: &Context) -> Result<()> {
-    let slash_commands = create_slash_commands();
+    register_global_commands_with_plugins(ctx, &[]).await
+}
+
+/// Registers all slash commands globally with plugin commands
+pub async fn register_global_commands_with_plugins(ctx: &Context, plugins: &[Plugin]) -> Result<()> {
+    let slash_commands = create_slash_commands_with_plugins(plugins);
     let context_commands = create_context_menu_commands();
 
     Command::set_global_application_commands(&ctx.http, |commands| {
@@ -79,13 +93,26 @@ pub async fn register_global_commands(ctx: &Context) -> Result<()> {
     })
     .await?;
 
-    info!("Global slash commands and context menu commands registered successfully");
+    info!(
+        "Global slash commands registered successfully ({} commands, {} from plugins)",
+        create_slash_commands().len() + create_plugin_commands(plugins).len(),
+        create_plugin_commands(plugins).len()
+    );
     Ok(())
 }
 
 /// Registers all slash commands for a specific guild (faster for testing)
 pub async fn register_guild_commands(ctx: &Context, guild_id: GuildId) -> Result<()> {
-    let slash_commands = create_slash_commands();
+    register_guild_commands_with_plugins(ctx, guild_id, &[]).await
+}
+
+/// Registers all slash commands for a specific guild with plugin commands
+pub async fn register_guild_commands_with_plugins(
+    ctx: &Context,
+    guild_id: GuildId,
+    plugins: &[Plugin],
+) -> Result<()> {
+    let slash_commands = create_slash_commands_with_plugins(plugins);
     let context_commands = create_context_menu_commands();
 
     guild_id
@@ -101,7 +128,10 @@ pub async fn register_guild_commands(ctx: &Context, guild_id: GuildId) -> Result
         .await?;
 
     info!(
-        "Guild slash commands and context menu commands registered successfully for guild: {guild_id}"
+        "Guild slash commands registered for guild {} ({} commands, {} from plugins)",
+        guild_id,
+        create_slash_commands().len() + create_plugin_commands(plugins).len(),
+        create_plugin_commands(plugins).len()
     );
     Ok(())
 }

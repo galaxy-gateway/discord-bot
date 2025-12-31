@@ -1,0 +1,64 @@
+# Plugin Configuration for Persona Discord Bot
+# Version: 1.0.0
+#
+# Plugins are config-driven CLI command integrations that allow the bot
+# to execute approved external tools via Discord slash commands.
+
+plugins:
+  - name: transcribe
+    description: "Transcribe YouTube videos to text using Whisper"
+    enabled: true
+    version: "1.0.0"
+
+    command:
+      name: transcribe
+      description: "Transcribe a YouTube video and post the transcript in a thread"
+      options:
+        - name: url
+          description: "YouTube video URL to transcribe"
+          type: string
+          required: true
+          validation:
+            pattern: "^https?://(www\\.)?(youtube\\.com/watch\\?v=|youtu\\.be/)[a-zA-Z0-9_-]+"
+            max_length: 200
+
+    execution:
+      # Use shell to chain commands: create temp dir, run transcription, output result
+      command: sh
+      args:
+        - "-c"
+        - |
+          TMPDIR=$(mktemp -d) && \
+          docker run --rm -v "$TMPDIR:/data/output" whisper-transcribe:latest "${url}" -m base -f txt -o /data/output 2>&1 && \
+          echo "---TRANSCRIPT---" && \
+          cat "$TMPDIR"/*.txt && \
+          rm -rf "$TMPDIR"
+      timeout_seconds: 600      # 10 minutes max
+      max_output_bytes: 10485760  # 10MB
+
+    security:
+      cooldown_seconds: 60      # 1 minute between requests per user
+      guild_only: false         # Allow in DMs too
+
+    output:
+      create_thread: true
+      thread_name_template: "Transcript: ${url}"
+      auto_archive_minutes: 1440  # 24 hours
+      post_as_file: true
+      file_name_template: "transcript-${timestamp}.txt"
+      max_inline_length: 1500
+      summary_prompt: |
+        Summarize this video transcript in 2-3 bullet points.
+        Focus on the main topics and key takeaways.
+
+        Transcript:
+        ${output}
+      error_template: |
+        **Transcription failed**
+
+        ${error}
+
+        Please check that:
+        - The URL is a valid YouTube video
+        - The video is not private or age-restricted
+        - The video has audio/speech content

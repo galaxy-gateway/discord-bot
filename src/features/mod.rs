@@ -18,6 +18,7 @@ pub mod conflict;
 pub mod image_gen;
 pub mod introspection;
 pub mod personas;
+pub mod plugins;
 pub mod rate_limiting;
 pub mod reminders;
 pub mod startup;
@@ -36,6 +37,7 @@ pub use personas::{Persona, PersonaManager};
 pub use rate_limiting::RateLimiter;
 pub use reminders::ReminderScheduler;
 pub use startup::StartupNotifier;
+pub use plugins::{Plugin, PluginConfig, PluginManager, PluginExecutor, JobManager, OutputHandler};
 
 // ============================================================================
 // Feature Registry
@@ -171,6 +173,14 @@ pub const FEATURES: &[Feature] = &[
         since: "0.6.0",
         toggleable: false,
         description: "Comprehensive DM session and engagement metrics with user-facing analytics",
+    },
+    Feature {
+        id: "plugins",
+        name: "Plugin System",
+        version: "1.0.0",
+        since: "0.9.0",
+        toggleable: true,
+        description: "Config-based CLI command plugins with background execution",
     },
 ];
 

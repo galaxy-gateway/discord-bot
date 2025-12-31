@@ -4,6 +4,7 @@ use crate::features::image_gen::generator::{ImageGenerator, ImageSize, ImageStyl
 use crate::features::analytics::InteractionTracker;
 use crate::features::introspection::get_component_snippet;
 use crate::features::personas::PersonaManager;
+use crate::features::plugins::PluginManager;
 use crate::features::rate_limiting::RateLimiter;
 use crate::features::analytics::UsageTracker;
 use crate::database::Database;
@@ -13,6 +14,8 @@ use anyhow::Result;
 use log::{debug, error, info, warn};
 use tokio::time::{timeout, Duration as TokioDuration, Instant};
 use uuid::Uuid;
+use std::sync::Arc;
+use std::collections::HashMap;
 use openai::chat::{ChatCompletion, ChatCompletionMessage, ChatCompletionMessageRole};
 use serenity::model::application::interaction::application_command::ApplicationCommandInteraction;
 use serenity::model::channel::Message;
@@ -34,6 +37,7 @@ pub struct CommandHandler {
     start_time: std::time::Instant,
     usage_tracker: UsageTracker,
     interaction_tracker: InteractionTracker,
+    plugin_manager: Option<Arc<PluginManager>>,
 }
 
 impl CommandHandler {
@@ -69,7 +73,21 @@ impl CommandHandler {
             start_time: std::time::Instant::now(),
             usage_tracker,
             interaction_tracker,
+            plugin_manager: None,
         }
+    }
+
+    /// Set the plugin manager for handling plugin commands
+    pub fn set_plugin_manager(&mut self, plugin_manager: Arc<PluginManager>) {
+        self.plugin_manager = Some(plugin_manager);
+    }
+
+    /// Get a reference to the loaded plugins (if any)
+    pub fn get_plugins(&self) -> Vec<crate::features::plugins::Plugin> {
+        self.plugin_manager
+            .as_ref()
+            .map(|pm| pm.config.plugins.clone())
+            .unwrap_or_default()
     }
 
     pub async fn handle_message(&self, ctx: &Context, msg: &Message) -> Result<()> {
@@ -645,23 +663,292 @@ impl CommandHandler {
                 debug!("[{request_id}] 📜 Handling session_history command");
                 self.handle_slash_session_history(ctx, command, request_id).await?;
             }
-            _ => {
-                warn!("[{}] ❓ Unknown slash command: {}", request_id, command.data.name);
-                debug!("[{request_id}] 📤 Sending unknown command response to Discord");
-                command
-                    .create_interaction_response(&ctx.http, |response| {
-                        response
-                            .kind(serenity::model::application::interaction::InteractionResponseType::ChannelMessageWithSource)
-                            .interaction_response_data(|message| {
-                                message.content("Unknown command. Use `/help` to see available commands.")
+            cmd_name => {
+                // Check if this is a plugin command
+                if let Some(ref pm) = self.plugin_manager {
+                    if let Some(plugin) = pm.config.plugins.iter().find(|p| p.enabled && p.command.name == cmd_name) {
+                        debug!("[{}] 🔌 Handling plugin command: {}", request_id, cmd_name);
+                        self.handle_plugin_command(ctx, command, plugin.clone(), pm.clone(), request_id).await?;
+                    } else {
+                        warn!("[{}] ❓ Unknown slash command: {}", request_id, cmd_name);
+                        debug!("[{request_id}] 📤 Sending unknown command response to Discord");
+                        command
+                            .create_interaction_response(&ctx.http, |response| {
+                                response
+                                    .kind(serenity::model::application::interaction::InteractionResponseType::ChannelMessageWithSource)
+                                    .interaction_response_data(|message| {
+                                        message.content("Unknown command. Use `/help` to see available commands.")
+                                    })
                             })
-                    })
-                    .await?;
-                info!("[{request_id}] ✅ Unknown command response sent successfully");
+                            .await?;
+                        info!("[{request_id}] ✅ Unknown command response sent successfully");
+                    }
+                } else {
+                    warn!("[{}] ❓ Unknown slash command: {}", request_id, cmd_name);
+                    debug!("[{request_id}] 📤 Sending unknown command response to Discord");
+                    command
+                        .create_interaction_response(&ctx.http, |response| {
+                            response
+                                .kind(serenity::model::application::interaction::InteractionResponseType::ChannelMessageWithSource)
+                                .interaction_response_data(|message| {
+                                    message.content("Unknown command. Use `/help` to see available commands.")
+                                })
+                        })
+                        .await?;
+                    info!("[{request_id}] ✅ Unknown command response sent successfully");
+                }
             }
         }
 
         info!("[{request_id}] ✅ Slash command processing completed");
+        Ok(())
+    }
+
+    /// Handle a plugin-based slash command
+    async fn handle_plugin_command(
+        &self,
+        ctx: &Context,
+        command: &ApplicationCommandInteraction,
+        plugin: crate::features::plugins::Plugin,
+        plugin_manager: Arc<PluginManager>,
+        request_id: Uuid,
+    ) -> Result<()> {
+        use serenity::model::application::interaction::InteractionResponseType;
+
+        let user_id = command.user.id.to_string();
+        let guild_id = command.guild_id.map(|id| id.to_string());
+
+        info!("[{}] 🔌 Processing plugin command: {} | User: {} | Plugin: {}",
+              request_id, plugin.command.name, user_id, plugin.name);
+
+        // Check guild_only restriction
+        if plugin.security.guild_only && guild_id.is_none() {
+            command
+                .create_interaction_response(&ctx.http, |response| {
+                    response
+                        .kind(InteractionResponseType::ChannelMessageWithSource)
+                        .interaction_response_data(|message| {
+                            message.content("This command can only be used in a server, not in DMs.")
+                                .ephemeral(true)
+                        })
+                })
+                .await?;
+            return Ok(());
+        }
+
+        // Check cooldown
+        if plugin.security.cooldown_seconds > 0 {
+            if !plugin_manager.job_manager.check_cooldown(&user_id, &plugin.name, plugin.security.cooldown_seconds) {
+                command
+                    .create_interaction_response(&ctx.http, |response| {
+                        response
+                            .kind(InteractionResponseType::ChannelMessageWithSource)
+                            .interaction_response_data(|message| {
+                                message.content(format!(
+                                    "Please wait before using `{}` again. Cooldown: {} seconds.",
+                                    plugin.command.name, plugin.security.cooldown_seconds
+                                ))
+                                .ephemeral(true)
+                            })
+                    })
+                    .await?;
+                return Ok(());
+            }
+        }
+
+        // Extract command parameters
+        let mut params: HashMap<String, String> = HashMap::new();
+        for opt in &command.data.options {
+            if let Some(value) = &opt.value {
+                let value_str = match value {
+                    serde_json::Value::String(s) => s.clone(),
+                    other => other.to_string().trim_matches('"').to_string(),
+                };
+                params.insert(opt.name.clone(), value_str);
+            }
+        }
+
+        // Add defaults for missing optional parameters
+        for opt_def in &plugin.command.options {
+            if !params.contains_key(&opt_def.name) {
+                if let Some(ref default) = opt_def.default {
+                    params.insert(opt_def.name.clone(), default.clone());
+                }
+            }
+        }
+
+        // Validate parameters
+        for opt_def in &plugin.command.options {
+            if let Some(value) = params.get(&opt_def.name) {
+                if let Some(ref validation) = opt_def.validation {
+                    // Check pattern
+                    if let Some(ref pattern) = validation.pattern {
+                        let re = regex::Regex::new(pattern)?;
+                        if !re.is_match(value) {
+                            command
+                                .create_interaction_response(&ctx.http, |response| {
+                                    response
+                                        .kind(InteractionResponseType::ChannelMessageWithSource)
+                                        .interaction_response_data(|message| {
+                                            message.content(format!(
+                                                "Invalid value for `{}`: doesn't match expected format.",
+                                                opt_def.name
+                                            ))
+                                            .ephemeral(true)
+                                        })
+                                })
+                                .await?;
+                            return Ok(());
+                        }
+                    }
+                    // Check length constraints
+                    if let Some(min_len) = validation.min_length {
+                        if value.len() < min_len {
+                            command
+                                .create_interaction_response(&ctx.http, |response| {
+                                    response
+                                        .kind(InteractionResponseType::ChannelMessageWithSource)
+                                        .interaction_response_data(|message| {
+                                            message.content(format!(
+                                                "Value for `{}` is too short (minimum {} characters).",
+                                                opt_def.name, min_len
+                                            ))
+                                            .ephemeral(true)
+                                        })
+                                })
+                                .await?;
+                            return Ok(());
+                        }
+                    }
+                    if let Some(max_len) = validation.max_length {
+                        if value.len() > max_len {
+                            command
+                                .create_interaction_response(&ctx.http, |response| {
+                                    response
+                                        .kind(InteractionResponseType::ChannelMessageWithSource)
+                                        .interaction_response_data(|message| {
+                                            message.content(format!(
+                                                "Value for `{}` is too long (maximum {} characters).",
+                                                opt_def.name, max_len
+                                            ))
+                                            .ephemeral(true)
+                                        })
+                                })
+                                .await?;
+                            return Ok(());
+                        }
+                    }
+                }
+            } else if opt_def.required {
+                command
+                    .create_interaction_response(&ctx.http, |response| {
+                        response
+                            .kind(InteractionResponseType::ChannelMessageWithSource)
+                            .interaction_response_data(|message| {
+                                message.content(format!("Missing required parameter: `{}`.", opt_def.name))
+                                    .ephemeral(true)
+                            })
+                    })
+                    .await?;
+                return Ok(());
+            }
+        }
+
+        // Check if plugins feature is enabled for this guild
+        if let Some(ref gid) = guild_id {
+            let enabled = self.database.is_feature_enabled("plugins", None, Some(gid)).await?;
+            if !enabled {
+                command
+                    .create_interaction_response(&ctx.http, |response| {
+                        response
+                            .kind(InteractionResponseType::ChannelMessageWithSource)
+                            .interaction_response_data(|message| {
+                                message.content("Plugin commands are disabled in this server.")
+                                    .ephemeral(true)
+                            })
+                    })
+                    .await?;
+                return Ok(());
+            }
+        }
+
+        // Defer the response (command will take a while)
+        command
+            .create_interaction_response(&ctx.http, |response| {
+                response.kind(InteractionResponseType::DeferredChannelMessageWithSource)
+            })
+            .await?;
+
+        info!("[{}] ⏳ Deferred response for plugin command: {}", request_id, plugin.command.name);
+
+        // Clone values needed for the background task
+        let http = ctx.http.clone();
+        let plugin_manager = plugin_manager.clone();
+        let plugin = plugin.clone();
+        let discord_channel_id = command.channel_id;
+        let interaction_token = command.token.clone();
+        let application_id = command.application_id.0;
+        let user_id_owned = user_id.clone();
+        let guild_id_owned = guild_id.clone();
+
+        // Spawn background task to execute the plugin
+        tokio::spawn(async move {
+            match plugin_manager.execute_plugin(
+                http,
+                plugin.clone(),
+                params,
+                user_id_owned,
+                guild_id_owned,
+                discord_channel_id,
+            ).await {
+                Ok(job_id) => {
+                    info!("[{}] ✅ Plugin job started: {} (job_id: {})", request_id, plugin.name, job_id);
+
+                    // Edit the deferred response with status
+                    let edit_url = format!(
+                        "https://discord.com/api/v10/webhooks/{}/{}/messages/@original",
+                        application_id, interaction_token
+                    );
+
+                    let status_message = if plugin.output.create_thread {
+                        format!("🔄 Processing `{}` command... Output will appear in a new thread.", plugin.command.name)
+                    } else {
+                        format!("🔄 Processing `{}` command...", plugin.command.name)
+                    };
+
+                    // Use reqwest to edit the interaction response
+                    let client = reqwest::Client::new();
+                    let _ = client
+                        .patch(&edit_url)
+                        .header("Content-Type", "application/json")
+                        .json(&serde_json::json!({
+                            "content": status_message
+                        }))
+                        .send()
+                        .await;
+                }
+                Err(e) => {
+                    error!("[{}] ❌ Plugin execution failed: {} - {}", request_id, plugin.name, e);
+
+                    // Edit the deferred response with error
+                    let edit_url = format!(
+                        "https://discord.com/api/v10/webhooks/{}/{}/messages/@original",
+                        application_id, interaction_token
+                    );
+
+                    let client = reqwest::Client::new();
+                    let _ = client
+                        .patch(&edit_url)
+                        .header("Content-Type", "application/json")
+                        .json(&serde_json::json!({
+                            "content": format!("❌ Command failed: {}", e)
+                        }))
+                        .send()
+                        .await;
+                }
+            }
+        });
+
         Ok(())
     }
 

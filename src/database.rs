@@ -516,6 +516,34 @@ impl Database {
              ON dm_events(event_type, timestamp)",
         )?;
 
+        // Plugin Jobs Table
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS plugin_jobs (
+                id TEXT PRIMARY KEY,
+                plugin_name TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                guild_id TEXT,
+                channel_id TEXT NOT NULL,
+                thread_id TEXT,
+                status TEXT NOT NULL DEFAULT 'pending',
+                params TEXT,
+                result TEXT,
+                error TEXT,
+                started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                completed_at DATETIME
+            )",
+        )?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_plugin_jobs_status
+             ON plugin_jobs(status, started_at)",
+        )?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_plugin_jobs_user
+             ON plugin_jobs(user_id, plugin_name, started_at)",
+        )?;
+
         Ok(())
     }
 
@@ -2141,6 +2169,128 @@ impl Database {
         statement.bind((1, format!("-{}", days).as_str()))?;
         statement.next()?;
         info!("Cleaned up dm_events older than {} days", days);
+        Ok(())
+    }
+
+    // Plugin Job Methods
+
+    /// Create a new plugin job record
+    pub async fn create_plugin_job(&self, job: &crate::features::plugins::job::Job) -> Result<()> {
+        let conn = self.connection.lock().await;
+        let params_json = serde_json::to_string(&job.params)?;
+
+        let mut statement = conn.prepare(
+            "INSERT INTO plugin_jobs (id, plugin_name, user_id, guild_id, channel_id, status, params, started_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        )?;
+        statement.bind((1, job.id.as_str()))?;
+        statement.bind((2, job.plugin_name.as_str()))?;
+        statement.bind((3, job.user_id.as_str()))?;
+        statement.bind((4, job.guild_id.as_deref().unwrap_or("")))?;
+        statement.bind((5, job.channel_id.as_str()))?;
+        statement.bind((6, job.status.to_string().as_str()))?;
+        statement.bind((7, params_json.as_str()))?;
+        statement.bind((8, job.started_at.to_rfc3339().as_str()))?;
+        statement.next()?;
+
+        Ok(())
+    }
+
+    /// Update a plugin job record
+    pub async fn update_plugin_job(&self, job: &crate::features::plugins::job::Job) -> Result<()> {
+        let conn = self.connection.lock().await;
+
+        let completed_at = job.completed_at
+            .map(|t| t.to_rfc3339())
+            .unwrap_or_default();
+
+        let result_preview = job.result.as_ref()
+            .map(|r| r.chars().take(1000).collect::<String>())
+            .unwrap_or_default();
+
+        let error = job.error.as_ref()
+            .cloned()
+            .unwrap_or_default();
+
+        let thread_id = job.thread_id.as_deref().unwrap_or("");
+
+        let mut statement = conn.prepare(
+            "UPDATE plugin_jobs SET
+                status = ?,
+                thread_id = ?,
+                result = ?,
+                error = ?,
+                completed_at = CASE WHEN ? = '' THEN NULL ELSE ? END
+             WHERE id = ?"
+        )?;
+        statement.bind((1, job.status.to_string().as_str()))?;
+        statement.bind((2, thread_id))?;
+        statement.bind((3, result_preview.as_str()))?;
+        statement.bind((4, error.as_str()))?;
+        statement.bind((5, completed_at.as_str()))?;
+        statement.bind((6, completed_at.as_str()))?;
+        statement.bind((7, job.id.as_str()))?;
+        statement.next()?;
+
+        Ok(())
+    }
+
+    /// Get incomplete plugin jobs (for crash recovery)
+    pub async fn get_incomplete_plugin_jobs(&self) -> Result<Vec<crate::features::plugins::job::Job>> {
+        use crate::features::plugins::job::{Job, JobStatus};
+        use std::collections::HashMap;
+
+        let conn = self.connection.lock().await;
+        let mut jobs = Vec::new();
+
+        let mut statement = conn.prepare(
+            "SELECT id, plugin_name, user_id, guild_id, channel_id, thread_id, status, params, started_at
+             FROM plugin_jobs
+             WHERE status IN ('pending', 'running')
+             ORDER BY started_at ASC"
+        )?;
+
+        while let Ok(State::Row) = statement.next() {
+            let params_json: String = statement.read::<String, _>(7)?;
+            let params: HashMap<String, String> = serde_json::from_str(&params_json).unwrap_or_default();
+            let guild_id: String = statement.read(3)?;
+            let thread_id: String = statement.read(5)?;
+            let status_str: String = statement.read(6)?;
+            let started_at_str: String = statement.read(8)?;
+
+            let status = status_str.parse::<JobStatus>().unwrap_or(JobStatus::Pending);
+            let started_at = chrono::DateTime::parse_from_rfc3339(&started_at_str)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .unwrap_or_else(|_| chrono::Utc::now());
+
+            jobs.push(Job {
+                id: statement.read(0)?,
+                plugin_name: statement.read(1)?,
+                user_id: statement.read(2)?,
+                guild_id: if guild_id.is_empty() { None } else { Some(guild_id) },
+                channel_id: statement.read(4)?,
+                thread_id: if thread_id.is_empty() { None } else { Some(thread_id) },
+                status,
+                params,
+                started_at,
+                completed_at: None,
+                result: None,
+                error: None,
+            });
+        }
+
+        Ok(jobs)
+    }
+
+    /// Cleanup old completed plugin jobs (keep last N days)
+    pub async fn cleanup_old_plugin_jobs(&self, days: i64) -> Result<()> {
+        let conn = self.connection.lock().await;
+        let mut statement = conn.prepare(
+            "DELETE FROM plugin_jobs WHERE completed_at < datetime('now', ? || ' days')"
+        )?;
+        statement.bind((1, format!("-{}", days).as_str()))?;
+        statement.next()?;
+        info!("Cleaned up plugin_jobs older than {} days", days);
         Ok(())
     }
 }
