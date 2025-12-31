@@ -19,8 +19,10 @@ plugins:
           type: string
           required: true
           validation:
-            pattern: "^https?://(www\\.)?(youtube\\.com/(watch\\?v=|shorts/)|youtu\\.be/)[a-zA-Z0-9_-]+"
-            max_length: 200
+            # Supports: youtube.com/watch?v=ID, youtube.com/shorts/ID, youtu.be/ID
+            # Also allows query params like &t=123, &list=..., etc.
+            pattern: "^https?://(www\\.)?(youtube\\.com/(watch\\?v=|shorts/)|youtu\\.be/)[a-zA-Z0-9_-]+([?&][a-zA-Z0-9_=-]*)?"
+            max_length: 300
 
     execution:
       # Use shell to chain commands: create temp dir, run transcription, output result
