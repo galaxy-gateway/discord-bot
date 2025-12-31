@@ -544,6 +544,65 @@ impl Database {
              ON plugin_jobs(user_id, plugin_name, started_at)",
         )?;
 
+        // Add parent_playlist_id column to plugin_jobs if it doesn't exist
+        // SQLite doesn't support ADD COLUMN IF NOT EXISTS, so we check pragmatically
+        let has_parent_playlist_id: bool = {
+            let mut stmt = conn.prepare("PRAGMA table_info(plugin_jobs)")?;
+            let mut found = false;
+            while let Ok(State::Row) = stmt.next() {
+                let col_name: String = stmt.read(1)?;
+                if col_name == "parent_playlist_id" {
+                    found = true;
+                    break;
+                }
+            }
+            found
+        };
+
+        if !has_parent_playlist_id {
+            conn.execute("ALTER TABLE plugin_jobs ADD COLUMN parent_playlist_id TEXT")?;
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_plugin_jobs_parent
+                 ON plugin_jobs(parent_playlist_id)",
+            )?;
+        }
+
+        // Playlist Jobs Table (for multi-video transcription)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS playlist_jobs (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                guild_id TEXT,
+                channel_id TEXT NOT NULL,
+                thread_id TEXT,
+                playlist_url TEXT NOT NULL,
+                playlist_id TEXT NOT NULL,
+                playlist_title TEXT,
+                total_videos INTEGER NOT NULL,
+                completed_videos INTEGER DEFAULT 0,
+                failed_videos INTEGER DEFAULT 0,
+                skipped_videos INTEGER DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'pending',
+                max_videos INTEGER,
+                current_video_job_id TEXT,
+                error TEXT,
+                started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                completed_at DATETIME,
+                cancelled_at DATETIME,
+                cancelled_by TEXT
+            )",
+        )?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_playlist_jobs_status
+             ON playlist_jobs(status, started_at)",
+        )?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_playlist_jobs_user
+             ON playlist_jobs(user_id, started_at)",
+        )?;
+
         Ok(())
     }
 
@@ -2276,6 +2335,7 @@ impl Database {
                 completed_at: None,
                 result: None,
                 error: None,
+                parent_playlist_id: None, // Recovery doesn't load parent - handled separately
             });
         }
 
@@ -2292,6 +2352,223 @@ impl Database {
         statement.next()?;
         info!("Cleaned up plugin_jobs older than {} days", days);
         Ok(())
+    }
+
+    // Playlist Job Methods
+
+    /// Create a new playlist job record
+    pub async fn create_playlist_job(&self, job: &crate::features::plugins::job::PlaylistJob) -> Result<()> {
+        let conn = self.connection.lock().await;
+
+        let mut statement = conn.prepare(
+            "INSERT INTO playlist_jobs (
+                id, user_id, guild_id, channel_id, playlist_url, playlist_id,
+                playlist_title, total_videos, status, max_videos, started_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        )?;
+        statement.bind((1, job.id.as_str()))?;
+        statement.bind((2, job.user_id.as_str()))?;
+        statement.bind((3, job.guild_id.as_deref().unwrap_or("")))?;
+        statement.bind((4, job.channel_id.as_str()))?;
+        statement.bind((5, job.playlist_url.as_str()))?;
+        statement.bind((6, job.playlist_id.as_str()))?;
+        statement.bind((7, job.playlist_title.as_deref().unwrap_or("")))?;
+        statement.bind((8, job.total_videos as i64))?;
+        statement.bind((9, job.status.to_string().as_str()))?;
+        statement.bind((10, job.max_videos.map(|v| v as i64).unwrap_or(-1)))?;
+        statement.bind((11, job.started_at.to_rfc3339().as_str()))?;
+        statement.next()?;
+
+        Ok(())
+    }
+
+    /// Update a playlist job record
+    pub async fn update_playlist_job(&self, job: &crate::features::plugins::job::PlaylistJob) -> Result<()> {
+        let conn = self.connection.lock().await;
+
+        let completed_at = job.completed_at
+            .map(|t| t.to_rfc3339())
+            .unwrap_or_default();
+
+        let cancelled_at = job.cancelled_at
+            .map(|t| t.to_rfc3339())
+            .unwrap_or_default();
+
+        let mut statement = conn.prepare(
+            "UPDATE playlist_jobs SET
+                thread_id = ?,
+                playlist_title = ?,
+                completed_videos = ?,
+                failed_videos = ?,
+                skipped_videos = ?,
+                status = ?,
+                current_video_job_id = ?,
+                error = ?,
+                completed_at = CASE WHEN ? = '' THEN NULL ELSE ? END,
+                cancelled_at = CASE WHEN ? = '' THEN NULL ELSE ? END,
+                cancelled_by = ?
+             WHERE id = ?"
+        )?;
+        statement.bind((1, job.thread_id.as_deref().unwrap_or("")))?;
+        statement.bind((2, job.playlist_title.as_deref().unwrap_or("")))?;
+        statement.bind((3, job.completed_videos as i64))?;
+        statement.bind((4, job.failed_videos as i64))?;
+        statement.bind((5, job.skipped_videos as i64))?;
+        statement.bind((6, job.status.to_string().as_str()))?;
+        statement.bind((7, job.current_video_job_id.as_deref().unwrap_or("")))?;
+        statement.bind((8, job.error.as_deref().unwrap_or("")))?;
+        statement.bind((9, completed_at.as_str()))?;
+        statement.bind((10, completed_at.as_str()))?;
+        statement.bind((11, cancelled_at.as_str()))?;
+        statement.bind((12, cancelled_at.as_str()))?;
+        statement.bind((13, job.cancelled_by.as_deref().unwrap_or("")))?;
+        statement.bind((14, job.id.as_str()))?;
+        statement.next()?;
+
+        Ok(())
+    }
+
+    /// Get incomplete playlist jobs (for crash recovery / auto-resume)
+    pub async fn get_incomplete_playlist_jobs(&self) -> Result<Vec<crate::features::plugins::job::PlaylistJob>> {
+        use crate::features::plugins::job::{PlaylistJob, PlaylistJobStatus};
+
+        let conn = self.connection.lock().await;
+        let mut jobs = Vec::new();
+
+        let mut statement = conn.prepare(
+            "SELECT id, user_id, guild_id, channel_id, thread_id, playlist_url, playlist_id,
+                    playlist_title, total_videos, completed_videos, failed_videos, skipped_videos,
+                    status, max_videos, current_video_job_id, error, started_at
+             FROM playlist_jobs
+             WHERE status IN ('pending', 'running', 'paused')
+             ORDER BY started_at ASC"
+        )?;
+
+        while let Ok(State::Row) = statement.next() {
+            let guild_id: String = statement.read(2)?;
+            let thread_id: String = statement.read(4)?;
+            let playlist_title: String = statement.read(7)?;
+            let status_str: String = statement.read(12)?;
+            let max_videos: i64 = statement.read(13)?;
+            let current_video_job_id: String = statement.read(14)?;
+            let error: String = statement.read(15)?;
+            let started_at_str: String = statement.read(16)?;
+
+            let status = status_str.parse::<PlaylistJobStatus>().unwrap_or(PlaylistJobStatus::Pending);
+            let started_at = chrono::DateTime::parse_from_rfc3339(&started_at_str)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .unwrap_or_else(|_| chrono::Utc::now());
+
+            jobs.push(PlaylistJob {
+                id: statement.read(0)?,
+                user_id: statement.read(1)?,
+                guild_id: if guild_id.is_empty() { None } else { Some(guild_id) },
+                channel_id: statement.read(3)?,
+                thread_id: if thread_id.is_empty() { None } else { Some(thread_id) },
+                playlist_url: statement.read(5)?,
+                playlist_id: statement.read(6)?,
+                playlist_title: if playlist_title.is_empty() { None } else { Some(playlist_title) },
+                total_videos: statement.read::<i64, _>(8)? as u32,
+                completed_videos: statement.read::<i64, _>(9)? as u32,
+                failed_videos: statement.read::<i64, _>(10)? as u32,
+                skipped_videos: statement.read::<i64, _>(11)? as u32,
+                status,
+                max_videos: if max_videos < 0 { None } else { Some(max_videos as u32) },
+                current_video_job_id: if current_video_job_id.is_empty() { None } else { Some(current_video_job_id) },
+                error: if error.is_empty() { None } else { Some(error) },
+                started_at,
+                completed_at: None,
+                cancelled_at: None,
+                cancelled_by: None,
+            });
+        }
+
+        Ok(jobs)
+    }
+
+    /// Get active playlist jobs for a user
+    pub async fn get_user_active_playlist_jobs(&self, user_id: &str) -> Result<Vec<crate::features::plugins::job::PlaylistJob>> {
+        use crate::features::plugins::job::{PlaylistJob, PlaylistJobStatus};
+
+        let conn = self.connection.lock().await;
+        let mut jobs = Vec::new();
+
+        let mut statement = conn.prepare(
+            "SELECT id, user_id, guild_id, channel_id, thread_id, playlist_url, playlist_id,
+                    playlist_title, total_videos, completed_videos, failed_videos, skipped_videos,
+                    status, max_videos, current_video_job_id, error, started_at
+             FROM playlist_jobs
+             WHERE user_id = ? AND status IN ('pending', 'running', 'paused')
+             ORDER BY started_at DESC"
+        )?;
+        statement.bind((1, user_id))?;
+
+        while let Ok(State::Row) = statement.next() {
+            let guild_id: String = statement.read(2)?;
+            let thread_id: String = statement.read(4)?;
+            let playlist_title: String = statement.read(7)?;
+            let status_str: String = statement.read(12)?;
+            let max_videos: i64 = statement.read(13)?;
+            let current_video_job_id: String = statement.read(14)?;
+            let error: String = statement.read(15)?;
+            let started_at_str: String = statement.read(16)?;
+
+            let status = status_str.parse::<PlaylistJobStatus>().unwrap_or(PlaylistJobStatus::Pending);
+            let started_at = chrono::DateTime::parse_from_rfc3339(&started_at_str)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .unwrap_or_else(|_| chrono::Utc::now());
+
+            jobs.push(PlaylistJob {
+                id: statement.read(0)?,
+                user_id: statement.read(1)?,
+                guild_id: if guild_id.is_empty() { None } else { Some(guild_id) },
+                channel_id: statement.read(3)?,
+                thread_id: if thread_id.is_empty() { None } else { Some(thread_id) },
+                playlist_url: statement.read(5)?,
+                playlist_id: statement.read(6)?,
+                playlist_title: if playlist_title.is_empty() { None } else { Some(playlist_title) },
+                total_videos: statement.read::<i64, _>(8)? as u32,
+                completed_videos: statement.read::<i64, _>(9)? as u32,
+                failed_videos: statement.read::<i64, _>(10)? as u32,
+                skipped_videos: statement.read::<i64, _>(11)? as u32,
+                status,
+                max_videos: if max_videos < 0 { None } else { Some(max_videos as u32) },
+                current_video_job_id: if current_video_job_id.is_empty() { None } else { Some(current_video_job_id) },
+                error: if error.is_empty() { None } else { Some(error) },
+                started_at,
+                completed_at: None,
+                cancelled_at: None,
+                cancelled_by: None,
+            });
+        }
+
+        Ok(jobs)
+    }
+
+    /// Get completed video job IDs for a playlist (for resume functionality)
+    pub async fn get_completed_video_job_ids(&self, playlist_job_id: &str) -> Result<Vec<String>> {
+        let conn = self.connection.lock().await;
+        let mut ids = Vec::new();
+
+        let mut statement = conn.prepare(
+            "SELECT params FROM plugin_jobs
+             WHERE parent_playlist_id = ? AND status = 'completed'"
+        )?;
+        statement.bind((1, playlist_job_id))?;
+
+        while let Ok(State::Row) = statement.next() {
+            let params_json: String = statement.read(0)?;
+            if let Ok(params) = serde_json::from_str::<std::collections::HashMap<String, String>>(&params_json) {
+                if let Some(url) = params.get("url") {
+                    // Extract video ID from URL
+                    if let Some(vid) = url.split("v=").nth(1).and_then(|s| s.split('&').next()) {
+                        ids.push(vid.to_string());
+                    }
+                }
+            }
+        }
+
+        Ok(ids)
     }
 }
 

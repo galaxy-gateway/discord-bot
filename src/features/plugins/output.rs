@@ -1,12 +1,13 @@
 //! # Thread Output Handler
 //!
 //! Create Discord threads for plugin output, handle large responses with file attachments,
-//! and generate AI summaries.
+//! and generate AI summaries. Supports both single video and playlist transcription.
 //!
-//! - **Version**: 1.1.0
+//! - **Version**: 2.0.0
 //! - **Since**: 0.9.0
 //!
 //! ## Changelog
+//! - 2.0.0: Added playlist progress tracking, per-video results, and summary posting
 //! - 1.1.0: Added structured output posting (URL -> summary -> file)
 //! - 1.0.0: Initial release
 
@@ -246,6 +247,191 @@ impl OutputHandler {
         Ok(())
     }
 
+    // Playlist-specific methods
+
+    /// Post or update a progress message for playlist processing
+    ///
+    /// If `progress_message_id` is Some, edits that message. Otherwise posts a new message
+    /// and returns the new message ID.
+    pub async fn post_playlist_progress(
+        &self,
+        http: &Arc<Http>,
+        channel_id: ChannelId,
+        progress_message_id: Option<MessageId>,
+        current_index: u32,
+        total: u32,
+        current_title: &str,
+        eta: Option<std::time::Duration>,
+    ) -> Result<MessageId> {
+        let eta_str = eta
+            .map(|d| crate::features::plugins::youtube::format_duration(d))
+            .unwrap_or_else(|| "calculating...".to_string());
+
+        let content = format!(
+            "⏳ **Processing playlist:** {}/{} videos | Currently: \"{}\" | ETA: {}",
+            current_index, total, truncate_str(current_title, 40), eta_str
+        );
+
+        if let Some(msg_id) = progress_message_id {
+            // Edit existing message
+            channel_id
+                .edit_message(http, msg_id, |m| m.content(&content))
+                .await?;
+            Ok(msg_id)
+        } else {
+            // Post new message
+            let msg = channel_id.say(http, &content).await?;
+            info!("Posted playlist progress message");
+            Ok(msg.id)
+        }
+    }
+
+    /// Post a separator and video result within a playlist thread
+    pub async fn post_video_result(
+        &self,
+        http: &Arc<Http>,
+        channel_id: ChannelId,
+        index: u32,
+        total: u32,
+        video_title: &str,
+        video_url: &str,
+        output: &str,
+        config: &OutputConfig,
+    ) -> Result<()> {
+        // Post video header with separator
+        let header = format!(
+            "---\n**[{}/{}] {}**\n{}",
+            index, total, video_title, video_url
+        );
+        channel_id.say(http, &header).await?;
+
+        if output.is_empty() {
+            channel_id.say(http, "*No transcript generated*").await?;
+            return Ok(());
+        }
+
+        // Generate and post summary if configured
+        if let Some(ref prompt) = config.summary_prompt {
+            match self.generate_summary(output, prompt).await {
+                Ok(summary) => {
+                    let summary_chunks = split_message(&summary, 1900);
+                    for chunk in summary_chunks {
+                        channel_id.say(http, &chunk).await?;
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to generate summary for video {}: {}", index, e);
+                    channel_id.say(http, "*Summary unavailable*").await?;
+                }
+            }
+        }
+
+        // Post transcript file
+        let filename = format!("transcript_{:03}_{}.txt", index, sanitize_filename(video_title));
+        let file_bytes = output.as_bytes().to_vec();
+
+        channel_id
+            .send_message(http, |m| {
+                m.content(format!("📄 **Transcript** ({} chars)", output.len()))
+                    .add_file(AttachmentType::Bytes {
+                        data: Cow::Owned(file_bytes),
+                        filename,
+                    })
+            })
+            .await?;
+
+        info!("Posted video {} result", index);
+        Ok(())
+    }
+
+    /// Post a failed video notice in the playlist thread
+    pub async fn post_video_failed(
+        &self,
+        http: &Arc<Http>,
+        channel_id: ChannelId,
+        index: u32,
+        total: u32,
+        video_title: &str,
+        video_url: &str,
+        error: &str,
+    ) -> Result<()> {
+        let content = format!(
+            "---\n**[{}/{}] {}** ❌\n{}\n*Error: {}*",
+            index, total, video_title, video_url, truncate_str(error, 200)
+        );
+        channel_id.say(http, &content).await?;
+        Ok(())
+    }
+
+    /// Post the final playlist summary
+    pub async fn post_playlist_summary(
+        &self,
+        http: &Arc<Http>,
+        channel_id: ChannelId,
+        playlist_title: &str,
+        completed: u32,
+        failed: u32,
+        skipped: u32,
+        total: u32,
+        runtime: std::time::Duration,
+        combined_transcript: Option<&str>,
+    ) -> Result<()> {
+        let status_emoji = if failed == 0 { "✅" } else { "⚠️" };
+
+        let runtime_str = crate::features::plugins::youtube::format_duration(runtime);
+
+        let summary = format!(
+            "---\n\n{} **Playlist Complete: {}**\n\n\
+             • Successful: {} | Failed: {} | Skipped: {}\n\
+             • Total videos: {}\n\
+             • Runtime: {}",
+            status_emoji, playlist_title, completed, failed, skipped, total, runtime_str
+        );
+
+        channel_id.say(http, &summary).await?;
+
+        // Post combined transcript file if provided
+        if let Some(transcript) = combined_transcript {
+            let filename = format!("all_transcripts_{}.txt", sanitize_filename(playlist_title));
+            let file_bytes = transcript.as_bytes().to_vec();
+
+            channel_id
+                .send_message(http, |m| {
+                    m.content(format!("📚 **Combined transcripts** ({} chars)", transcript.len()))
+                        .add_file(AttachmentType::Bytes {
+                            data: Cow::Owned(file_bytes),
+                            filename,
+                        })
+                })
+                .await?;
+
+            info!("Posted combined transcript file");
+        }
+
+        info!("Posted playlist summary");
+        Ok(())
+    }
+
+    /// Post a cancellation notice
+    pub async fn post_playlist_cancelled(
+        &self,
+        http: &Arc<Http>,
+        channel_id: ChannelId,
+        completed: u32,
+        total: u32,
+        cancelled_by: &str,
+    ) -> Result<()> {
+        let content = format!(
+            "---\n\n🛑 **Playlist Cancelled**\n\n\
+             • Processed: {}/{} videos before cancellation\n\
+             • Cancelled by: {}",
+            completed, total, cancelled_by
+        );
+        channel_id.say(http, &content).await?;
+        info!("Posted playlist cancellation notice");
+        Ok(())
+    }
+
     /// Generate an AI summary of the output
     async fn generate_summary(&self, output: &str, prompt_template: &str) -> Result<String> {
         // Truncate output for summary to avoid token limits
@@ -299,6 +485,26 @@ impl OutputHandler {
 
         Ok(summary)
     }
+}
+
+/// Truncate a string to max length, adding ellipsis if needed
+fn truncate_str(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        s.to_string()
+    } else {
+        format!("{}...", &s[..max_len.saturating_sub(3)])
+    }
+}
+
+/// Sanitize a string for use as a filename
+fn sanitize_filename(s: &str) -> String {
+    s.chars()
+        .filter(|c| c.is_alphanumeric() || *c == ' ' || *c == '-' || *c == '_')
+        .take(50)
+        .collect::<String>()
+        .trim()
+        .replace(' ', "_")
+        .to_lowercase()
 }
 
 /// Split a message into chunks that fit within Discord's character limit

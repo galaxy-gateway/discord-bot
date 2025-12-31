@@ -1,28 +1,33 @@
 # Plugin Configuration for Persona Discord Bot
-# Version: 1.0.0
+# Version: 2.0.0
 #
 # Plugins are config-driven CLI command integrations that allow the bot
 # to execute approved external tools via Discord slash commands.
 
 plugins:
   - name: transcribe
-    description: "Transcribe YouTube videos to text using Whisper"
+    description: "Transcribe YouTube videos or playlists to text using Whisper"
     enabled: true
-    version: "1.0.0"
+    version: "2.0.0"
 
     command:
       name: transcribe
-      description: "Transcribe a YouTube video and post the transcript in a thread"
+      description: "Transcribe a YouTube video or playlist and post the transcript(s) in a thread"
       options:
         - name: url
-          description: "YouTube video URL to transcribe"
+          description: "YouTube video or playlist URL to transcribe"
           type: string
           required: true
           validation:
             # Supports: youtube.com/watch?v=ID, youtube.com/shorts/ID, youtu.be/ID
             # Also allows query params like &t=123, &list=..., etc.
-            pattern: "^https?://(www\\.)?(youtube\\.com/(watch\\?v=|shorts/)|youtu\\.be/)[a-zA-Z0-9_-]+([?&][a-zA-Z0-9_=-]*)?"
+            # Now also supports: youtube.com/playlist?list=ID
+            pattern: "^https?://(www\\.)?(youtube\\.com/(watch\\?v=|shorts/|playlist\\?list=)|youtu\\.be/)[a-zA-Z0-9_-]+([?&][a-zA-Z0-9_=-]*)?"
             max_length: 300
+        - name: max_videos
+          description: "Maximum videos to transcribe from playlist (default: 25, max: 50)"
+          type: integer
+          required: false
 
     execution:
       # Use shell to chain commands: create temp dir, run transcription, output result
@@ -46,6 +51,15 @@ plugins:
     security:
       cooldown_seconds: 60      # 1 minute between requests per user
       guild_only: false         # Allow in DMs too
+
+    # Playlist-specific configuration
+    playlist:
+      enabled: true
+      max_videos_per_request: 50    # Hard limit on videos per playlist
+      default_max_videos: 25        # Default if not specified by user
+      concurrent_playlists_per_user: 1  # Only one active playlist per user
+      cooldown_between_playlists: 300   # 5 minutes between playlist starts
+      min_video_interval_seconds: 5     # Delay between videos to avoid rate limits
 
     output:
       create_thread: true
@@ -77,3 +91,31 @@ plugins:
         - The URL is a valid YouTube video
         - The video is not private or age-restricted
         - The video has audio/speech content
+
+  # Cancel an in-progress playlist transcription
+  - name: transcribe_cancel
+    description: "Cancel an in-progress playlist transcription"
+    enabled: true
+    version: "1.0.0"
+
+    command:
+      name: transcribe_cancel
+      description: "Cancel your active playlist transcription"
+      options:
+        - name: job_id
+          description: "Playlist job ID (optional - cancels most recent if not specified)"
+          type: string
+          required: false
+
+    # This is a virtual plugin - handled directly by the bot, not via CLI execution
+    execution:
+      command: ""  # Empty - handled internally
+      args: []
+      timeout_seconds: 5
+
+    security:
+      cooldown_seconds: 5
+      guild_only: false
+
+    output:
+      create_thread: false

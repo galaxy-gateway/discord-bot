@@ -110,6 +110,7 @@ mod tests {
             },
             security: SecurityConfig::default(),
             output: OutputConfig::default(),
+            playlist: None,
         }
     }
 
@@ -177,6 +178,7 @@ mod tests {
             },
             security: SecurityConfig::default(),
             output: OutputConfig::default(),
+            playlist: None,
         };
 
         let commands = create_plugin_commands(&[plugin]);

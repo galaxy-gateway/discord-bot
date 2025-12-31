@@ -2,10 +2,11 @@
 //!
 //! YAML-based plugin configuration with full schema validation.
 //!
-//! - **Version**: 1.1.0
+//! - **Version**: 2.0.0
 //! - **Since**: 0.9.0
 //!
 //! ## Changelog
+//! - 2.0.0: Added playlist configuration for multi-video transcription
 //! - 1.1.0: Added source_param for structured output posting
 //! - 1.0.0: Initial release
 
@@ -65,13 +66,9 @@ impl PluginConfig {
                 ));
             }
 
-            // Validate required fields
-            if plugin.execution.command.is_empty() {
-                return Err(anyhow::anyhow!(
-                    "Plugin {} has no execution command",
-                    plugin.name
-                ));
-            }
+            // Validate required fields (allow empty for virtual plugins)
+            // Virtual plugins are handled internally (e.g., transcribe_cancel)
+            // and don't need a CLI command
 
             // Validate regex patterns compile
             for opt in &plugin.command.options {
@@ -131,6 +128,17 @@ pub struct Plugin {
     /// Output handling configuration
     #[serde(default)]
     pub output: OutputConfig,
+
+    /// Playlist-specific configuration (optional)
+    #[serde(default)]
+    pub playlist: Option<PlaylistConfig>,
+}
+
+impl Plugin {
+    /// Check if this plugin is a "virtual" plugin (handled internally, no CLI execution)
+    pub fn is_virtual(&self) -> bool {
+        self.execution.command.is_empty()
+    }
 }
 
 /// Slash command definition
@@ -292,6 +300,47 @@ pub struct OutputConfig {
     pub source_param: Option<String>,
 }
 
+/// Playlist-specific configuration
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PlaylistConfig {
+    /// Whether playlist support is enabled for this plugin
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+
+    /// Maximum videos allowed per playlist request
+    #[serde(default = "default_max_videos")]
+    pub max_videos_per_request: u32,
+
+    /// Default max videos if not specified by user
+    #[serde(default = "default_default_videos")]
+    pub default_max_videos: u32,
+
+    /// Maximum concurrent playlists per user
+    #[serde(default = "default_one")]
+    pub concurrent_playlists_per_user: u32,
+
+    /// Cooldown between playlist starts in seconds
+    #[serde(default)]
+    pub cooldown_between_playlists: u64,
+
+    /// Minimum interval between video processing in seconds
+    #[serde(default = "default_interval")]
+    pub min_video_interval_seconds: u64,
+}
+
+impl Default for PlaylistConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_videos_per_request: 50,
+            default_max_videos: 25,
+            concurrent_playlists_per_user: 1,
+            cooldown_between_playlists: 300,
+            min_video_interval_seconds: 5,
+        }
+    }
+}
+
 // Default value functions
 fn default_true() -> bool {
     true
@@ -315,6 +364,22 @@ fn default_archive() -> u64 {
 
 fn default_max_inline() -> usize {
     1500
+}
+
+fn default_max_videos() -> u32 {
+    50
+}
+
+fn default_default_videos() -> u32 {
+    25
+}
+
+fn default_one() -> u32 {
+    1
+}
+
+fn default_interval() -> u64 {
+    5
 }
 
 #[cfg(test)]
@@ -405,20 +470,24 @@ plugins:
     }
 
     #[test]
-    fn test_validate_missing_execution_command() {
+    fn test_virtual_plugin_allowed() {
+        // Virtual plugins (like transcribe_cancel) have empty commands
+        // and are handled internally by the bot
         let yaml = r#"
 plugins:
-  - name: test
-    description: Test
+  - name: test_cancel
+    description: Cancel test
     version: "1.0.0"
     command:
-      name: test
-      description: Test
+      name: test_cancel
+      description: Cancel a test operation
     execution:
       command: ""
 "#;
         let config: PluginConfig = serde_yaml::from_str(yaml).unwrap();
-        assert!(config.validate().is_err());
+        // Should validate successfully - virtual plugins are allowed
+        assert!(config.validate().is_ok());
+        assert!(config.plugins[0].is_virtual());
     }
 
     #[test]

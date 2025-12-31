@@ -2,12 +2,14 @@
 //!
 //! Extensible plugin architecture for executing CLI commands via Discord slash commands.
 //! Supports YAML-based configuration, secure execution, background jobs, and thread-based output.
+//! Now includes multi-video playlist transcription with progress tracking.
 //!
-//! - **Version**: 1.5.0
+//! - **Version**: 2.0.0
 //! - **Since**: 0.9.0
 //! - **Toggleable**: true
 //!
 //! ## Changelog
+//! - 2.0.0: Added playlist support with multi-video transcription and progress tracking
 //! - 1.5.0: If command used inside thread, append to existing thread instead of creating new
 //! - 1.4.0: Consolidated to single post - interaction response becomes thread starter
 //! - 1.3.0: Fetch YouTube title via oEmbed for thread name, simpler thread creation flow
@@ -20,12 +22,14 @@ pub mod config;
 pub mod executor;
 pub mod job;
 pub mod output;
+pub mod youtube;
 
 pub use commands::create_plugin_commands;
 pub use config::{Plugin, PluginConfig};
 pub use executor::{ExecutionResult, PluginExecutor};
-pub use job::{Job, JobManager, JobStatus};
+pub use job::{Job, JobManager, JobStatus, PlaylistJob, PlaylistJobStatus};
 pub use output::OutputHandler;
+pub use youtube::{parse_youtube_url, enumerate_playlist, PlaylistInfo, PlaylistItem, YouTubeUrl, YouTubeUrlType};
 
 use crate::database::Database;
 use anyhow::Result;
@@ -484,6 +488,338 @@ impl PluginManager {
         });
 
         Ok(job_id)
+    }
+
+    /// Execute a playlist transcription operation
+    ///
+    /// Handles multi-video playlists with progress tracking, per-video results,
+    /// and a combined transcript at the end.
+    pub async fn execute_playlist(
+        &self,
+        http: Arc<Http>,
+        plugin: Plugin,
+        playlist_info: youtube::PlaylistInfo,
+        user_id: String,
+        guild_id: Option<String>,
+        channel_id: ChannelId,
+        interaction_info: Option<(u64, String)>,
+        max_videos: Option<u32>,
+    ) -> Result<String> {
+        let playlist_config = plugin.playlist.clone().unwrap_or_default();
+
+        // Apply limits
+        let effective_max = max_videos
+            .unwrap_or(playlist_config.default_max_videos)
+            .min(playlist_config.max_videos_per_request);
+
+        let videos: Vec<_> = playlist_info.items.into_iter().take(effective_max as usize).collect();
+        let total_videos = videos.len() as u32;
+
+        // Create playlist job record
+        let playlist_job_id = self.job_manager
+            .create_playlist_job(
+                &user_id,
+                guild_id.as_deref(),
+                &channel_id.to_string(),
+                &playlist_info.title,
+                &playlist_info.id,
+                Some(&playlist_info.title),
+                total_videos,
+                Some(effective_max),
+            )
+            .await?;
+
+        let job_manager = self.job_manager.clone();
+        let executor = self.executor.clone();
+        let output_handler = self.output_handler.clone();
+        let playlist_job_id_clone = playlist_job_id.clone();
+        let playlist_title = playlist_info.title.clone();
+        let playlist_url = format!("https://www.youtube.com/playlist?list={}", playlist_info.id);
+
+        tokio::spawn(async move {
+            // Mark as running
+            if let Err(e) = job_manager.start_playlist_job(&playlist_job_id_clone).await {
+                warn!("Failed to mark playlist job as running: {}", e);
+            }
+
+            // STEP 1: Create thread for playlist
+            let thread_name = format!("Playlist: {} ({} videos)",
+                if playlist_title.len() > 60 {
+                    format!("{}...", &playlist_title[..57])
+                } else {
+                    playlist_title.clone()
+                },
+                total_videos
+            );
+
+            // Truncate to Discord limit
+            let thread_name = if thread_name.len() > 100 {
+                format!("{}...", &thread_name[..97])
+            } else {
+                thread_name
+            };
+
+            let starter_content = format!("**{}**\n{}", playlist_title, playlist_url);
+
+            // Create thread from interaction response
+            let thread_channel = if let Some((app_id, ref token)) = interaction_info {
+                let client = reqwest::Client::new();
+                let edit_url = format!(
+                    "https://discord.com/api/v10/webhooks/{}/{}/messages/@original",
+                    app_id, token
+                );
+
+                let edit_resp = client
+                    .patch(&edit_url)
+                    .header("Content-Type", "application/json")
+                    .json(&serde_json::json!({ "content": starter_content }))
+                    .send()
+                    .await;
+
+                match edit_resp {
+                    Ok(resp) => {
+                        match resp.json::<serde_json::Value>().await {
+                            Ok(msg_json) => {
+                                if let Some(msg_id_str) = msg_json.get("id").and_then(|v| v.as_str()) {
+                                    if let Ok(msg_id) = msg_id_str.parse::<u64>() {
+                                        let message_id = serenity::model::id::MessageId(msg_id);
+                                        match output_handler
+                                            .create_output_thread(&http, channel_id, message_id, &thread_name, 1440)
+                                            .await
+                                        {
+                                            Ok(thread) => {
+                                                job_manager.set_playlist_thread_id(&playlist_job_id_clone, thread.id.to_string());
+                                                Some(ChannelId(thread.id.0))
+                                            }
+                                            Err(e) => {
+                                                error!("Failed to create thread: {}", e);
+                                                None
+                                            }
+                                        }
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                }
+                            }
+                            Err(_) => None
+                        }
+                    }
+                    Err(_) => None
+                }
+            } else {
+                // Fallback: send message and create thread
+                match channel_id.say(&http, &starter_content).await {
+                    Ok(msg) => {
+                        match output_handler
+                            .create_output_thread(&http, channel_id, msg.id, &thread_name, 1440)
+                            .await
+                        {
+                            Ok(thread) => {
+                                job_manager.set_playlist_thread_id(&playlist_job_id_clone, thread.id.to_string());
+                                Some(ChannelId(thread.id.0))
+                            }
+                            Err(_) => None
+                        }
+                    }
+                    Err(_) => None
+                }
+            };
+
+            let output_channel = thread_channel.unwrap_or(channel_id);
+
+            // STEP 2: Process videos sequentially
+            let mut completed = 0u32;
+            let mut failed = 0u32;
+            let skipped = 0u32;
+            let mut combined_transcript = String::new();
+            let mut progress_message_id: Option<serenity::model::id::MessageId> = None;
+            let start_time = std::time::Instant::now();
+
+            // Post initial progress
+            if let Ok(msg_id) = output_handler
+                .post_playlist_progress(&http, output_channel, None, 1, total_videos, &videos[0].title, None)
+                .await
+            {
+                progress_message_id = Some(msg_id);
+            }
+
+            for (index, video) in videos.iter().enumerate() {
+                let video_index = (index + 1) as u32;
+
+                // Check for cancellation
+                if job_manager.is_playlist_cancelled(&playlist_job_id_clone) {
+                    info!("Playlist job {} cancelled, stopping at video {}", playlist_job_id_clone, video_index);
+                    break;
+                }
+
+                // Update progress
+                let remaining_videos = total_videos - video_index + 1;
+                let avg_time_per_video = if index > 0 {
+                    start_time.elapsed() / (index as u32)
+                } else {
+                    std::time::Duration::from_secs(120) // Initial estimate: 2 min per video
+                };
+                let eta = avg_time_per_video * remaining_videos;
+
+                if let Some(msg_id) = progress_message_id {
+                    let _ = output_handler
+                        .post_playlist_progress(
+                            &http, output_channel, Some(msg_id),
+                            video_index, total_videos, &video.title, Some(eta)
+                        )
+                        .await;
+                }
+
+                // Create child job for this video
+                let mut params = HashMap::new();
+                params.insert("url".to_string(), video.url.clone());
+
+                let video_job_id = match job_manager
+                    .create_job_with_parent(
+                        &plugin.name,
+                        &user_id,
+                        guild_id.as_deref(),
+                        &output_channel.to_string(),
+                        params.clone(),
+                        Some(&playlist_job_id_clone),
+                    )
+                    .await
+                {
+                    Ok(id) => id,
+                    Err(e) => {
+                        warn!("Failed to create video job: {}", e);
+                        failed += 1;
+                        continue;
+                    }
+                };
+
+                // Update playlist progress with current video
+                let _ = job_manager
+                    .update_playlist_progress(&playlist_job_id_clone, completed, failed, skipped, Some(&video_job_id))
+                    .await;
+
+                // Mark video job as running
+                let _ = job_manager.start_job(&video_job_id).await;
+
+                // Execute transcription
+                let result = executor.execute(&plugin.execution, &params).await;
+
+                match result {
+                    Ok(exec_result) => {
+                        if exec_result.success && !exec_result.stdout.is_empty() {
+                            // Post video result
+                            if let Err(e) = output_handler
+                                .post_video_result(
+                                    &http, output_channel,
+                                    video_index, total_videos,
+                                    &video.title, &video.url,
+                                    &exec_result.stdout, &plugin.output
+                                )
+                                .await
+                            {
+                                warn!("Failed to post video result: {}", e);
+                            }
+
+                            // Add to combined transcript
+                            let separator = "=".repeat(60);
+                            combined_transcript.push_str(&format!(
+                                "\n\n{}\n[{}/{}] {}\n{}\n{}\n\n{}",
+                                separator, video_index, total_videos, video.title, video.url,
+                                separator, exec_result.stdout
+                            ));
+
+                            let _ = job_manager.complete_job(&video_job_id, "completed".to_string()).await;
+                            completed += 1;
+                        } else {
+                            let error_msg = if exec_result.timed_out {
+                                "Transcription timed out".to_string()
+                            } else {
+                                exec_result.stderr.clone()
+                            };
+
+                            let _ = output_handler
+                                .post_video_failed(
+                                    &http, output_channel,
+                                    video_index, total_videos,
+                                    &video.title, &video.url,
+                                    &error_msg
+                                )
+                                .await;
+
+                            let _ = job_manager.fail_job(&video_job_id, error_msg).await;
+                            failed += 1;
+                        }
+                    }
+                    Err(e) => {
+                        let _ = output_handler
+                            .post_video_failed(
+                                &http, output_channel,
+                                video_index, total_videos,
+                                &video.title, &video.url,
+                                &e.to_string()
+                            )
+                            .await;
+
+                        let _ = job_manager.fail_job(&video_job_id, e.to_string()).await;
+                        failed += 1;
+                    }
+                }
+
+                // Update playlist progress
+                let _ = job_manager
+                    .update_playlist_progress(&playlist_job_id_clone, completed, failed, skipped, None)
+                    .await;
+
+                // Delay between videos to avoid rate limits
+                if index < videos.len() - 1 {
+                    tokio::time::sleep(std::time::Duration::from_secs(
+                        playlist_config.min_video_interval_seconds
+                    )).await;
+                }
+            }
+
+            // STEP 3: Post final summary
+            let runtime = start_time.elapsed();
+
+            if job_manager.is_playlist_cancelled(&playlist_job_id_clone) {
+                // Was cancelled
+                if let Some(job) = job_manager.get_playlist_job(&playlist_job_id_clone) {
+                    let cancelled_by = job.cancelled_by.unwrap_or_else(|| "user".to_string());
+                    let _ = output_handler
+                        .post_playlist_cancelled(&http, output_channel, completed, total_videos, &cancelled_by)
+                        .await;
+                }
+            } else {
+                // Post summary with combined transcript
+                let combined = if !combined_transcript.is_empty() {
+                    Some(combined_transcript.as_str())
+                } else {
+                    None
+                };
+
+                let _ = output_handler
+                    .post_playlist_summary(
+                        &http, output_channel,
+                        &playlist_title,
+                        completed, failed, skipped, total_videos,
+                        runtime,
+                        combined
+                    )
+                    .await;
+            }
+
+            // Mark playlist job complete
+            let _ = job_manager.complete_playlist_job(&playlist_job_id_clone).await;
+
+            info!(
+                "Playlist job {} completed: {}/{} successful, {} failed",
+                playlist_job_id_clone, completed, total_videos, failed
+            );
+        });
+
+        Ok(playlist_job_id)
     }
 }
 
