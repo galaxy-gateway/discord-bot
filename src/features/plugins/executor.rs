@@ -3,18 +3,20 @@
 //! Execute external CLI commands safely with parameter substitution,
 //! input validation, output limiting, and timeout enforcement.
 //!
-//! - **Version**: 1.2.0
+//! - **Version**: 2.0.0
 //! - **Since**: 0.9.0
 //!
 //! ## Changelog
+//! - 2.0.0: Added execute_on_file() for chunked transcription support
 //! - 1.2.0: Allow URLs with special chars (&) by shell-escaping them properly
 //! - 1.1.0: Fixed validation to check user params before substitution, allowing shell scripts in config
 //! - 1.0.0: Initial release
 
-use crate::features::plugins::config::ExecutionConfig;
+use crate::features::plugins::config::{ChunkingConfig, ExecutionConfig};
 use anyhow::Result;
 use log::{info, warn};
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use std::time::Duration;
 use tokio::process::Command;
 use tokio::time::timeout;
@@ -172,6 +174,145 @@ impl PluginExecutor {
                     stderr: format!(
                         "Command timed out after {} seconds",
                         config.timeout_seconds
+                    ),
+                    timed_out: true,
+                })
+            }
+        }
+    }
+
+    /// Execute a command on a local audio file (used for chunked transcription)
+    ///
+    /// This method is designed for processing individual audio chunks.
+    /// It uses the chunking config's file_command and file_args, substituting
+    /// ${file} with the actual file path and ${output_dir} with the output directory.
+    pub async fn execute_on_file(
+        &self,
+        chunking_config: &ChunkingConfig,
+        file_path: &Path,
+        output_dir: &Path,
+        max_output_bytes: usize,
+    ) -> Result<ExecutionResult> {
+        // Get the file command or fall back to docker whisper command
+        let command = chunking_config.file_command.as_deref()
+            .unwrap_or("sh");
+
+        // Verify command is in allowlist
+        if !self.allowed_commands.contains(command) {
+            return Err(anyhow::anyhow!(
+                "Command not in allowlist: {}. Allowed: {:?}",
+                command,
+                self.allowed_commands
+            ));
+        }
+
+        // Build parameters for substitution
+        let file_str = file_path.to_string_lossy().to_string();
+        let output_str = output_dir.to_string_lossy().to_string();
+
+        // Default args if none provided
+        let default_args = if chunking_config.file_args.is_empty() {
+            vec![
+                "-c".to_string(),
+                format!(
+                    r#"TMPDIR=$(mktemp -d)
+ERRFILE=$(mktemp)
+if docker run --rm -v "{}:/data/input.mp3" -v "$TMPDIR:/data/output" whisper-transcribe:latest /data/input.mp3 -m base -f txt -o /data/output >/dev/null 2>"$ERRFILE"; then
+    cat "$TMPDIR"/*.txt 2>/dev/null || echo "No transcript generated"
+else
+    echo "Transcription failed:"
+    cat "$ERRFILE"
+fi
+rm -rf "$TMPDIR" "$ERRFILE""#,
+                    file_str
+                ),
+            ]
+        } else {
+            chunking_config.file_args.clone()
+        };
+
+        // Substitute placeholders in args
+        let args: Vec<String> = default_args
+            .iter()
+            .map(|arg| {
+                arg.replace("${file}", &file_str)
+                    .replace("${output_dir}", &output_str)
+            })
+            .collect();
+
+        info!(
+            "Executing file transcription: {} {:?} (timeout: {}s)",
+            command, args, chunking_config.chunk_timeout_secs
+        );
+
+        // Build async command
+        let mut cmd = Command::new(command);
+        cmd.args(&args)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true);
+
+        // Execute with timeout
+        let timeout_duration = Duration::from_secs(chunking_config.chunk_timeout_secs);
+        let result = timeout(timeout_duration, cmd.output()).await;
+
+        match result {
+            Ok(Ok(output)) => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+
+                // Truncate output if needed
+                let stdout = if stdout.len() > max_output_bytes {
+                    warn!(
+                        "Chunk output truncated from {} to {} bytes",
+                        stdout.len(),
+                        max_output_bytes
+                    );
+                    format!(
+                        "{}...\n\n[Output truncated at {} bytes]",
+                        &stdout[..max_output_bytes],
+                        max_output_bytes
+                    )
+                } else {
+                    stdout.to_string()
+                };
+
+                let exit_code = output.status.code();
+                let success = output.status.success();
+
+                if success {
+                    info!(
+                        "Chunk transcription completed, output length: {} chars",
+                        stdout.len()
+                    );
+                } else {
+                    warn!("Chunk transcription failed with exit code: {:?}", exit_code);
+                }
+
+                Ok(ExecutionResult {
+                    success,
+                    exit_code,
+                    stdout,
+                    stderr: stderr.to_string(),
+                    timed_out: false,
+                })
+            }
+            Ok(Err(e)) => {
+                warn!("Chunk command execution failed: {}", e);
+                Err(anyhow::anyhow!("Failed to execute chunk command: {}", e))
+            }
+            Err(_) => {
+                warn!(
+                    "Chunk transcription timed out after {} seconds",
+                    chunking_config.chunk_timeout_secs
+                );
+                Ok(ExecutionResult {
+                    success: false,
+                    exit_code: None,
+                    stdout: String::new(),
+                    stderr: format!(
+                        "Chunk transcription timed out after {} seconds",
+                        chunking_config.chunk_timeout_secs
                     ),
                     timed_out: true,
                 })
@@ -340,6 +481,7 @@ mod tests {
             working_directory: None,
             max_output_bytes: 1000,
             env: HashMap::new(),
+            chunking: None,
         };
 
         let result = executor.execute(&config, &HashMap::new()).await;
@@ -357,6 +499,7 @@ mod tests {
             working_directory: None,
             max_output_bytes: 1000,
             env: HashMap::new(),
+            chunking: None,
         };
 
         let result = executor.execute(&config, &HashMap::new()).await.unwrap();
@@ -375,6 +518,7 @@ mod tests {
             working_directory: None,
             max_output_bytes: 1000,
             env: HashMap::new(),
+            chunking: None,
         };
 
         let mut params = HashMap::new();

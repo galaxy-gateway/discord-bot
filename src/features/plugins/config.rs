@@ -2,10 +2,11 @@
 //!
 //! YAML-based plugin configuration with full schema validation.
 //!
-//! - **Version**: 2.0.0
+//! - **Version**: 3.0.0
 //! - **Since**: 0.9.0
 //!
 //! ## Changelog
+//! - 3.0.0: Added chunking configuration for long video streaming transcription
 //! - 2.0.0: Added playlist configuration for multi-video transcription
 //! - 1.1.0: Added source_param for structured output posting
 //! - 1.0.0: Initial release
@@ -238,6 +239,57 @@ pub struct ExecutionConfig {
     /// Environment variables
     #[serde(default)]
     pub env: HashMap<String, String>,
+
+    /// Chunking configuration for long content (optional)
+    #[serde(default)]
+    pub chunking: Option<ChunkingConfig>,
+}
+
+/// Configuration for chunked execution of long content
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ChunkingConfig {
+    /// Whether chunking is enabled
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+
+    /// Duration of each chunk in seconds (default: 600 = 10 minutes)
+    #[serde(default = "default_chunk_duration")]
+    pub chunk_duration_secs: u64,
+
+    /// Timeout for each chunk transcription in seconds (default: 300 = 5 minutes)
+    #[serde(default = "default_chunk_timeout")]
+    pub chunk_timeout_secs: u64,
+
+    /// Timeout for audio download in seconds (default: 300 = 5 minutes)
+    #[serde(default = "default_download_timeout")]
+    pub download_timeout_secs: u64,
+
+    /// Minimum video duration to trigger chunking (default: 600 = 10 minutes)
+    /// Videos shorter than this will use the standard single-execution mode
+    #[serde(default = "default_chunk_duration")]
+    pub min_duration_for_chunking_secs: u64,
+
+    /// Command template for transcribing a local audio file
+    /// Use ${file} for the input file path, ${output_dir} for output directory
+    pub file_command: Option<String>,
+
+    /// Arguments for the file command
+    #[serde(default)]
+    pub file_args: Vec<String>,
+}
+
+impl Default for ChunkingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            chunk_duration_secs: 600,        // 10 minutes
+            chunk_timeout_secs: 300,         // 5 minutes per chunk
+            download_timeout_secs: 300,      // 5 minutes for download
+            min_duration_for_chunking_secs: 600, // 10 minutes
+            file_command: None,
+            file_args: Vec::new(),
+        }
+    }
 }
 
 /// Security constraints
@@ -380,6 +432,18 @@ fn default_one() -> u32 {
 
 fn default_interval() -> u64 {
     5
+}
+
+fn default_chunk_duration() -> u64 {
+    600 // 10 minutes
+}
+
+fn default_chunk_timeout() -> u64 {
+    300 // 5 minutes
+}
+
+fn default_download_timeout() -> u64 {
+    300 // 5 minutes
 }
 
 #[cfg(test)]

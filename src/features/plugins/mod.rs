@@ -2,13 +2,15 @@
 //!
 //! Extensible plugin architecture for executing CLI commands via Discord slash commands.
 //! Supports YAML-based configuration, secure execution, background jobs, and thread-based output.
-//! Now includes multi-video playlist transcription with progress tracking.
+//! Now includes multi-video playlist transcription with progress tracking and chunked streaming
+//! for long videos.
 //!
-//! - **Version**: 2.1.1
+//! - **Version**: 3.0.0
 //! - **Since**: 0.9.0
 //! - **Toggleable**: true
 //!
 //! ## Changelog
+//! - 3.0.0: Added chunked streaming transcription for long videos with progressive output
 //! - 2.1.1: Use video title as thread starter message instead of generic "Transcription"
 //! - 2.1.0: Thread-first output - ephemeral responses, minimal starter messages, content in thread
 //! - 2.0.0: Added playlist support with multi-video transcription and progress tracking
@@ -19,6 +21,7 @@
 //! - 1.1.0: Added structured output posting with source_param, thread from interaction response
 //! - 1.0.0: Initial release with config-based plugins, CLI executor, and job system
 
+pub mod chunker;
 pub mod commands;
 pub mod config;
 pub mod executor;
@@ -26,8 +29,9 @@ pub mod job;
 pub mod output;
 pub mod youtube;
 
+pub use chunker::{AudioChunker, ChunkerConfig, ChunkProgress, ChunkStatus};
 pub use commands::create_plugin_commands;
-pub use config::{Plugin, PluginConfig};
+pub use config::{ChunkingConfig, Plugin, PluginConfig};
 pub use executor::{ExecutionResult, PluginExecutor};
 pub use job::{Job, JobManager, JobStatus, PlaylistJob, PlaylistJobStatus};
 pub use output::OutputHandler;
@@ -761,6 +765,388 @@ impl PluginManager {
         });
 
         Ok(playlist_job_id)
+    }
+
+    /// Execute a chunked transcription for a long video
+    ///
+    /// This method downloads the audio, splits it into chunks, and transcribes each chunk
+    /// progressively, posting results to the Discord thread as they complete.
+    pub async fn execute_chunked_transcription(
+        &self,
+        http: Arc<Http>,
+        plugin: Plugin,
+        url: String,
+        video_title: String,
+        user_id: String,
+        guild_id: Option<String>,
+        channel_id: ChannelId,
+        interaction_info: Option<(u64, String)>,
+        is_thread: bool,
+    ) -> Result<String> {
+        let chunking_config = plugin.execution.chunking.clone()
+            .unwrap_or_default();
+
+        // Create job record
+        let mut params = HashMap::new();
+        params.insert("url".to_string(), url.clone());
+        params.insert("mode".to_string(), "chunked".to_string());
+
+        let job_id = self.job_manager
+            .create_job(
+                &plugin.name,
+                &user_id,
+                guild_id.as_deref(),
+                &channel_id.to_string(),
+                params.clone(),
+            )
+            .await?;
+
+        let job_manager = self.job_manager.clone();
+        let executor = self.executor.clone();
+        let output_handler = self.output_handler.clone();
+        let job_id_clone = job_id.clone();
+
+        tokio::spawn(async move {
+            // Mark as running
+            if let Err(e) = job_manager.start_job(&job_id_clone).await {
+                warn!("Failed to mark job as running: {}", e);
+            }
+
+            // STEP 1: Create thread IMMEDIATELY if configured
+            let output_channel = if plugin.output.create_thread && !is_thread {
+                // Truncate thread name to 100 chars (Discord limit)
+                let thread_name = if video_title.len() > 100 {
+                    format!("{}...", &video_title[..97])
+                } else {
+                    video_title.clone()
+                };
+
+                // Edit ephemeral interaction response with confirmation
+                if let Some((app_id, ref token)) = interaction_info {
+                    let client = reqwest::Client::new();
+                    let edit_url = format!(
+                        "https://discord.com/api/v10/webhooks/{}/{}/messages/@original",
+                        app_id, token
+                    );
+                    let _ = client
+                        .patch(&edit_url)
+                        .header("Content-Type", "application/json")
+                        .json(&serde_json::json!({ "content": format!("Starting chunked transcription for \"{}\"...", thread_name) }))
+                        .send()
+                        .await;
+                }
+
+                // Send thread starter message to channel
+                let starter_content = &thread_name;
+
+                // Create thread from a new message
+                let thread_channel = match channel_id.say(&http, starter_content).await {
+                    Ok(msg) => {
+                        match output_handler
+                            .create_output_thread(&http, channel_id, msg.id, &thread_name, plugin.output.auto_archive_minutes)
+                            .await
+                        {
+                            Ok(thread) => {
+                                info!("Created thread for chunked transcription: {} ({})", thread_name, thread.id);
+                                job_manager.set_thread_id(&job_id_clone, thread.id.to_string());
+
+                                // Post URL inside the thread (first message in thread)
+                                let thread_id = ChannelId(thread.id.0);
+                                let url_content = format!("**{}**\n{}", thread_name, url);
+                                let _ = thread_id.say(&http, &url_content).await;
+
+                                Some(thread_id)
+                            }
+                            Err(e) => {
+                                error!("Failed to create thread: {}", e);
+                                None
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        error!("Failed to send thread starter message: {}", e);
+                        None
+                    }
+                };
+
+                thread_channel.unwrap_or(channel_id)
+            } else if is_thread && plugin.output.create_thread {
+                // Already in a thread - edit ephemeral response and post to this thread
+                if let Some((app_id, ref token)) = interaction_info {
+                    let client = reqwest::Client::new();
+                    let edit_url = format!(
+                        "https://discord.com/api/v10/webhooks/{}/{}/messages/@original",
+                        app_id, token
+                    );
+                    let _ = client
+                        .patch(&edit_url)
+                        .header("Content-Type", "application/json")
+                        .json(&serde_json::json!({ "content": format!("Chunked transcription of \"{}\" in this thread...", video_title) }))
+                        .send()
+                        .await;
+                }
+
+                // Post the URL to the thread
+                let content = format!("**{}**\n{}", video_title, url);
+                let _ = channel_id.say(&http, &content).await;
+                channel_id
+            } else {
+                channel_id
+            };
+
+            let start_time = std::time::Instant::now();
+
+            // STEP 2: Post initial status - downloading
+            let progress_msg_id = output_handler
+                .post_chunking_started(&http, output_channel, &video_title)
+                .await
+                .ok();
+
+            // STEP 3: Create chunker and download audio
+            let chunker_config = ChunkerConfig {
+                chunk_duration_secs: chunking_config.chunk_duration_secs,
+                download_timeout_secs: chunking_config.download_timeout_secs,
+                split_timeout_secs: 120,
+            };
+
+            let chunker = match AudioChunker::new(chunker_config).await {
+                Ok(c) => c,
+                Err(e) => {
+                    let error_msg = format!("Failed to initialize chunker: {}", e);
+                    let _ = output_handler
+                        .post_error(&http, output_channel, &error_msg, plugin.output.error_template.as_deref())
+                        .await;
+                    let _ = job_manager.fail_job(&job_id_clone, error_msg).await;
+                    return;
+                }
+            };
+
+            let download_result = match chunker.download_audio(&url).await {
+                Ok(r) => r,
+                Err(e) => {
+                    let error_msg = format!("Failed to download audio: {}", e);
+                    let _ = output_handler
+                        .post_error(&http, output_channel, &error_msg, plugin.output.error_template.as_deref())
+                        .await;
+                    let _ = job_manager.fail_job(&job_id_clone, error_msg).await;
+                    let _ = chunker.cleanup().await;
+                    return;
+                }
+            };
+
+            // STEP 4: Check if chunking is needed
+            let needs_chunking = chunker.needs_chunking(&download_result.audio_path).await.unwrap_or(true);
+
+            if !needs_chunking {
+                // Audio is short enough - use standard execution
+                info!("Audio doesn't need chunking, using standard execution");
+
+                if let Some(msg_id) = progress_msg_id {
+                    let _ = output_channel
+                        .edit_message(&http, msg_id, |m| m.content("⏳ Transcribing short video..."))
+                        .await;
+                }
+
+                // Execute standard transcription on the downloaded file
+                let result = executor.execute_on_file(
+                    &chunking_config,
+                    &download_result.audio_path,
+                    chunker.temp_dir(),
+                    plugin.execution.max_output_bytes,
+                ).await;
+
+                let _ = chunker.cleanup().await;
+
+                match result {
+                    Ok(exec_result) => {
+                        if exec_result.success {
+                            let _ = output_handler
+                                .post_structured_result(
+                                    &http, output_channel, &url, &exec_result.stdout,
+                                    &plugin.output, true
+                                )
+                                .await;
+                            let _ = job_manager.complete_job(&job_id_clone, "completed".to_string()).await;
+                        } else {
+                            let error_msg = if exec_result.timed_out {
+                                "Transcription timed out".to_string()
+                            } else {
+                                exec_result.stderr
+                            };
+                            let _ = output_handler
+                                .post_error(&http, output_channel, &error_msg, plugin.output.error_template.as_deref())
+                                .await;
+                            let _ = job_manager.fail_job(&job_id_clone, error_msg).await;
+                        }
+                    }
+                    Err(e) => {
+                        let _ = output_handler
+                            .post_error(&http, output_channel, &e.to_string(), plugin.output.error_template.as_deref())
+                            .await;
+                        let _ = job_manager.fail_job(&job_id_clone, e.to_string()).await;
+                    }
+                }
+                return;
+            }
+
+            // STEP 5: Split audio into chunks
+            let split_result = match chunker.split_into_chunks(&download_result.audio_path).await {
+                Ok(r) => r,
+                Err(e) => {
+                    let error_msg = format!("Failed to split audio: {}", e);
+                    let _ = output_handler
+                        .post_error(&http, output_channel, &error_msg, plugin.output.error_template.as_deref())
+                        .await;
+                    let _ = job_manager.fail_job(&job_id_clone, error_msg).await;
+                    let _ = chunker.cleanup().await;
+                    return;
+                }
+            };
+
+            let total_chunks = split_result.total_chunks;
+
+            // Estimate total time (assume 5 minutes per chunk max)
+            let estimated_duration = std::time::Duration::from_secs(
+                (total_chunks as u64) * chunking_config.chunk_timeout_secs / 2
+            );
+
+            // Post chunks ready status
+            let _ = output_handler
+                .post_chunks_ready(&http, output_channel, progress_msg_id, total_chunks, Some(estimated_duration))
+                .await;
+
+            // STEP 6: Process chunks sequentially with progress updates
+            let mut completed_chunks = 0usize;
+            let mut failed_chunks = 0usize;
+            let mut combined_transcript = String::new();
+            let mut progress_message_id: Option<serenity::model::id::MessageId> = None;
+
+            for (index, chunk_path) in split_result.chunk_paths.iter().enumerate() {
+                let chunk_num = index + 1;
+
+                // Calculate ETA
+                let elapsed = start_time.elapsed();
+                let avg_time_per_chunk = if index > 0 {
+                    elapsed / (index as u32)
+                } else {
+                    std::time::Duration::from_secs(chunking_config.chunk_timeout_secs / 2)
+                };
+                let remaining_chunks = total_chunks - chunk_num;
+                let eta = avg_time_per_chunk * (remaining_chunks as u32);
+
+                // Update progress
+                if let Ok(msg_id) = output_handler
+                    .post_chunk_progress(
+                        &http, output_channel, progress_message_id,
+                        chunk_num, total_chunks,
+                        "Processing...", Some(eta)
+                    )
+                    .await
+                {
+                    progress_message_id = Some(msg_id);
+                }
+
+                // Execute transcription on this chunk
+                let result = executor.execute_on_file(
+                    &chunking_config,
+                    chunk_path,
+                    chunker.temp_dir(),
+                    plugin.execution.max_output_bytes,
+                ).await;
+
+                match result {
+                    Ok(exec_result) => {
+                        if exec_result.success && !exec_result.stdout.is_empty() {
+                            // Success - post chunk completion
+                            let preview = exec_result.stdout.lines().next().map(|s| s.to_string());
+                            let _ = output_handler
+                                .post_chunk_completed(
+                                    &http, output_channel,
+                                    chunk_num, total_chunks,
+                                    preview.as_deref()
+                                )
+                                .await;
+
+                            // Add to combined transcript
+                            if !combined_transcript.is_empty() {
+                                combined_transcript.push_str("\n\n");
+                            }
+                            combined_transcript.push_str(&format!(
+                                "--- Chunk {}/{} ---\n{}",
+                                chunk_num, total_chunks, exec_result.stdout
+                            ));
+
+                            completed_chunks += 1;
+                        } else {
+                            // Failed
+                            let error_msg = if exec_result.timed_out {
+                                "Chunk timed out".to_string()
+                            } else {
+                                exec_result.stderr
+                            };
+
+                            let _ = output_handler
+                                .post_chunk_failed(&http, output_channel, chunk_num, total_chunks, &error_msg)
+                                .await;
+
+                            failed_chunks += 1;
+                        }
+                    }
+                    Err(e) => {
+                        let _ = output_handler
+                            .post_chunk_failed(&http, output_channel, chunk_num, total_chunks, &e.to_string())
+                            .await;
+                        failed_chunks += 1;
+                    }
+                }
+            }
+
+            // STEP 7: Post final summary
+            let runtime = start_time.elapsed();
+
+            let combined = if !combined_transcript.is_empty() {
+                Some(combined_transcript.as_str())
+            } else {
+                None
+            };
+
+            let _ = output_handler
+                .post_chunked_summary(
+                    &http, output_channel,
+                    &video_title,
+                    completed_chunks, failed_chunks, total_chunks,
+                    runtime,
+                    combined,
+                    &plugin.output
+                )
+                .await;
+
+            // STEP 8: Cleanup and complete job
+            let _ = chunker.cleanup().await;
+
+            if failed_chunks == 0 {
+                let _ = job_manager.complete_job(&job_id_clone, format!("Completed {} chunks", completed_chunks)).await;
+            } else {
+                let _ = job_manager.fail_job(&job_id_clone, format!("{}/{} chunks failed", failed_chunks, total_chunks)).await;
+            }
+
+            info!(
+                "Chunked transcription {} completed: {}/{} successful, {} failed, runtime: {:?}",
+                job_id_clone, completed_chunks, total_chunks, failed_chunks, runtime
+            );
+        });
+
+        Ok(job_id)
+    }
+
+    /// Determine if a video should use chunked transcription
+    ///
+    /// Returns true if chunking is enabled and configured for this plugin.
+    pub fn should_use_chunking(&self, plugin: &Plugin) -> bool {
+        plugin.execution.chunking
+            .as_ref()
+            .map(|c| c.enabled)
+            .unwrap_or(false)
     }
 }
 

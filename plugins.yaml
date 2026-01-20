@@ -1,14 +1,15 @@
 # Plugin Configuration for Persona Discord Bot
-# Version: 2.0.0
+# Version: 3.0.0
 #
 # Plugins are config-driven CLI command integrations that allow the bot
 # to execute approved external tools via Discord slash commands.
+# Now supports chunked streaming transcription for long videos.
 
 plugins:
   - name: transcribe
     description: "Transcribe YouTube videos or playlists to text using Whisper"
     enabled: true
-    version: "2.0.0"
+    version: "3.0.0"
 
     command:
       name: transcribe
@@ -45,8 +46,33 @@ plugins:
             cat "$ERRFILE"
           fi
           rm -rf "$TMPDIR" "$ERRFILE"
-      timeout_seconds: 600      # 10 minutes max
+      timeout_seconds: 600      # 10 minutes max (for non-chunked short videos)
       max_output_bytes: 10485760  # 10MB
+
+      # Chunking configuration for long videos
+      # When enabled, long videos are downloaded, split into chunks, and transcribed progressively
+      chunking:
+        enabled: true
+        chunk_duration_secs: 600      # 10-minute chunks
+        chunk_timeout_secs: 300       # 5 minutes per chunk transcription
+        download_timeout_secs: 300    # 5 minutes for audio download
+        min_duration_for_chunking_secs: 600  # Videos longer than 10 min use chunking
+
+        # Command for transcribing local audio files (chunks)
+        # ${file} is replaced with the input file path
+        file_command: sh
+        file_args:
+          - "-c"
+          - |
+            TMPDIR=$(mktemp -d)
+            ERRFILE=$(mktemp)
+            if docker run --rm -v "${file}:/data/input.mp3" -v "$TMPDIR:/data/output" whisper-transcribe:latest /data/input.mp3 -m base -f txt -o /data/output >/dev/null 2>"$ERRFILE"; then
+              cat "$TMPDIR"/*.txt 2>/dev/null || echo "No transcript generated"
+            else
+              echo "Transcription failed:"
+              cat "$ERRFILE"
+            fi
+            rm -rf "$TMPDIR" "$ERRFILE"
 
     security:
       cooldown_seconds: 60      # 1 minute between requests per user

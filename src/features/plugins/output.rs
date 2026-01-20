@@ -3,10 +3,11 @@
 //! Create Discord threads for plugin output, handle large responses with file attachments,
 //! and generate AI summaries. Supports both single video and playlist transcription.
 //!
-//! - **Version**: 2.0.0
+//! - **Version**: 3.0.0
 //! - **Since**: 0.9.0
 //!
 //! ## Changelog
+//! - 3.0.0: Added chunked transcription progress posting for streaming long videos
 //! - 2.0.0: Added playlist progress tracking, per-video results, and summary posting
 //! - 1.1.0: Added structured output posting (URL -> summary -> file)
 //! - 1.0.0: Initial release
@@ -432,6 +433,210 @@ impl OutputHandler {
         Ok(())
     }
 
+    // Chunked transcription methods
+
+    /// Post or update a progress message for chunked transcription
+    ///
+    /// If `progress_message_id` is Some, edits that message. Otherwise posts a new message
+    /// and returns the new message ID.
+    pub async fn post_chunk_progress(
+        &self,
+        http: &Arc<Http>,
+        channel_id: ChannelId,
+        progress_message_id: Option<MessageId>,
+        current_chunk: usize,
+        total_chunks: usize,
+        status: &str,
+        eta: Option<std::time::Duration>,
+    ) -> Result<MessageId> {
+        let eta_str = eta
+            .map(|d| crate::features::plugins::youtube::format_duration(d))
+            .unwrap_or_else(|| "calculating...".to_string());
+
+        let progress_bar = create_progress_bar(current_chunk, total_chunks);
+
+        let content = format!(
+            "⏳ **Transcribing:** {}/{} chunks | {} | ETA: {}\n{}",
+            current_chunk, total_chunks, status, eta_str, progress_bar
+        );
+
+        if let Some(msg_id) = progress_message_id {
+            // Edit existing message
+            channel_id
+                .edit_message(http, msg_id, |m| m.content(&content))
+                .await?;
+            Ok(msg_id)
+        } else {
+            // Post new message
+            let msg = channel_id.say(http, &content).await?;
+            info!("Posted chunk progress message");
+            Ok(msg.id)
+        }
+    }
+
+    /// Post a chunk completion status
+    pub async fn post_chunk_completed(
+        &self,
+        http: &Arc<Http>,
+        channel_id: ChannelId,
+        chunk_num: usize,
+        total_chunks: usize,
+        transcript_preview: Option<&str>,
+    ) -> Result<()> {
+        let preview = transcript_preview
+            .map(|t| {
+                let truncated = if t.len() > 200 {
+                    format!("{}...", &t[..200])
+                } else {
+                    t.to_string()
+                };
+                format!("\n> {}", truncated.replace('\n', "\n> "))
+            })
+            .unwrap_or_default();
+
+        let content = format!(
+            "✅ **Chunk {}/{}** complete{}",
+            chunk_num, total_chunks, preview
+        );
+
+        channel_id.say(http, &content).await?;
+        Ok(())
+    }
+
+    /// Post a chunk failure notice
+    pub async fn post_chunk_failed(
+        &self,
+        http: &Arc<Http>,
+        channel_id: ChannelId,
+        chunk_num: usize,
+        total_chunks: usize,
+        error: &str,
+    ) -> Result<()> {
+        let content = format!(
+            "⚠️ **Chunk {}/{}** failed: {}",
+            chunk_num, total_chunks, truncate_str(error, 200)
+        );
+
+        channel_id.say(http, &content).await?;
+        Ok(())
+    }
+
+    /// Post the final chunked transcription summary
+    pub async fn post_chunked_summary(
+        &self,
+        http: &Arc<Http>,
+        channel_id: ChannelId,
+        video_title: &str,
+        completed_chunks: usize,
+        failed_chunks: usize,
+        total_chunks: usize,
+        runtime: std::time::Duration,
+        combined_transcript: Option<&str>,
+        config: &OutputConfig,
+    ) -> Result<()> {
+        let status_emoji = if failed_chunks == 0 { "✅" } else { "⚠️" };
+        let runtime_str = crate::features::plugins::youtube::format_duration(runtime);
+
+        let summary = format!(
+            "---\n\n{} **Transcription Complete: {}**\n\n\
+             • Successful chunks: {}/{}\n\
+             • Failed chunks: {}\n\
+             • Runtime: {}",
+            status_emoji, truncate_str(video_title, 60),
+            completed_chunks, total_chunks, failed_chunks, runtime_str
+        );
+
+        channel_id.say(http, &summary).await?;
+
+        // Generate and post AI summary if we have transcript
+        if let Some(transcript) = combined_transcript {
+            if let Some(ref prompt) = config.summary_prompt {
+                match self.generate_summary(transcript, prompt).await {
+                    Ok(ai_summary) => {
+                        let summary_chunks = split_message(&ai_summary, 1900);
+                        for chunk in summary_chunks {
+                            channel_id.say(http, &chunk).await?;
+                        }
+                        info!("Posted AI summary for chunked transcription");
+                    }
+                    Err(e) => {
+                        warn!("Failed to generate AI summary: {}", e);
+                    }
+                }
+            }
+
+            // Post full transcript as file
+            let filename = config
+                .file_name_template
+                .as_deref()
+                .unwrap_or("transcript.txt")
+                .replace(
+                    "${timestamp}",
+                    &chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string(),
+                );
+
+            let file_bytes = transcript.as_bytes().to_vec();
+            channel_id
+                .send_message(http, |m| {
+                    m.content(format!("📄 **Full transcript** ({} characters)", transcript.len()))
+                        .add_file(AttachmentType::Bytes {
+                            data: Cow::Owned(file_bytes),
+                            filename,
+                        })
+                })
+                .await?;
+
+            info!("Posted combined transcript file");
+        }
+
+        Ok(())
+    }
+
+    /// Post initial chunking status (download started)
+    pub async fn post_chunking_started(
+        &self,
+        http: &Arc<Http>,
+        channel_id: ChannelId,
+        video_title: &str,
+    ) -> Result<MessageId> {
+        let content = format!(
+            "📥 **Downloading:** {} for chunked transcription...",
+            truncate_str(video_title, 60)
+        );
+
+        let msg = channel_id.say(http, &content).await?;
+        Ok(msg.id)
+    }
+
+    /// Update status after download/split
+    pub async fn post_chunks_ready(
+        &self,
+        http: &Arc<Http>,
+        channel_id: ChannelId,
+        progress_message_id: Option<MessageId>,
+        total_chunks: usize,
+        estimated_duration: Option<std::time::Duration>,
+    ) -> Result<MessageId> {
+        let eta_str = estimated_duration
+            .map(|d| crate::features::plugins::youtube::format_duration(d))
+            .unwrap_or_else(|| "calculating...".to_string());
+
+        let content = format!(
+            "📦 **Ready:** Split into {} chunks | Estimated time: {}",
+            total_chunks, eta_str
+        );
+
+        if let Some(msg_id) = progress_message_id {
+            channel_id
+                .edit_message(http, msg_id, |m| m.content(&content))
+                .await?;
+            Ok(msg_id)
+        } else {
+            let msg = channel_id.say(http, &content).await?;
+            Ok(msg.id)
+        }
+    }
+
     /// Generate an AI summary of the output
     async fn generate_summary(&self, output: &str, prompt_template: &str) -> Result<String> {
         // Truncate output for summary to avoid token limits
@@ -494,6 +699,24 @@ fn truncate_str(s: &str, max_len: usize) -> String {
     } else {
         format!("{}...", &s[..max_len.saturating_sub(3)])
     }
+}
+
+/// Create a text-based progress bar
+fn create_progress_bar(current: usize, total: usize) -> String {
+    const BAR_LENGTH: usize = 20;
+    let filled = if total > 0 {
+        (current * BAR_LENGTH) / total
+    } else {
+        0
+    };
+    let empty = BAR_LENGTH - filled;
+
+    format!(
+        "[{}{}] {}%",
+        "█".repeat(filled),
+        "░".repeat(empty),
+        if total > 0 { (current * 100) / total } else { 0 }
+    )
 }
 
 /// Sanitize a string for use as a filename
