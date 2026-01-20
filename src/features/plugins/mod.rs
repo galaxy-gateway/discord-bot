@@ -4,11 +4,12 @@
 //! Supports YAML-based configuration, secure execution, background jobs, and thread-based output.
 //! Now includes multi-video playlist transcription with progress tracking.
 //!
-//! - **Version**: 2.1.0
+//! - **Version**: 2.1.1
 //! - **Since**: 0.9.0
 //! - **Toggleable**: true
 //!
 //! ## Changelog
+//! - 2.1.1: Use video title as thread starter message instead of generic "Transcription"
 //! - 2.1.0: Thread-first output - ephemeral responses, minimal starter messages, content in thread
 //! - 2.0.0: Added playlist support with multi-video transcription and progress tracking
 //! - 1.5.0: If command used inside thread, append to existing thread instead of creating new
@@ -289,8 +290,8 @@ impl PluginManager {
                         .await;
                 }
 
-                // Send minimal thread starter message to channel (this is what others see)
-                let starter_content = "Transcription";
+                // Send thread starter message to channel with video title (this is what others see)
+                let starter_content = &thread_name;
 
                 // Create thread from a new message (not the ephemeral response)
                 let thread_channel = match channel_id.say(&http, starter_content).await {
