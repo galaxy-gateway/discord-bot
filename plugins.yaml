@@ -1,5 +1,5 @@
 # Plugin Configuration for Persona Discord Bot
-# Version: 3.0.0
+# Version: 3.1.0
 #
 # Plugins are config-driven CLI command integrations that allow the bot
 # to execute approved external tools via Discord slash commands.
@@ -9,7 +9,7 @@ plugins:
   - name: transcribe
     description: "Transcribe YouTube videos or playlists to text using Whisper"
     enabled: true
-    version: "3.0.0"
+    version: "3.1.0"
 
     command:
       name: transcribe
@@ -29,6 +29,28 @@ plugins:
           description: "Maximum videos to transcribe from playlist (default: 25, max: 50)"
           type: integer
           required: false
+        - name: language
+          description: "Language for transcription (auto-detects if not specified)"
+          type: string
+          required: false
+          default: ""
+          choices:
+            - name: "Auto-detect"
+              value: ""
+            - name: "English"
+              value: "en"
+            - name: "Spanish"
+              value: "es"
+            - name: "French"
+              value: "fr"
+            - name: "German"
+              value: "de"
+            - name: "Portuguese"
+              value: "pt"
+            - name: "Japanese"
+              value: "ja"
+            - name: "Chinese"
+              value: "zh"
 
     execution:
       # Use shell to chain commands: create temp dir, run transcription, output result
@@ -39,7 +61,7 @@ plugins:
         - |
           TMPDIR=$(mktemp -d)
           ERRFILE=$(mktemp)
-          if docker run --rm -v "$TMPDIR:/data/output" whisper-transcribe:latest "${url}" -m base -f txt -o /data/output >/dev/null 2>"$ERRFILE"; then
+          if docker run --rm -v "$TMPDIR:/data/output" whisper-transcribe:latest "${url}" -m base -f txt -o /data/output ${language:+--language "$language"} >/dev/null 2>"$ERRFILE"; then
             cat "$TMPDIR"/*.txt 2>/dev/null || echo "No transcript generated"
           else
             echo "Transcription failed:"
@@ -66,7 +88,7 @@ plugins:
           - |
             TMPDIR=$(mktemp -d)
             ERRFILE=$(mktemp)
-            if docker run --rm -v "${file}:/data/input.mp3" -v "$TMPDIR:/data/output" whisper-transcribe:latest /data/input.mp3 -m base -f txt -o /data/output >/dev/null 2>"$ERRFILE"; then
+            if docker run --rm -v "${file}:/data/input.mp3" -v "$TMPDIR:/data/output" whisper-transcribe:latest /data/input.mp3 -m base -f txt -o /data/output ${language:+--language "$language"} >/dev/null 2>"$ERRFILE"; then
               cat "$TMPDIR"/*.txt 2>/dev/null || echo "No transcript generated"
             else
               echo "Transcription failed:"

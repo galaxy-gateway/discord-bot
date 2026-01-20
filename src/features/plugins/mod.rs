@@ -295,7 +295,11 @@ impl PluginManager {
                 }
 
                 // Send thread starter message to channel with video title (this is what others see)
-                let starter_content = &thread_name;
+                let starter_content = if source_url.as_ref().map(|u| u.contains("youtube.com") || u.contains("youtu.be")).unwrap_or(false) {
+                    format!("Transcribing YouTube video: {}", thread_name)
+                } else {
+                    thread_name.clone()
+                };
 
                 // Create thread from a new message (not the ephemeral response)
                 let thread_channel = match channel_id.say(&http, starter_content).await {
@@ -539,8 +543,8 @@ impl PluginManager {
                     .await;
             }
 
-            // Send minimal thread starter message to channel
-            let starter_content = "Playlist transcription";
+            // Send thread starter message to channel with playlist title
+            let starter_content = format!("Transcribing YouTube playlist: {}", playlist_title);
 
             // Create thread from a new message (not the ephemeral response)
             let thread_channel = match channel_id.say(&http, starter_content).await {
@@ -837,7 +841,11 @@ impl PluginManager {
                 }
 
                 // Send thread starter message to channel
-                let starter_content = &thread_name;
+                let starter_content = if url.contains("youtube.com") || url.contains("youtu.be") {
+                    format!("Transcribing YouTube video: {}", thread_name)
+                } else {
+                    thread_name.clone()
+                };
 
                 // Create thread from a new message
                 let thread_channel = match channel_id.say(&http, starter_content).await {
