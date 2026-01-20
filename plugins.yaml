@@ -61,7 +61,11 @@ plugins:
         - |
           TMPDIR=$(mktemp -d)
           ERRFILE=$(mktemp)
-          if docker run --rm -v "$TMPDIR:/data/output" whisper-transcribe:latest "${url}" -m base -f txt -o /data/output ${language:+--language "$language"} >/dev/null 2>"$ERRFILE"; then
+          LANG_FLAG=""
+          if [ -n "${language}" ]; then
+            LANG_FLAG="--language ${language}"
+          fi
+          if docker run --rm -v "$TMPDIR:/data/output" whisper-transcribe:latest "${url}" -m base -f txt -o /data/output $LANG_FLAG >/dev/null 2>"$ERRFILE"; then
             cat "$TMPDIR"/*.txt 2>/dev/null || echo "No transcript generated"
           else
             echo "Transcription failed:"
@@ -88,7 +92,11 @@ plugins:
           - |
             TMPDIR=$(mktemp -d)
             ERRFILE=$(mktemp)
-            if docker run --rm -v "${file}:/data/input.mp3" -v "$TMPDIR:/data/output" whisper-transcribe:latest /data/input.mp3 -m base -f txt -o /data/output ${language:+--language "$language"} >/dev/null 2>"$ERRFILE"; then
+            LANG_FLAG=""
+            if [ -n "${language}" ]; then
+              LANG_FLAG="--language ${language}"
+            fi
+            if docker run --rm -v "${file}:/data/input.mp3" -v "$TMPDIR:/data/output" whisper-transcribe:latest /data/input.mp3 -m base -f txt -o /data/output $LANG_FLAG >/dev/null 2>"$ERRFILE"; then
               cat "$TMPDIR"/*.txt 2>/dev/null || echo "No transcript generated"
             else
               echo "Transcription failed:"
