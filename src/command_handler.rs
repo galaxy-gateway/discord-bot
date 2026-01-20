@@ -277,12 +277,24 @@ impl CommandHandler {
             !msg.attachments.is_empty(),
         );
 
+        // Read any text attachments from the message
+        let text_attachments = self.get_text_attachments_context(msg, request_id).await;
+        let attachment_context = self.format_attachments_for_context(&text_attachments);
+
+        // Enhance user message with attachment content if present
+        let enhanced_message = if attachment_context.is_empty() {
+            user_message.to_string()
+        } else {
+            info!("[{request_id}] 📎 Including {} text attachment(s) in context", text_attachments.len());
+            format!("{}{}", attachment_context, user_message)
+        };
+
         // Get user's persona
         debug!("[{request_id}] 🎭 Fetching user persona from database");
         let user_persona = self.database.get_user_persona(&user_id).await?;
         debug!("[{request_id}] 🎭 User persona: {user_persona}");
 
-        // Store user message in conversation history
+        // Store user message in conversation history (store original message, not enhanced)
         debug!("[{request_id}] 💾 Storing user message to conversation history");
         self.database.store_message(&user_id, &channel_id, "user", user_message, Some(&user_persona)).await?;
         debug!("[{request_id}] ✅ User message stored successfully");
@@ -306,9 +318,9 @@ impl CommandHandler {
         self.database.log_usage(&user_id, "dm_chat", Some(&user_persona)).await?;
         debug!("[{request_id}] ✅ Usage logged successfully");
 
-        // Get AI response with conversation history
+        // Get AI response with conversation history (use enhanced message with attachments)
         info!("[{request_id}] 🚀 Calling OpenAI API for DM response");
-        let api_call_result = self.get_ai_response_with_context(&system_prompt, user_message, conversation_history, request_id, Some(&user_id), None, Some(&channel_id)).await;
+        let api_call_result = self.get_ai_response_with_context(&system_prompt, &enhanced_message, conversation_history, request_id, Some(&user_id), None, Some(&channel_id)).await;
 
         // Track API call (estimate cost from usage tracker's pricing)
         // This will be more accurate if we can access the actual usage data, but for now we'll track it after response
@@ -413,6 +425,27 @@ impl CommandHandler {
         let is_thread = self.is_in_thread(ctx, msg).await?;
         debug!("[{request_id}] 🧵 Is thread: {is_thread} | Max context: {max_context}");
 
+        // Read text attachments from current message
+        let mut all_attachments = self.get_text_attachments_context(msg, request_id).await;
+
+        // If in a thread and user seems to be asking about files, fetch thread attachments
+        if is_thread && self.seems_like_file_question(user_message) && all_attachments.is_empty() {
+            info!("[{request_id}] 📎 User asking about files in thread, fetching thread attachments");
+            let thread_attachments = self.fetch_thread_attachments(ctx, msg.channel_id, 20, request_id).await?;
+            all_attachments.extend(thread_attachments);
+        }
+
+        // Format attachment context
+        let attachment_context = self.format_attachments_for_context(&all_attachments);
+
+        // Enhance user message with attachment content if present
+        let enhanced_message = if attachment_context.is_empty() {
+            user_message.to_string()
+        } else {
+            info!("[{request_id}] 📎 Including {} text attachment(s) in context", all_attachments.len());
+            format!("{}{}", attachment_context, user_message)
+        };
+
         // Retrieve conversation history based on context type
         let conversation_history = if is_thread {
             // Thread context: Fetch messages from Discord
@@ -422,7 +455,7 @@ impl CommandHandler {
             // Channel context: Use database history
             info!("[{request_id}] 📚 Fetching channel context from database");
 
-            // Store user message in conversation history for channels
+            // Store user message in conversation history for channels (store original, not enhanced)
             debug!("[{request_id}] 💾 Storing user message to conversation history");
             self.database.store_message(&user_id, &channel_id, "user", user_message, Some(&user_persona)).await?;
             debug!("[{request_id}] ✅ User message stored successfully");
@@ -453,9 +486,9 @@ impl CommandHandler {
         self.database.log_usage(&user_id, "mention_chat", Some(&user_persona)).await?;
         debug!("[{request_id}] ✅ Usage logged successfully");
 
-        // Get AI response with conversation history
+        // Get AI response with conversation history (use enhanced message with attachments)
         info!("[{request_id}] 🚀 Calling OpenAI API for mention response");
-        match self.get_ai_response_with_context(&system_prompt, user_message, conversation_history, request_id, Some(&user_id), guild_id_opt, Some(&channel_id)).await {
+        match self.get_ai_response_with_context(&system_prompt, &enhanced_message, conversation_history, request_id, Some(&user_id), guild_id_opt, Some(&channel_id)).await {
             Ok(ai_response) => {
                 info!("[{}] ✅ OpenAI response received | Response length: {}",
                       request_id, ai_response.len());
@@ -1962,6 +1995,164 @@ Use the buttons below for more help or to try custom prompts!"#;
 
         let filename_lower = filename.to_lowercase();
         audio_extensions.iter().any(|ext| filename_lower.ends_with(ext))
+    }
+
+    /// Check if an attachment is a text-based file that can be read
+    fn is_text_attachment(&self, filename: &str) -> bool {
+        let text_extensions = [
+            // Plain text
+            ".txt", ".md", ".markdown",
+            // Data formats
+            ".json", ".xml", ".yaml", ".yml", ".toml", ".csv",
+            // Config files
+            ".ini", ".cfg", ".conf", ".env",
+            // Code files
+            ".rs", ".py", ".js", ".ts", ".jsx", ".tsx", ".html", ".css",
+            ".sh", ".bat", ".ps1", ".sql", ".rb", ".go", ".java", ".c",
+            ".cpp", ".h", ".hpp", ".cs", ".php", ".swift", ".kt",
+            // Log files
+            ".log",
+        ];
+
+        let filename_lower = filename.to_lowercase();
+        text_extensions.iter().any(|ext| filename_lower.ends_with(ext))
+    }
+
+    /// Read a text attachment and return (filename, content) if successful
+    /// Returns None if the file couldn't be read, or a truncation message if too large
+    async fn read_text_attachment(&self, attachment: &serenity::model::channel::Attachment) -> Result<Option<(String, String)>> {
+        const MAX_TEXT_SIZE: u64 = 100_000; // ~100KB limit
+
+        // Check file size first
+        if attachment.size > MAX_TEXT_SIZE {
+            return Ok(Some((
+                attachment.filename.clone(),
+                format!("[File too large: {} bytes, max {} bytes]", attachment.size, MAX_TEXT_SIZE)
+            )));
+        }
+
+        // Download file content
+        let client = reqwest::Client::new();
+        let response = match client.get(&attachment.url).send().await {
+            Ok(resp) => resp,
+            Err(e) => {
+                warn!("Failed to download text attachment {}: {}", attachment.filename, e);
+                return Ok(None);
+            }
+        };
+
+        let bytes = match response.bytes().await {
+            Ok(b) => b,
+            Err(e) => {
+                warn!("Failed to read text attachment bytes {}: {}", attachment.filename, e);
+                return Ok(None);
+            }
+        };
+
+        // Convert to string (handle encoding gracefully)
+        let content = String::from_utf8_lossy(&bytes).to_string();
+
+        // Truncate if content is extremely long (for context window limits)
+        const MAX_CONTENT_CHARS: usize = 50_000;
+        let final_content = if content.len() > MAX_CONTENT_CHARS {
+            format!(
+                "{}\n\n[... truncated, showing first {} of {} characters ...]",
+                &content[..MAX_CONTENT_CHARS],
+                MAX_CONTENT_CHARS,
+                content.len()
+            )
+        } else {
+            content
+        };
+
+        Ok(Some((attachment.filename.clone(), final_content)))
+    }
+
+    /// Fetch text attachments from recent thread messages
+    /// Returns list of (filename, content) pairs
+    async fn fetch_thread_attachments(
+        &self,
+        ctx: &Context,
+        channel_id: serenity::model::id::ChannelId,
+        limit: u8,
+        request_id: Uuid,
+    ) -> Result<Vec<(String, String)>> {
+        use serenity::builder::GetMessages;
+
+        debug!("[{request_id}] 📎 Fetching text attachments from thread (limit: {limit})");
+
+        // Fetch messages from the thread
+        let messages = channel_id.messages(&ctx.http, |builder: &mut GetMessages| {
+            builder.limit(limit as u64)
+        }).await?;
+
+        let mut attachments = Vec::new();
+
+        for message in messages.iter() {
+            for attachment in &message.attachments {
+                if self.is_text_attachment(&attachment.filename) {
+                    debug!("[{request_id}] 📄 Found text attachment: {}", attachment.filename);
+                    if let Ok(Some((filename, content))) = self.read_text_attachment(attachment).await {
+                        attachments.push((filename, content));
+                    }
+                }
+            }
+        }
+
+        debug!("[{request_id}] 📎 Found {} text attachments in thread", attachments.len());
+        Ok(attachments)
+    }
+
+    /// Check if a message seems to be asking about uploaded files
+    fn seems_like_file_question(&self, message: &str) -> bool {
+        let lower = message.to_lowercase();
+        let file_keywords = [
+            "file", "transcript", "attachment", "uploaded", "document",
+            "what's in", "what is in", "read the", "show me the",
+            "contents of", "the .txt", "the .md", "the .json", "the .log",
+            "summary of", "summarize the", "analyze the", "in the file",
+        ];
+        file_keywords.iter().any(|kw| lower.contains(kw))
+    }
+
+    /// Read text attachments from current message and format them for AI context
+    async fn get_text_attachments_context(&self, msg: &Message, request_id: Uuid) -> Vec<(String, String)> {
+        let mut attachments = Vec::new();
+
+        for attachment in &msg.attachments {
+            if self.is_text_attachment(&attachment.filename) {
+                debug!("[{request_id}] 📄 Reading text attachment from message: {}", attachment.filename);
+                match self.read_text_attachment(attachment).await {
+                    Ok(Some((filename, content))) => {
+                        attachments.push((filename, content));
+                    }
+                    Ok(None) => {
+                        debug!("[{request_id}] ⚠️ Could not read attachment: {}", attachment.filename);
+                    }
+                    Err(e) => {
+                        warn!("[{request_id}] ❌ Error reading attachment {}: {}", attachment.filename, e);
+                    }
+                }
+            }
+        }
+
+        attachments
+    }
+
+    /// Format text attachments into a context string to prepend to user message
+    fn format_attachments_for_context(&self, attachments: &[(String, String)]) -> String {
+        if attachments.is_empty() {
+            return String::new();
+        }
+
+        let mut context = String::new();
+        for (filename, content) in attachments {
+            context.push_str(&format!(
+                "[Attached file: {}]\n```\n{}\n```\n\n",
+                filename, content
+            ));
+        }
+        context
     }
 
     async fn check_and_mediate_conflicts(
