@@ -1,5 +1,5 @@
 # Plugin Configuration for Persona Discord Bot
-# Version: 3.6.0
+# Version: 3.7.0
 #
 # Plugins are config-driven CLI command integrations that allow the bot
 # to execute approved external tools via Discord slash commands.
@@ -237,6 +237,34 @@ plugins:
 
     security:
       cooldown_seconds: 5
+      guild_only: false
+
+    output:
+      create_thread: false
+
+  # View transcription job queue and status
+  - name: transcribe_status
+    description: "View your active and recent transcription jobs"
+    enabled: true
+    version: "1.0.0"
+
+    command:
+      name: transcribe_status
+      description: "View your active transcription jobs and queue"
+      options:
+        - name: show_all
+          description: "Show completed jobs too (default: active only)"
+          type: boolean
+          required: false
+
+    # Virtual plugin - handled internally by the bot
+    execution:
+      command: ""
+      args: []
+      timeout_seconds: 5
+
+    security:
+      cooldown_seconds: 10
       guild_only: false
 
     output:

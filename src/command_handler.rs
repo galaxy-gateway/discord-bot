@@ -905,6 +905,12 @@ impl CommandHandler {
             }
         }
 
+        // Handle virtual plugins (no CLI execution, handled internally)
+        if plugin.is_virtual() {
+            info!("[{}] 🔧 Handling virtual plugin: {}", request_id, plugin.command.name);
+            return self.handle_virtual_plugin(ctx, command, &plugin, &plugin_manager, &params, &user_id, request_id).await;
+        }
+
         // Defer the response (command will take a while)
         // Use ephemeral response so only the thread appears in the channel
         command
@@ -1011,6 +1017,245 @@ impl CommandHandler {
                 }
             }
         });
+
+        Ok(())
+    }
+
+    /// Handle virtual plugins (commands handled internally without CLI execution)
+    async fn handle_virtual_plugin(
+        &self,
+        ctx: &Context,
+        command: &ApplicationCommandInteraction,
+        plugin: &crate::features::plugins::Plugin,
+        plugin_manager: &Arc<PluginManager>,
+        params: &HashMap<String, String>,
+        user_id: &str,
+        request_id: Uuid,
+    ) -> Result<()> {
+        use serenity::model::application::interaction::InteractionResponseType;
+
+        match plugin.command.name.as_str() {
+            "transcribe_cancel" => {
+                self.handle_transcribe_cancel(ctx, command, plugin_manager, params, user_id, request_id).await
+            }
+            "transcribe_status" => {
+                self.handle_transcribe_status(ctx, command, plugin_manager, user_id, request_id).await
+            }
+            _ => {
+                // Unknown virtual plugin
+                warn!("[{}] ❓ Unknown virtual plugin: {}", request_id, plugin.command.name);
+                command
+                    .create_interaction_response(&ctx.http, |response| {
+                        response
+                            .kind(InteractionResponseType::ChannelMessageWithSource)
+                            .interaction_response_data(|message| {
+                                message.content("This command is not yet implemented.")
+                                    .ephemeral(true)
+                            })
+                    })
+                    .await?;
+                Ok(())
+            }
+        }
+    }
+
+    /// Handle /transcribe_cancel command - cancel an active transcription job
+    async fn handle_transcribe_cancel(
+        &self,
+        ctx: &Context,
+        command: &ApplicationCommandInteraction,
+        plugin_manager: &Arc<PluginManager>,
+        params: &HashMap<String, String>,
+        user_id: &str,
+        request_id: Uuid,
+    ) -> Result<()> {
+        use serenity::model::application::interaction::InteractionResponseType;
+        use crate::features::plugins::short_job_id;
+
+        info!("[{}] 🛑 Processing transcribe_cancel for user {}", request_id, user_id);
+
+        // Get optional job_id parameter
+        let job_id_param = params.get("job_id").cloned();
+
+        // Find the job to cancel
+        let job_to_cancel = if let Some(job_id) = job_id_param {
+            // User specified a job ID - look for it
+            // Try to find by full ID or short ID prefix
+            let active_jobs = plugin_manager.job_manager.get_user_active_playlist_jobs(user_id);
+            active_jobs.into_iter().find(|j| j.id == job_id || j.id.starts_with(&job_id))
+        } else {
+            // No job ID specified - get user's most recent active job
+            let active_jobs = plugin_manager.job_manager.get_user_active_playlist_jobs(user_id);
+            active_jobs.into_iter().next()
+        };
+
+        match job_to_cancel {
+            Some(job) => {
+                let job_id = job.id.clone();
+                let job_title = job.playlist_title.clone().unwrap_or_else(|| "Untitled".to_string());
+
+                // Cancel the job
+                match plugin_manager.job_manager.cancel_playlist_job(&job_id, user_id).await {
+                    Ok(true) => {
+                        info!("[{}] ✅ Cancelled playlist job {} for user {}", request_id, job_id, user_id);
+                        command
+                            .create_interaction_response(&ctx.http, |response| {
+                                response
+                                    .kind(InteractionResponseType::ChannelMessageWithSource)
+                                    .interaction_response_data(|message| {
+                                        message.content(format!(
+                                            "✅ Cancelled transcription job `{}` ({})\n\
+                                             Progress: {}/{} videos completed",
+                                            short_job_id(&job_id),
+                                            job_title,
+                                            job.completed_videos,
+                                            job.total_videos
+                                        ))
+                                        .ephemeral(true)
+                                    })
+                            })
+                            .await?;
+                    }
+                    Ok(false) => {
+                        // Job wasn't active (already completed or cancelled)
+                        command
+                            .create_interaction_response(&ctx.http, |response| {
+                                response
+                                    .kind(InteractionResponseType::ChannelMessageWithSource)
+                                    .interaction_response_data(|message| {
+                                        message.content(format!(
+                                            "⚠️ Job `{}` is no longer active (status: {})",
+                                            short_job_id(&job_id),
+                                            job.status
+                                        ))
+                                        .ephemeral(true)
+                                    })
+                            })
+                            .await?;
+                    }
+                    Err(e) => {
+                        error!("[{}] ❌ Failed to cancel job {}: {}", request_id, job_id, e);
+                        command
+                            .create_interaction_response(&ctx.http, |response| {
+                                response
+                                    .kind(InteractionResponseType::ChannelMessageWithSource)
+                                    .interaction_response_data(|message| {
+                                        message.content(format!("❌ Failed to cancel job: {}", e))
+                                            .ephemeral(true)
+                                    })
+                            })
+                            .await?;
+                    }
+                }
+            }
+            None => {
+                // No active job found
+                command
+                    .create_interaction_response(&ctx.http, |response| {
+                        response
+                            .kind(InteractionResponseType::ChannelMessageWithSource)
+                            .interaction_response_data(|message| {
+                                message.content("❌ No active transcription job found to cancel.\n\
+                                                 Use `/transcribe_status` to view your jobs.")
+                                    .ephemeral(true)
+                            })
+                    })
+                    .await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Handle /transcribe_status command - show user's transcription jobs
+    async fn handle_transcribe_status(
+        &self,
+        ctx: &Context,
+        command: &ApplicationCommandInteraction,
+        plugin_manager: &Arc<PluginManager>,
+        user_id: &str,
+        request_id: Uuid,
+    ) -> Result<()> {
+        use serenity::model::application::interaction::InteractionResponseType;
+        use crate::features::plugins::short_job_id;
+
+        info!("[{}] 📊 Processing transcribe_status for user {}", request_id, user_id);
+
+        // Get user's active playlist jobs
+        let active_jobs = plugin_manager.job_manager.get_user_active_playlist_jobs(user_id);
+
+        // Get user's regular (single video) jobs
+        let all_jobs = plugin_manager.job_manager.get_user_jobs(user_id);
+        let active_video_jobs: Vec<_> = all_jobs.into_iter()
+            .filter(|j| matches!(j.status, crate::features::plugins::JobStatus::Running | crate::features::plugins::JobStatus::Pending))
+            .collect();
+
+        if active_jobs.is_empty() && active_video_jobs.is_empty() {
+            command
+                .create_interaction_response(&ctx.http, |response| {
+                    response
+                        .kind(InteractionResponseType::ChannelMessageWithSource)
+                        .interaction_response_data(|message| {
+                            message.content("📭 You have no active transcription jobs.\n\
+                                            Use `/transcribe <url>` to start a transcription.")
+                                .ephemeral(true)
+                        })
+                })
+                .await?;
+            return Ok(());
+        }
+
+        // Build status message
+        let mut status_lines = vec!["**Your Transcription Jobs:**".to_string()];
+
+        if !active_jobs.is_empty() {
+            status_lines.push("\n**Playlist Jobs:**".to_string());
+            for job in &active_jobs {
+                let progress_pct = job.progress_percent();
+                let title = job.playlist_title.as_deref().unwrap_or("Untitled playlist");
+                let truncated_title = if title.len() > 40 {
+                    format!("{}...", &title[..37])
+                } else {
+                    title.to_string()
+                };
+                status_lines.push(format!(
+                    "• `{}` \"{}\" - {}/{} videos ({:.0}%)",
+                    short_job_id(&job.id),
+                    truncated_title,
+                    job.completed_videos + job.failed_videos,
+                    job.total_videos,
+                    progress_pct
+                ));
+            }
+        }
+
+        if !active_video_jobs.is_empty() {
+            status_lines.push("\n**Video Jobs:**".to_string());
+            for job in &active_video_jobs {
+                let url = job.params.get("url").map(|u| {
+                    if u.len() > 50 { format!("{}...", &u[..47]) } else { u.clone() }
+                }).unwrap_or_else(|| "Unknown".to_string());
+                let status = match job.status {
+                    crate::features::plugins::JobStatus::Running => "🔄 Running",
+                    crate::features::plugins::JobStatus::Pending => "⏳ Pending",
+                    _ => "❓ Unknown",
+                };
+                status_lines.push(format!("• `{}` {} - {}", short_job_id(&job.id), url, status));
+            }
+        }
+
+        status_lines.push("\n*To cancel a job, use `/transcribe_cancel [job_id]`*".to_string());
+
+        command
+            .create_interaction_response(&ctx.http, |response| {
+                response
+                    .kind(InteractionResponseType::ChannelMessageWithSource)
+                    .interaction_response_data(|message| {
+                        message.content(status_lines.join("\n"))
+                            .ephemeral(true)
+                    })
+            })
+            .await?;
 
         Ok(())
     }

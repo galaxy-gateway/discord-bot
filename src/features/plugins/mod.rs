@@ -5,11 +5,12 @@
 //! Now includes multi-video playlist transcription with progress tracking and chunked streaming
 //! for long videos with per-chunk summaries.
 //!
-//! - **Version**: 3.11.0
+//! - **Version**: 3.12.0
 //! - **Since**: 0.9.0
 //! - **Toggleable**: true
 //!
 //! ## Changelog
+//! - 3.12.0: Display job ID in thread starter and final stats messages for easy reference
 //! - 3.11.0: Renamed summary options for clarity: summary_style→summaries (each/periodic/all/none),
 //!           transcript_interval→transcript_file_interval, added user-configurable summary_interval
 //! - 3.10.0: Thread starter includes title, author, and URL; first thread message is description only
@@ -50,6 +51,15 @@ pub use output::{OutputHandler, UserContext, OutputFormat, format_transcript_sen
 pub use youtube::{parse_youtube_url, enumerate_playlist, fetch_video_metadata, format_description_preview, PlaylistInfo, PlaylistItem, VideoMetadata, YouTubeUrl, YouTubeUrlType};
 
 use crate::database::Database;
+
+/// Get the first 8 characters of a job ID for display
+pub fn short_job_id(id: &str) -> &str {
+    if id.len() >= 8 {
+        &id[..8]
+    } else {
+        id
+    }
+}
 use anyhow::Result;
 use log::{error, info, warn};
 use serenity::http::Http;
@@ -580,8 +590,9 @@ impl PluginManager {
                     .await;
             }
 
-            // Send thread starter message to channel with playlist title
-            let starter_content = format!("Transcribing YouTube playlist: {}", playlist_title);
+            // Send thread starter message to channel with playlist title and job ID
+            let short_id = short_job_id(&playlist_job_id_clone);
+            let starter_content = format!("Transcribing YouTube playlist: {} | job: {}", playlist_title, short_id);
 
             // Create thread from a new message (not the ephemeral response)
             let thread_channel = match channel_id.say(&http, starter_content).await {
@@ -932,15 +943,16 @@ impl PluginManager {
                 let metadata = youtube::fetch_video_metadata(&url).await.ok();
 
                 // Send thread starter message to channel
-                // Format: "Transcribing YouTube video: {title} by {author}\n{url}"
+                // Format: "Transcribing YouTube video: {title} by {author} | job: {short_id}\n{url}"
+                let short_id = short_job_id(&job_id_clone);
                 let starter_content = if let Some(ref meta) = metadata {
                     if let Some(ref uploader) = meta.uploader {
-                        format!("Transcribing YouTube video: {} by {}\n{}", thread_name, uploader, url)
+                        format!("Transcribing YouTube video: {} by {} | job: {}\n{}", thread_name, uploader, short_id, url)
                     } else {
-                        format!("Transcribing YouTube video: {}\n{}", thread_name, url)
+                        format!("Transcribing YouTube video: {} | job: {}\n{}", thread_name, short_id, url)
                     }
                 } else {
-                    format!("Transcribing YouTube video: {}\n{}", thread_name, url)
+                    format!("Transcribing YouTube video: {} | job: {}\n{}", thread_name, short_id, url)
                 };
 
                 // Create thread from a new message
@@ -1001,15 +1013,16 @@ impl PluginManager {
                 // Fetch video metadata for header and description
                 let metadata = youtube::fetch_video_metadata(&url).await.ok();
 
-                // Post header: "Transcribing YouTube video: {title} by {author}\n{url}"
+                // Post header: "Transcribing YouTube video: {title} by {author} | job: {short_id}\n{url}"
+                let short_id = short_job_id(&job_id_clone);
                 let header_content = if let Some(ref meta) = metadata {
                     if let Some(ref uploader) = meta.uploader {
-                        format!("Transcribing YouTube video: {} by {}\n{}", video_title, uploader, url)
+                        format!("Transcribing YouTube video: {} by {} | job: {}\n{}", video_title, uploader, short_id, url)
                     } else {
-                        format!("Transcribing YouTube video: {}\n{}", video_title, url)
+                        format!("Transcribing YouTube video: {} | job: {}\n{}", video_title, short_id, url)
                     }
                 } else {
-                    format!("Transcribing YouTube video: {}\n{}", video_title, url)
+                    format!("Transcribing YouTube video: {} | job: {}\n{}", video_title, short_id, url)
                 };
                 let _ = channel_id.say(&http, &header_content).await;
 
@@ -1368,16 +1381,18 @@ impl PluginManager {
             let word_count = count_words(&combined_transcript);
             let word_count_str = format_word_count(word_count);
 
-            // Post final stats with improved heading
+            // Post final stats with improved heading, including job ID for reference
+            let short_id = short_job_id(&job_id_clone);
             let stats_msg = format!(
                 "---\n\n{} **Transcription Complete: {}**\n\n\
                  **Stats**\n\
+                 • Job: `{}`\n\
                  • Parts: {}/{} successful\n\
                  • Words: {}\n\
                  • Runtime: {}",
                 status_emoji,
                 if video_title.len() > 60 { format!("{}...", &video_title[..57]) } else { video_title.clone() },
-                completed_chunks, total_chunks, word_count_str, runtime_str
+                short_id, completed_chunks, total_chunks, word_count_str, runtime_str
             );
             let _ = output_channel.say(&http, &stats_msg).await;
 
