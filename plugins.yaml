@@ -369,3 +369,530 @@ plugins:
       create_thread: false
       max_inline_length: 2000
 
+  # DNS record lookup
+  - name: dns
+    description: "DNS record lookup"
+    enabled: true
+    version: "1.0.0"
+
+    command:
+      name: dns
+      description: "Look up DNS records for a domain"
+      options:
+        - name: domain
+          description: "Domain to look up (e.g., example.com)"
+          type: string
+          required: true
+          validation:
+            pattern: "^[a-zA-Z0-9][a-zA-Z0-9.-]+$"
+            max_length: 253
+        - name: type
+          description: "DNS record type"
+          type: string
+          required: false
+          default: "A"
+          choices:
+            - name: "A (IPv4)"
+              value: "A"
+            - name: "AAAA (IPv6)"
+              value: "AAAA"
+            - name: "MX (Mail)"
+              value: "MX"
+            - name: "TXT (Text)"
+              value: "TXT"
+            - name: "NS (Nameserver)"
+              value: "NS"
+            - name: "CNAME (Alias)"
+              value: "CNAME"
+
+    execution:
+      command: sh
+      args:
+        - "-c"
+        - |
+          RECORDS=$(dig +short "${domain}" "${type}" 2>&1)
+
+          if [ -z "$RECORDS" ]; then
+            echo "## DNS Lookup"
+            echo ""
+            echo "**Domain:** \`${domain}\`"
+            echo "**Type:** ${type}"
+            echo ""
+            echo "No records found."
+            exit 0
+          fi
+
+          echo "## DNS Lookup"
+          echo ""
+          echo "**Domain:** \`${domain}\`"
+          echo "**Type:** ${type}"
+          echo ""
+          echo "**Records:**"
+          echo "\`\`\`"
+          echo "$RECORDS"
+          echo "\`\`\`"
+      timeout_seconds: 10
+      max_output_bytes: 4096
+
+    security:
+      cooldown_seconds: 5
+      guild_only: false
+
+    output:
+      create_thread: false
+      max_inline_length: 2000
+
+  # SSL certificate checker
+  - name: sslcheck
+    description: "Check SSL certificate for a domain"
+    enabled: true
+    version: "1.0.0"
+
+    command:
+      name: sslcheck
+      description: "Check SSL certificate expiry and details"
+      options:
+        - name: domain
+          description: "Domain to check (e.g., example.com)"
+          type: string
+          required: true
+          validation:
+            pattern: "^[a-zA-Z0-9][a-zA-Z0-9.-]+$"
+            max_length: 253
+
+    execution:
+      command: sh
+      args:
+        - "-c"
+        - |
+          CERT_INFO=$(echo | openssl s_client -servername "${domain}" -connect "${domain}:443" 2>/dev/null | openssl x509 -noout -dates -subject -issuer 2>/dev/null)
+
+          if [ -z "$CERT_INFO" ]; then
+            echo "## SSL Certificate Check"
+            echo ""
+            echo "**Domain:** \`${domain}\`"
+            echo ""
+            echo "Could not retrieve SSL certificate. The domain may not support HTTPS."
+            exit 0
+          fi
+
+          SUBJECT=$(echo "$CERT_INFO" | grep "subject=" | sed 's/subject=//')
+          ISSUER=$(echo "$CERT_INFO" | grep "issuer=" | sed 's/issuer=//')
+          NOT_BEFORE=$(echo "$CERT_INFO" | grep "notBefore=" | sed 's/notBefore=//')
+          NOT_AFTER=$(echo "$CERT_INFO" | grep "notAfter=" | sed 's/notAfter=//')
+
+          # Calculate days until expiry
+          EXPIRY_EPOCH=$(date -d "$NOT_AFTER" +%s 2>/dev/null)
+          NOW_EPOCH=$(date +%s)
+          DAYS_LEFT=$(( (EXPIRY_EPOCH - NOW_EPOCH) / 86400 ))
+
+          echo "## SSL Certificate Check"
+          echo ""
+          echo "**Domain:** \`${domain}\`"
+          echo ""
+          if [ "$DAYS_LEFT" -lt 0 ]; then
+            echo "**Status:** EXPIRED"
+          elif [ "$DAYS_LEFT" -lt 30 ]; then
+            echo "**Status:** Expiring soon ($DAYS_LEFT days)"
+          else
+            echo "**Status:** Valid ($DAYS_LEFT days remaining)"
+          fi
+          echo ""
+          echo "**Issued To:** $SUBJECT"
+          echo "**Issued By:** $ISSUER"
+          echo "**Valid From:** $NOT_BEFORE"
+          echo "**Expires:** $NOT_AFTER"
+      timeout_seconds: 15
+      max_output_bytes: 4096
+
+    security:
+      cooldown_seconds: 10
+      guild_only: false
+
+    output:
+      create_thread: false
+      max_inline_length: 2000
+
+  # HTTP status checker
+  - name: httpstatus
+    description: "Check if a URL is reachable"
+    enabled: true
+    version: "1.0.0"
+
+    command:
+      name: httpstatus
+      description: "Check HTTP status and response time for a URL"
+      options:
+        - name: url
+          description: "URL to check (e.g., https://example.com)"
+          type: string
+          required: true
+          validation:
+            pattern: "^https?://[a-zA-Z0-9][a-zA-Z0-9.-]+"
+            max_length: 500
+
+    execution:
+      command: sh
+      args:
+        - "-c"
+        - |
+          RESULT=$(curl -s -o /dev/null -w "%{http_code}|%{time_total}|%{size_download}|%{redirect_url}" --max-time 10 -L "${url}" 2>&1)
+
+          HTTP_CODE=$(echo "$RESULT" | cut -d'|' -f1)
+          TIME_TOTAL=$(echo "$RESULT" | cut -d'|' -f2)
+          SIZE=$(echo "$RESULT" | cut -d'|' -f3)
+          REDIRECT=$(echo "$RESULT" | cut -d'|' -f4)
+
+          # Convert time to ms
+          TIME_MS=$(echo "$TIME_TOTAL * 1000" | bc | cut -d'.' -f1)
+
+          # Format size
+          if [ "$SIZE" -gt 1048576 ]; then
+            SIZE_FMT="$(echo "scale=2; $SIZE / 1048576" | bc) MB"
+          elif [ "$SIZE" -gt 1024 ]; then
+            SIZE_FMT="$(echo "scale=2; $SIZE / 1024" | bc) KB"
+          else
+            SIZE_FMT="$SIZE bytes"
+          fi
+
+          echo "## HTTP Status Check"
+          echo ""
+          echo "**URL:** \`${url}\`"
+          echo ""
+
+          if [ "$HTTP_CODE" = "000" ]; then
+            echo "**Status:** Connection failed"
+            echo ""
+            echo "Could not connect to the server."
+          elif [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+            echo "**Status:** $HTTP_CODE OK"
+            echo "**Response Time:** $TIME_MS""ms"
+            echo "**Size:** $SIZE_FMT"
+          elif [ "$HTTP_CODE" -ge 300 ] && [ "$HTTP_CODE" -lt 400 ]; then
+            echo "**Status:** $HTTP_CODE Redirect"
+            echo "**Response Time:** $TIME_MS""ms"
+            if [ -n "$REDIRECT" ]; then
+              echo "**Redirects to:** \`$REDIRECT\`"
+            fi
+          elif [ "$HTTP_CODE" -ge 400 ] && [ "$HTTP_CODE" -lt 500 ]; then
+            echo "**Status:** $HTTP_CODE Client Error"
+            echo "**Response Time:** $TIME_MS""ms"
+          else
+            echo "**Status:** $HTTP_CODE Server Error"
+            echo "**Response Time:** $TIME_MS""ms"
+          fi
+      timeout_seconds: 15
+      max_output_bytes: 4096
+
+    security:
+      cooldown_seconds: 5
+      guild_only: false
+
+    output:
+      create_thread: false
+      max_inline_length: 2000
+
+  # UUID generator
+  - name: uuid
+    description: "Generate random UUIDs"
+    enabled: true
+    version: "1.0.0"
+
+    command:
+      name: uuid
+      description: "Generate random UUID(s)"
+      options:
+        - name: count
+          description: "Number of UUIDs to generate (1-10)"
+          type: integer
+          required: false
+          min_value: 1
+          max_value: 10
+
+    execution:
+      command: sh
+      args:
+        - "-c"
+        - |
+          if [ -n "$count" ]; then COUNT="$count"; else COUNT=1; fi
+
+          echo "## UUID Generator"
+          echo ""
+          echo "\`\`\`"
+          for i in $(seq 1 $COUNT); do
+            uuidgen
+          done
+          echo "\`\`\`"
+      timeout_seconds: 5
+      max_output_bytes: 2048
+
+    security:
+      cooldown_seconds: 3
+      guild_only: false
+
+    output:
+      create_thread: false
+      max_inline_length: 2000
+
+  # Timestamp converter
+  - name: timestamp
+    description: "Convert between Unix timestamps and dates"
+    enabled: true
+    version: "1.0.0"
+
+    command:
+      name: timestamp
+      description: "Convert between Unix timestamps and human-readable dates"
+      options:
+        - name: value
+          description: "Unix timestamp (e.g., 1700000000) or 'now' for current time"
+          type: string
+          required: true
+          validation:
+            max_length: 50
+
+    execution:
+      command: sh
+      args:
+        - "-c"
+        - |
+          INPUT="${value}"
+
+          echo "## Timestamp Converter"
+          echo ""
+
+          if [ "$INPUT" = "now" ]; then
+            UNIX=$(date +%s)
+            HUMAN=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+            LOCAL=$(date +"%Y-%m-%d %H:%M:%S %Z")
+
+            echo "**Current Time**"
+            echo ""
+            echo "**Unix:** \`$UNIX\`"
+            echo "**UTC:** $HUMAN"
+            echo "**Local:** $LOCAL"
+          elif echo "$INPUT" | grep -qE '^[0-9]+$'; then
+            # Input is a Unix timestamp
+            HUMAN=$(date -u -d "@$INPUT" +"%Y-%m-%d %H:%M:%S UTC" 2>/dev/null)
+            LOCAL=$(date -d "@$INPUT" +"%Y-%m-%d %H:%M:%S %Z" 2>/dev/null)
+
+            if [ -z "$HUMAN" ]; then
+              echo "**Error:** Invalid timestamp"
+              exit 0
+            fi
+
+            echo "**Unix:** \`$INPUT\`"
+            echo "**UTC:** $HUMAN"
+            echo "**Local:** $LOCAL"
+            echo ""
+            echo "**Discord Format:** <t:$INPUT:F>"
+          else
+            echo "**Error:** Please provide a Unix timestamp (numbers only) or 'now'"
+          fi
+      timeout_seconds: 5
+      max_output_bytes: 2048
+
+    security:
+      cooldown_seconds: 3
+      guild_only: false
+
+    output:
+      create_thread: false
+      max_inline_length: 2000
+
+  # IP geolocation lookup
+  - name: ipinfo
+    description: "Look up IP address geolocation"
+    enabled: true
+    version: "1.0.0"
+
+    command:
+      name: ipinfo
+      description: "Get geolocation and ISP info for an IP address"
+      options:
+        - name: ip
+          description: "IP address to look up (e.g., 8.8.8.8)"
+          type: string
+          required: true
+          validation:
+            pattern: "^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$"
+            max_length: 15
+
+    execution:
+      command: sh
+      args:
+        - "-c"
+        - |
+          RESPONSE=$(curl -s --max-time 10 "http://ip-api.com/json/${ip}?fields=status,message,country,regionName,city,zip,lat,lon,timezone,isp,org,as")
+
+          STATUS=$(echo "$RESPONSE" | jq -r '.status // "fail"')
+
+          echo "## IP Lookup"
+          echo ""
+          echo "**IP:** \`${ip}\`"
+          echo ""
+
+          if [ "$STATUS" != "success" ]; then
+            MSG=$(echo "$RESPONSE" | jq -r '.message // "Unknown error"')
+            echo "**Error:** $MSG"
+            exit 0
+          fi
+
+          COUNTRY=$(echo "$RESPONSE" | jq -r '.country // "Unknown"')
+          REGION=$(echo "$RESPONSE" | jq -r '.regionName // "Unknown"')
+          CITY=$(echo "$RESPONSE" | jq -r '.city // "Unknown"')
+          ZIP=$(echo "$RESPONSE" | jq -r '.zip // ""')
+          LAT=$(echo "$RESPONSE" | jq -r '.lat // ""')
+          LON=$(echo "$RESPONSE" | jq -r '.lon // ""')
+          TZ=$(echo "$RESPONSE" | jq -r '.timezone // "Unknown"')
+          ISP=$(echo "$RESPONSE" | jq -r '.isp // "Unknown"')
+          ORG=$(echo "$RESPONSE" | jq -r '.org // ""')
+          AS=$(echo "$RESPONSE" | jq -r '.as // ""')
+
+          echo "**Location:** $CITY, $REGION, $COUNTRY"
+          if [ -n "$ZIP" ]; then
+            echo "**ZIP:** $ZIP"
+          fi
+          echo "**Coordinates:** $LAT, $LON"
+          echo "**Timezone:** $TZ"
+          echo ""
+          echo "**ISP:** $ISP"
+          if [ -n "$ORG" ] && [ "$ORG" != "$ISP" ]; then
+            echo "**Organization:** $ORG"
+          fi
+          if [ -n "$AS" ]; then
+            echo "**AS:** $AS"
+          fi
+      timeout_seconds: 10
+      max_output_bytes: 4096
+
+    security:
+      cooldown_seconds: 5
+      guild_only: false
+
+    output:
+      create_thread: false
+      max_inline_length: 2000
+
+  # QR code generator
+  - name: qrcode
+    description: "Generate a QR code"
+    enabled: true
+    version: "1.0.0"
+
+    command:
+      name: qrcode
+      description: "Generate a QR code image for text or URL"
+      options:
+        - name: text
+          description: "Text or URL to encode"
+          type: string
+          required: true
+          validation:
+            max_length: 500
+        - name: size
+          description: "Image size in pixels (100-500)"
+          type: integer
+          required: false
+          min_value: 100
+          max_value: 500
+
+    execution:
+      command: sh
+      args:
+        - "-c"
+        - |
+          if [ -n "$size" ]; then SIZE="$size"; else SIZE=200; fi
+          ENCODED=$(echo -n "${text}" | jq -sRr @uri)
+          URL="https://api.qrserver.com/v1/create-qr-code/?size=$SIZE""x$SIZE""&data=$ENCODED"
+
+          echo "## QR Code"
+          echo ""
+          echo "**Content:** \`${text}\`"
+          echo "**Size:** $SIZE""x$SIZE"
+          echo ""
+          echo "$URL"
+      timeout_seconds: 5
+      max_output_bytes: 2048
+
+    security:
+      cooldown_seconds: 5
+      guild_only: false
+
+    output:
+      create_thread: false
+      max_inline_length: 2000
+
+  # Weather lookup
+  - name: weather
+    description: "Get current weather"
+    enabled: true
+    version: "1.0.0"
+
+    command:
+      name: weather
+      description: "Get current weather for a location"
+      options:
+        - name: location
+          description: "City name (e.g., London, New York)"
+          type: string
+          required: true
+          validation:
+            max_length: 100
+
+    execution:
+      command: sh
+      args:
+        - "-c"
+        - |
+          # URL encode the location
+          ENCODED=$(echo -n "${location}" | jq -sRr @uri)
+
+          # Get weather data in JSON format
+          RESPONSE=$(curl -s --max-time 10 "https://wttr.in/$ENCODED?format=j1" 2>&1)
+
+          if echo "$RESPONSE" | grep -q "Unknown location"; then
+            echo "## Weather"
+            echo ""
+            echo "**Location:** ${location}"
+            echo ""
+            echo "Location not found. Try a different city name."
+            exit 0
+          fi
+
+          # Extract current conditions
+          AREA=$(echo "$RESPONSE" | jq -r '.nearest_area[0].areaName[0].value // "Unknown"')
+          COUNTRY=$(echo "$RESPONSE" | jq -r '.nearest_area[0].country[0].value // ""')
+          TEMP_C=$(echo "$RESPONSE" | jq -r '.current_condition[0].temp_C // "?"')
+          TEMP_F=$(echo "$RESPONSE" | jq -r '.current_condition[0].temp_F // "?"')
+          FEELS_C=$(echo "$RESPONSE" | jq -r '.current_condition[0].FeelsLikeC // "?"')
+          FEELS_F=$(echo "$RESPONSE" | jq -r '.current_condition[0].FeelsLikeF // "?"')
+          DESC=$(echo "$RESPONSE" | jq -r '.current_condition[0].weatherDesc[0].value // "Unknown"')
+          HUMIDITY=$(echo "$RESPONSE" | jq -r '.current_condition[0].humidity // "?"')
+          WIND_KPH=$(echo "$RESPONSE" | jq -r '.current_condition[0].windspeedKmph // "?"')
+          WIND_DIR=$(echo "$RESPONSE" | jq -r '.current_condition[0].winddir16Point // ""')
+
+          echo "## Weather"
+          echo ""
+          if [ -n "$COUNTRY" ]; then
+            echo "**Location:** $AREA, $COUNTRY"
+          else
+            echo "**Location:** $AREA"
+          fi
+          echo ""
+          echo "**Conditions:** $DESC"
+          echo "**Temperature:** $TEMP_C""C / $TEMP_F""F"
+          echo "**Feels Like:** $FEELS_C""C / $FEELS_F""F"
+          echo "**Humidity:** $HUMIDITY""%"
+          echo "**Wind:** $WIND_KPH km/h $WIND_DIR"
+      timeout_seconds: 10
+      max_output_bytes: 4096
+
+    security:
+      cooldown_seconds: 10
+      guild_only: false
+
+    output:
+      create_thread: false
+      max_inline_length: 2000
+
