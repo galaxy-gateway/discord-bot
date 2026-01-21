@@ -5,11 +5,13 @@
 //! Now includes multi-video playlist transcription with progress tracking and chunked streaming
 //! for long videos with per-chunk summaries.
 //!
-//! - **Version**: 3.3.0
+//! - **Version**: 3.4.0
 //! - **Since**: 0.9.0
 //! - **Toggleable**: true
 //!
 //! ## Changelog
+//! - 3.4.0: Configurable summary options (summary_style, transcript_interval, custom_prompt),
+//!          fixed overall/cumulative summary bug where content was passed incorrectly to AI
 //! - 3.3.0: Added optional cumulative "story so far" summaries during chunked transcription
 //! - 3.2.0: Added per-user AI usage tracking for plugin summary operations
 //! - 3.1.0: Activate chunked transcription path, add per-chunk transcript files and AI summaries
@@ -848,6 +850,19 @@ impl PluginManager {
                 channel_id: Some(channel_id_str),
             };
 
+            // Extract user options from params
+            let summary_style = params.get("summary_style")
+                .map(|s| s.as_str())
+                .unwrap_or("per_chunk");
+            let transcript_interval: usize = params.get("transcript_interval")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+            let custom_prompt = params.get("custom_prompt").cloned();
+
+            // Determine what summaries to generate based on summary_style
+            let generate_per_chunk = matches!(summary_style, "per_chunk" | "both");
+            let generate_cumulative = matches!(summary_style, "cumulative" | "both");
+
             // Mark as running
             if let Err(e) = job_manager.start_job(&job_id_clone).await {
                 warn!("Failed to mark job as running: {}", e);
@@ -1113,53 +1128,76 @@ impl PluginManager {
                                 .post_file(&http, output_channel, &exec_result.stdout, &chunk_filename)
                                 .await;
 
-                            // Generate and post per-chunk summary
-                            if let Some(ref summary_prompt) = plugin.output.summary_prompt {
-                                if let Some(chunk_summary) = output_handler
-                                    .generate_summary_for_text_with_context(
-                                        &exec_result.stdout,
-                                        summary_prompt,
-                                        Some(&user_context),
-                                        Some("chunk_summary")
-                                    )
-                                    .await
-                                {
-                                    let summary_msg = format!(
-                                        "**Chunk {}/{} Summary:**\n{}",
-                                        chunk_num, total_chunks, chunk_summary
-                                    );
-                                    let _ = output_channel.say(&http, &summary_msg).await;
-                                    chunk_summaries.push(chunk_summary);
+                            // Generate chunk summary for accumulation (needed for cumulative or overall)
+                            // Skip entirely if summary_style is "none"
+                            if summary_style != "none" {
+                                if let Some(ref summary_prompt) = plugin.output.summary_prompt {
+                                    // Build prompt with custom instructions if provided
+                                    let full_prompt = if let Some(ref custom) = custom_prompt {
+                                        format!("{}\n\nAdditional instructions: {}", summary_prompt, custom)
+                                    } else {
+                                        summary_prompt.clone()
+                                    };
 
-                                    // Generate cumulative "story so far" summary if enabled
-                                    if chunking_config.cumulative_summaries
-                                        && chunk_summaries.len() > 1
-                                        && chunk_num as u32 % chunking_config.cumulative_summary_interval == 0
+                                    if let Some(chunk_summary) = output_handler
+                                        .generate_summary_for_text_with_context(
+                                            &exec_result.stdout,
+                                            &full_prompt,
+                                            Some(&user_context),
+                                            Some("chunk_summary")
+                                        )
+                                        .await
                                     {
-                                        let summaries_so_far = chunk_summaries.join("\n\n---\n\n");
-                                        let cumulative_prompt = format!(
-                                            "Based on these section summaries from a video transcription in progress, \
-                                             provide a cohesive 'story so far' summary that synthesizes all the key points \
-                                             covered up to this point:\n\n{}\n\n\
-                                             Write a flowing summary that captures the narrative and main themes so far.",
-                                            summaries_so_far
-                                        );
+                                        // Always collect summaries for overall summary generation
+                                        chunk_summaries.push(chunk_summary.clone());
 
-                                        if let Some(cumulative_summary) = output_handler
-                                            .generate_summary_for_text_with_context(
-                                                &cumulative_prompt,
-                                                "Synthesize the content covered so far into a cohesive summary.",
-                                                Some(&user_context),
-                                                Some("cumulative_summary")
-                                            )
-                                            .await
-                                        {
-                                            let cumulative_msg = format!(
-                                                "**Story So Far ({}/{} chunks):**\n{}",
-                                                chunk_num, total_chunks, cumulative_summary
+                                        // Post per-chunk summary if enabled
+                                        if generate_per_chunk {
+                                            let summary_msg = format!(
+                                                "**Chunk {}/{} Summary:**\n{}",
+                                                chunk_num, total_chunks, chunk_summary
                                             );
-                                            let _ = output_channel.say(&http, &cumulative_msg).await;
-                                            info!("Posted cumulative summary after chunk {}", chunk_num);
+                                            let _ = output_channel.say(&http, &summary_msg).await;
+                                        }
+
+                                        // Generate cumulative "story so far" summary if enabled
+                                        // Uses user's summary_style preference OR yaml config as fallback
+                                        let should_cumulate = generate_cumulative
+                                            || (chunking_config.cumulative_summaries && summary_style == "per_chunk");
+
+                                        if should_cumulate
+                                            && chunk_summaries.len() > 1
+                                            && chunk_num as u32 % chunking_config.cumulative_summary_interval == 0
+                                        {
+                                            let summaries_so_far = chunk_summaries.join("\n\n---\n\n");
+                                            let base_template = "Based on these section summaries from a video \
+                                                transcription in progress, provide a cohesive 'story so far' summary that \
+                                                synthesizes all the key points covered up to this point. Write a flowing \
+                                                summary that captures the narrative and main themes so far:\n\n${output}";
+
+                                            // Add custom instructions to cumulative summary too
+                                            let cumulative_template = if let Some(ref custom) = custom_prompt {
+                                                format!("{}\n\nAdditional instructions: {}", base_template, custom)
+                                            } else {
+                                                base_template.to_string()
+                                            };
+
+                                            if let Some(cumulative_summary) = output_handler
+                                                .generate_summary_for_text_with_context(
+                                                    &summaries_so_far,
+                                                    &cumulative_template,
+                                                    Some(&user_context),
+                                                    Some("cumulative_summary")
+                                                )
+                                                .await
+                                            {
+                                                let cumulative_msg = format!(
+                                                    "**Story So Far ({}/{} chunks):**\n{}",
+                                                    chunk_num, total_chunks, cumulative_summary
+                                                );
+                                                let _ = output_channel.say(&http, &cumulative_msg).await;
+                                                info!("Posted cumulative summary after chunk {}", chunk_num);
+                                            }
                                         }
                                     }
                                 }
@@ -1182,6 +1220,18 @@ impl PluginManager {
                                 "--- Chunk {}/{} ---\n{}",
                                 chunk_num, total_chunks, exec_result.stdout
                             ));
+
+                            // Post transcript file at interval if configured (after adding chunk)
+                            if transcript_interval > 0 && chunk_num % transcript_interval == 0 {
+                                let partial_filename = format!("transcript_chunks_1-{}.txt", chunk_num);
+                                let _ = output_handler
+                                    .post_file(&http, output_channel, &combined_transcript, &partial_filename)
+                                    .await;
+                                let _ = output_channel.say(
+                                    &http,
+                                    &format!("📄 **Partial transcript** (chunks 1-{}, {} characters)", chunk_num, combined_transcript.len())
+                                ).await;
+                            }
 
                             completed_chunks += 1;
                         } else {
@@ -1225,19 +1275,24 @@ impl PluginManager {
             );
             let _ = output_channel.say(&http, &stats_msg).await;
 
-            // Generate final overall summary from chunk summaries
-            if !chunk_summaries.is_empty() {
+            // Generate final overall summary from chunk summaries (skip if "none" style)
+            if !chunk_summaries.is_empty() && summary_style != "none" {
                 let combined_summaries = chunk_summaries.join("\n\n---\n\n");
-                let final_summary_prompt = format!(
-                    "Based on these section summaries from a longer video, provide a comprehensive overall summary:\n\n{}\n\n\
-                     Synthesize the key themes, main points, and conclusions across all sections.",
-                    combined_summaries
-                );
+                let base_template = "Based on these section summaries from a longer video, \
+                    provide a comprehensive overall summary that synthesizes the key themes, \
+                    main points, and conclusions across all sections:\n\n${output}";
+
+                // Add custom instructions to overall summary if provided
+                let overall_template = if let Some(ref custom) = custom_prompt {
+                    format!("{}\n\nAdditional instructions: {}", base_template, custom)
+                } else {
+                    base_template.to_string()
+                };
 
                 if let Some(final_summary) = output_handler
                     .generate_summary_for_text_with_context(
-                        &final_summary_prompt,
-                        "Provide a comprehensive overall summary.",
+                        &combined_summaries,
+                        &overall_template,
                         Some(&user_context),
                         Some("overall_summary")
                     )
