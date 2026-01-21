@@ -3,10 +3,11 @@
 //! Create Discord threads for plugin output, handle large responses with file attachments,
 //! and generate AI summaries. Supports both single video and playlist transcription.
 //!
-//! - **Version**: 3.3.0
+//! - **Version**: 3.4.0
 //! - **Since**: 0.9.0
 //!
 //! ## Changelog
+//! - 3.4.0: Added escape_markdown() for safe embedding of user text in markdown formatting
 //! - 3.3.0: Added output_format support, sentence-per-line transcript formatting, word count helpers
 //! - 3.2.0: Added UsageTracker integration for tracking AI summary costs per user
 //! - 3.1.0: Added public post_file() and generate_summary_for_text() methods for per-chunk summaries
@@ -800,6 +801,22 @@ impl OutputHandler {
     }
 }
 
+/// Escape markdown special characters in text
+///
+/// Characters escaped: * _ ` [ ] ( ) ~ > #
+/// This is used to safely embed user-provided text (like video titles) in markdown
+/// without breaking link syntax or other formatting.
+pub fn escape_markdown(text: &str) -> String {
+    text.chars()
+        .map(|c| match c {
+            '*' | '_' | '`' | '[' | ']' | '(' | ')' | '~' | '>' | '#' => {
+                format!("\\{}", c)
+            }
+            _ => c.to_string(),
+        })
+        .collect()
+}
+
 /// Truncate a string to max length, adding ellipsis if needed
 fn truncate_str(s: &str, max_len: usize) -> String {
     if s.len() <= max_len {
@@ -1061,5 +1078,32 @@ mod tests {
         assert!(OutputFormat::Files.should_use_file(100));
         assert!(!OutputFormat::Auto.should_use_file(1000));
         assert!(OutputFormat::Auto.should_use_file(3000));
+    }
+
+    #[test]
+    fn test_escape_markdown() {
+        // Basic text should be unchanged
+        assert_eq!(escape_markdown("Hello World"), "Hello World");
+
+        // Brackets and parens should be escaped (video title in link syntax)
+        assert_eq!(
+            escape_markdown("[Tutorial] Learn Rust (Part 1)"),
+            "\\[Tutorial\\] Learn Rust \\(Part 1\\)"
+        );
+
+        // Asterisks and underscores should be escaped
+        assert_eq!(
+            escape_markdown("Test *emphasis* and _underline_"),
+            "Test \\*emphasis\\* and \\_underline\\_"
+        );
+
+        // All special characters
+        assert_eq!(
+            escape_markdown("*_`[]()~>#"),
+            "\\*\\_\\`\\[\\]\\(\\)\\~\\>\\#"
+        );
+
+        // Empty string
+        assert_eq!(escape_markdown(""), "");
     }
 }
