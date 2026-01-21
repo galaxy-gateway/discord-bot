@@ -519,7 +519,7 @@ impl OutputHandler {
             .unwrap_or_default();
 
         let content = format!(
-            "✅ **Chunk {}/{}** complete{}",
+            "**Part {} of {}**{}",
             chunk_num, total_chunks, preview
         );
 

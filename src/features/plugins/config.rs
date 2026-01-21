@@ -2,10 +2,11 @@
 //!
 //! YAML-based plugin configuration with full schema validation.
 //!
-//! - **Version**: 3.2.0
+//! - **Version**: 3.3.0
 //! - **Since**: 0.9.0
 //!
 //! ## Changelog
+//! - 3.3.0: Added recommended_max_videos to PlaylistConfig for flexible playlist limits
 //! - 3.2.0: Added cumulative_summaries option for progressive summarization during chunked transcription
 //! - 3.1.0: Added download_command/download_args for configurable audio download
 //! - 3.0.0: Added chunking configuration for long video streaming transcription
@@ -383,13 +384,17 @@ pub struct PlaylistConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
 
-    /// Maximum videos allowed per playlist request
+    /// Maximum videos allowed per playlist request (0 = no hard limit)
     #[serde(default = "default_max_videos")]
     pub max_videos_per_request: u32,
 
     /// Default max videos if not specified by user
     #[serde(default = "default_default_videos")]
     pub default_max_videos: u32,
+
+    /// Soft recommendation for max videos (shown in UI)
+    #[serde(default = "default_max_videos")]
+    pub recommended_max_videos: u32,
 
     /// Maximum concurrent playlists per user
     #[serde(default = "default_one")]
@@ -408,8 +413,9 @@ impl Default for PlaylistConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            max_videos_per_request: 50,
+            max_videos_per_request: 0, // 0 = no hard limit
             default_max_videos: 25,
+            recommended_max_videos: 50,
             concurrent_playlists_per_user: 1,
             cooldown_between_playlists: 300,
             min_video_interval_seconds: 5,

@@ -2,10 +2,11 @@
 //!
 //! Parse YouTube URLs and enumerate playlist videos using yt-dlp.
 //!
-//! - **Version**: 1.0.0
+//! - **Version**: 1.1.0
 //! - **Since**: 1.0.0
 //!
 //! ## Changelog
+//! - 1.1.0: Added VideoMetadata, fetch_video_metadata, format_description_preview for video descriptions
 //! - 1.0.0: Initial release with URL parsing and yt-dlp playlist enumeration
 
 use anyhow::{anyhow, Result};
@@ -71,6 +72,21 @@ pub struct PlaylistItem {
     pub duration: Option<u64>,
     /// Position in playlist (0-indexed)
     pub index: usize,
+    /// Video description (if available)
+    pub description: Option<String>,
+}
+
+/// Video metadata from yt-dlp
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VideoMetadata {
+    /// Video title
+    pub title: String,
+    /// Video description
+    pub description: Option<String>,
+    /// Duration in seconds
+    pub duration: Option<u64>,
+    /// Uploader/channel name
+    pub uploader: Option<String>,
 }
 
 /// Playlist metadata
@@ -234,12 +250,17 @@ pub async fn enumerate_playlist(
                 .map(|s| s.to_string());
         }
 
+        let description = json.get("description")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
         let item = PlaylistItem {
             video_id: video_id.clone(),
             title,
             url: format!("https://www.youtube.com/watch?v={}", video_id),
             duration,
             index,
+            description,
         };
 
         items.push(item);
@@ -287,6 +308,82 @@ pub async fn fetch_youtube_title(url: &str) -> Option<String> {
             warn!("Failed to fetch YouTube title: {}", e);
             None
         }
+    }
+}
+
+/// Fetch video metadata (title, description, duration, uploader) using yt-dlp
+///
+/// Uses --no-download to quickly fetch metadata without downloading the video.
+/// Times out after 30 seconds.
+pub async fn fetch_video_metadata(url: &str) -> Result<VideoMetadata> {
+    use tokio::time::{timeout, Duration};
+
+    info!("Fetching video metadata for: {}", url);
+
+    let mut cmd = Command::new("yt-dlp");
+    cmd.arg("--dump-json")
+        .arg("--no-download")
+        .arg("--no-playlist")
+        .arg("--no-warnings")
+        .arg("--quiet")
+        .arg(url)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let output = timeout(Duration::from_secs(30), cmd.output())
+        .await
+        .map_err(|_| anyhow!("Metadata fetch timed out after 30 seconds"))??;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!("yt-dlp failed to fetch metadata: {}", stderr));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout)
+        .map_err(|e| anyhow!("Failed to parse yt-dlp JSON: {}", e))?;
+
+    let title = json.get("title")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Unknown Title")
+        .to_string();
+
+    let description = json.get("description")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    let duration = json.get("duration")
+        .and_then(|v| v.as_f64())
+        .map(|d| d as u64);
+
+    let uploader = json.get("uploader")
+        .or_else(|| json.get("channel"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    debug!("Fetched metadata for '{}': duration={:?}, has_description={}",
+           title, duration, description.is_some());
+
+    Ok(VideoMetadata {
+        title,
+        description,
+        duration,
+        uploader,
+    })
+}
+
+/// Format a description for preview display, truncating to max lines
+///
+/// Returns a preview of the description limited to the specified number of lines.
+/// Adds "..." if the description was truncated.
+pub fn format_description_preview(description: &str, max_lines: usize) -> String {
+    let lines: Vec<&str> = description.lines().collect();
+
+    if lines.len() <= max_lines {
+        description.to_string()
+    } else {
+        let preview: String = lines[..max_lines].join("\n");
+        format!("{}...", preview)
     }
 }
 
@@ -398,6 +495,7 @@ mod tests {
                 url: "https://youtube.com/watch?v=abc".to_string(),
                 duration: Some(600), // 10 minutes
                 index: 0,
+                description: Some("Test description".to_string()),
             },
             PlaylistItem {
                 video_id: "def".to_string(),
@@ -405,12 +503,25 @@ mod tests {
                 url: "https://youtube.com/watch?v=def".to_string(),
                 duration: Some(300), // 5 minutes
                 index: 1,
+                description: None,
             },
         ];
 
         let estimate = estimate_transcription_time(&items);
         // (600 + 300) * 1.5 + 2 * 30 = 1350 + 60 = 1410 seconds = ~23.5 minutes
         assert!(estimate.as_secs() > 1400);
+    }
+
+    #[test]
+    fn test_format_description_preview() {
+        // Short description - no truncation
+        let short = "Line 1\nLine 2\nLine 3";
+        assert_eq!(format_description_preview(short, 5), short);
+
+        // Long description - truncation
+        let long = "Line 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7";
+        let expected = "Line 1\nLine 2\nLine 3...";
+        assert_eq!(format_description_preview(long, 3), expected);
     }
 
     #[test]

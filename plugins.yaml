@@ -1,5 +1,5 @@
 # Plugin Configuration for Persona Discord Bot
-# Version: 3.2.0
+# Version: 3.3.0
 #
 # Plugins are config-driven CLI command integrations that allow the bot
 # to execute approved external tools via Discord slash commands.
@@ -26,7 +26,7 @@ plugins:
             pattern: "^https?://(www\\.)?(youtube\\.com/(watch\\?v=|shorts/|playlist\\?list=)|youtu\\.be/)[a-zA-Z0-9_-]+([?&][a-zA-Z0-9_=-]*)?"
             max_length: 300
         - name: max_videos
-          description: "Maximum videos to transcribe from playlist (default: 25, max: 50)"
+          description: "Maximum videos to transcribe from playlist (default: 25)"
           type: integer
           required: false
         - name: language
@@ -73,6 +73,10 @@ plugins:
         - name: custom_prompt
           description: "Additional instructions for AI summaries"
           type: string
+          required: false
+        - name: chunk_duration
+          description: "Chunk size in minutes for long videos (default: 10, range: 5-30)"
+          type: integer
           required: false
 
     execution:
@@ -147,11 +151,12 @@ plugins:
     # Playlist-specific configuration
     playlist:
       enabled: true
-      max_videos_per_request: 50    # Hard limit on videos per playlist
-      default_max_videos: 25        # Default if not specified by user
-      concurrent_playlists_per_user: 1  # Only one active playlist per user
-      cooldown_between_playlists: 300   # 5 minutes between playlist starts
-      min_video_interval_seconds: 5     # Delay between videos to avoid rate limits
+      max_videos_per_request: 0           # 0 = no hard limit
+      default_max_videos: 25              # Default when user doesn't specify
+      recommended_max_videos: 50          # Soft recommendation (shown in UI)
+      concurrent_playlists_per_user: 1    # Only one active playlist per user
+      cooldown_between_playlists: 300     # 5 minutes between playlist starts
+      min_video_interval_seconds: 5       # Delay between videos to avoid rate limits
 
     output:
       create_thread: true

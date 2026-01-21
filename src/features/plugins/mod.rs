@@ -5,11 +5,12 @@
 //! Now includes multi-video playlist transcription with progress tracking and chunked streaming
 //! for long videos with per-chunk summaries.
 //!
-//! - **Version**: 3.4.0
+//! - **Version**: 3.5.0
 //! - **Since**: 0.9.0
 //! - **Toggleable**: true
 //!
 //! ## Changelog
+//! - 3.5.0: Added customizable chunk_duration, flexible playlist limits, video description upfront
 //! - 3.4.0: Configurable summary options (summary_style, transcript_interval, custom_prompt),
 //!          fixed overall/cumulative summary bug where content was passed incorrectly to AI
 //! - 3.3.0: Added optional cumulative "story so far" summaries during chunked transcription
@@ -40,7 +41,7 @@ pub use config::{ChunkingConfig, Plugin, PluginConfig};
 pub use executor::{ExecutionResult, PluginExecutor};
 pub use job::{Job, JobManager, JobStatus, PlaylistJob, PlaylistJobStatus};
 pub use output::{OutputHandler, UserContext};
-pub use youtube::{parse_youtube_url, enumerate_playlist, PlaylistInfo, PlaylistItem, YouTubeUrl, YouTubeUrlType};
+pub use youtube::{parse_youtube_url, enumerate_playlist, fetch_video_metadata, format_description_preview, PlaylistInfo, PlaylistItem, VideoMetadata, YouTubeUrl, YouTubeUrlType};
 
 use crate::database::Database;
 use anyhow::Result;
@@ -490,10 +491,16 @@ impl PluginManager {
     ) -> Result<String> {
         let playlist_config = plugin.playlist.clone().unwrap_or_default();
 
-        // Apply limits
-        let effective_max = max_videos
-            .unwrap_or(playlist_config.default_max_videos)
-            .min(playlist_config.max_videos_per_request);
+        // Apply limits: if max_videos_per_request is 0, no hard limit applies
+        let effective_max = if playlist_config.max_videos_per_request > 0 {
+            // Admin has set a hard limit
+            max_videos
+                .unwrap_or(playlist_config.default_max_videos)
+                .min(playlist_config.max_videos_per_request)
+        } else {
+            // No hard limit - use user's value or default
+            max_videos.unwrap_or(playlist_config.default_max_videos)
+        };
 
         let videos: Vec<_> = playlist_info.items.into_iter().take(effective_max as usize).collect();
         let total_videos = videos.len() as u32;
@@ -859,6 +866,14 @@ impl PluginManager {
                 .unwrap_or(0);
             let custom_prompt = params.get("custom_prompt").cloned();
 
+            // Extract and validate chunk_duration (convert minutes to seconds, clamp to 5-30 min)
+            let chunk_duration_secs: u64 = params.get("chunk_duration")
+                .and_then(|s| s.parse::<u64>().ok())
+                .map(|mins| mins * 60) // Convert minutes to seconds
+                .unwrap_or(chunking_config.chunk_duration_secs)
+                .max(60)    // Minimum 1 minute
+                .min(1800); // Maximum 30 minutes
+
             // Determine what summaries to generate based on summary_style
             let generate_per_chunk = matches!(summary_style, "per_chunk" | "both");
             let generate_cumulative = matches!(summary_style, "cumulative" | "both");
@@ -915,6 +930,17 @@ impl PluginManager {
                                 let url_content = format!("**{}**\n{}", thread_name, url);
                                 let _ = thread_id.say(&http, &url_content).await;
 
+                                // Fetch and post video description ("doobily doo")
+                                if let Ok(metadata) = youtube::fetch_video_metadata(&url).await {
+                                    if let Some(ref desc) = metadata.description {
+                                        if !desc.is_empty() {
+                                            let preview = youtube::format_description_preview(desc, 10);
+                                            let desc_msg = format!("**Description:**\n>>> {}", preview);
+                                            let _ = thread_id.say(&http, &desc_msg).await;
+                                        }
+                                    }
+                                }
+
                                 Some(thread_id)
                             }
                             Err(e) => {
@@ -949,6 +975,18 @@ impl PluginManager {
                 // Post the URL to the thread
                 let content = format!("**{}**\n{}", video_title, url);
                 let _ = channel_id.say(&http, &content).await;
+
+                // Fetch and post video description
+                if let Ok(metadata) = youtube::fetch_video_metadata(&url).await {
+                    if let Some(ref desc) = metadata.description {
+                        if !desc.is_empty() {
+                            let preview = youtube::format_description_preview(desc, 10);
+                            let desc_msg = format!("**Description:**\n>>> {}", preview);
+                            let _ = channel_id.say(&http, &desc_msg).await;
+                        }
+                    }
+                }
+
                 channel_id
             } else {
                 channel_id
@@ -964,7 +1002,7 @@ impl PluginManager {
 
             // STEP 3: Create chunker and download audio
             let chunker_config = ChunkerConfig {
-                chunk_duration_secs: chunking_config.chunk_duration_secs,
+                chunk_duration_secs, // Use user-specified value (already clamped)
                 download_timeout_secs: chunking_config.download_timeout_secs,
                 split_timeout_secs: 120,
                 download_command: chunking_config.download_command.clone(),
