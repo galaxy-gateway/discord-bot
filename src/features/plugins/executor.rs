@@ -3,10 +3,11 @@
 //! Execute external CLI commands safely with parameter substitution,
 //! input validation, output limiting, and timeout enforcement.
 //!
-//! - **Version**: 2.0.0
+//! - **Version**: 2.1.0
 //! - **Since**: 0.9.0
 //!
 //! ## Changelog
+//! - 2.1.0: execute_on_file() now accepts params for user-provided options (e.g., language)
 //! - 2.0.0: Added execute_on_file() for chunked transcription support
 //! - 1.2.0: Allow URLs with special chars (&) by shell-escaping them properly
 //! - 1.1.0: Fixed validation to check user params before substitution, allowing shell scripts in config
@@ -185,13 +186,15 @@ impl PluginExecutor {
     ///
     /// This method is designed for processing individual audio chunks.
     /// It uses the chunking config's file_command and file_args, substituting
-    /// ${file} with the actual file path and ${output_dir} with the output directory.
+    /// ${file} with the actual file path, ${output_dir} with the output directory,
+    /// and any user-provided params like ${language}.
     pub async fn execute_on_file(
         &self,
         chunking_config: &ChunkingConfig,
         file_path: &Path,
         output_dir: &Path,
         max_output_bytes: usize,
+        params: &HashMap<String, String>,
     ) -> Result<ExecutionResult> {
         // Get the file command or fall back to docker whisper command
         let command = chunking_config.file_command.as_deref()
@@ -231,12 +234,18 @@ rm -rf "$TMPDIR" "$ERRFILE""#,
             chunking_config.file_args.clone()
         };
 
-        // Substitute placeholders in args
+        // Substitute placeholders in args (file, output_dir, and user params like language)
         let args: Vec<String> = default_args
             .iter()
             .map(|arg| {
-                arg.replace("${file}", &file_str)
-                    .replace("${output_dir}", &output_str)
+                let mut result = arg.replace("${file}", &file_str)
+                    .replace("${output_dir}", &output_str);
+                // Substitute user params (like ${language})
+                for (key, value) in params {
+                    let placeholder = format!("${{{}}}", key);
+                    result = result.replace(&placeholder, value);
+                }
+                result
             })
             .collect();
 

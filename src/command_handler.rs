@@ -941,19 +941,54 @@ impl CommandHandler {
         let interaction_info = Some((application_id, interaction_token.clone()));
 
         tokio::spawn(async move {
-            match plugin_manager.execute_plugin(
-                http,
-                plugin.clone(),
-                params,
-                user_id_owned,
-                guild_id_owned,
-                discord_channel_id,
-                interaction_info,
-                is_thread,
-            ).await {
+            // Check if this should use chunked transcription
+            let use_chunking = plugin_manager.should_use_chunking(&plugin);
+            let is_youtube = params.get("url")
+                .map(|u| u.contains("youtube.com") || u.contains("youtu.be"))
+                .unwrap_or(false);
+            let is_playlist = params.get("url")
+                .map(|u| u.contains("playlist?list=") || u.contains("&list="))
+                .unwrap_or(false);
+
+            let result = if use_chunking && is_youtube && !is_playlist {
+                // Use chunked transcription for YouTube videos (not playlists)
+                let url = params.get("url").cloned().unwrap_or_default();
+                let video_title = crate::features::plugins::fetch_youtube_title(&url)
+                    .await
+                    .unwrap_or_else(|| "Video".to_string());
+
+                info!("[{}] 📦 Using chunked transcription for: {}", request_id, video_title);
+
+                plugin_manager.execute_chunked_transcription(
+                    http,
+                    plugin.clone(),
+                    url,
+                    video_title,
+                    params,
+                    user_id_owned,
+                    guild_id_owned,
+                    discord_channel_id,
+                    interaction_info,
+                    is_thread,
+                ).await
+            } else {
+                // Use regular execution
+                plugin_manager.execute_plugin(
+                    http,
+                    plugin.clone(),
+                    params,
+                    user_id_owned,
+                    guild_id_owned,
+                    discord_channel_id,
+                    interaction_info,
+                    is_thread,
+                ).await
+            };
+
+            match result {
                 Ok(job_id) => {
                     info!("[{}] ✅ Plugin job started: {} (job_id: {})", request_id, plugin.name, job_id);
-                    // Note: execute_plugin now handles editing the interaction response
+                    // Note: execute_plugin/execute_chunked_transcription handles editing the interaction response
                 }
                 Err(e) => {
                     error!("[{}] ❌ Plugin execution failed: {} - {}", request_id, plugin.name, e);

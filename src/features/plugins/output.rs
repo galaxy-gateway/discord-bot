@@ -3,10 +3,11 @@
 //! Create Discord threads for plugin output, handle large responses with file attachments,
 //! and generate AI summaries. Supports both single video and playlist transcription.
 //!
-//! - **Version**: 3.0.0
+//! - **Version**: 3.1.0
 //! - **Since**: 0.9.0
 //!
 //! ## Changelog
+//! - 3.1.0: Added public post_file() and generate_summary_for_text() methods for per-chunk summaries
 //! - 3.0.0: Added chunked transcription progress posting for streaming long videos
 //! - 2.0.0: Added playlist progress tracking, per-video results, and summary posting
 //! - 1.1.0: Added structured output posting (URL -> summary -> file)
@@ -634,6 +635,44 @@ impl OutputHandler {
         } else {
             let msg = channel_id.say(http, &content).await?;
             Ok(msg.id)
+        }
+    }
+
+    /// Post a file attachment to a channel
+    pub async fn post_file(
+        &self,
+        http: &Arc<Http>,
+        channel_id: ChannelId,
+        content: &str,
+        filename: &str,
+    ) -> Result<()> {
+        let file_bytes = content.as_bytes().to_vec();
+        channel_id
+            .send_message(http, |m| {
+                m.add_file(AttachmentType::Bytes {
+                    data: Cow::Owned(file_bytes),
+                    filename: filename.to_string(),
+                })
+            })
+            .await?;
+        info!("Posted file attachment: {}", filename);
+        Ok(())
+    }
+
+    /// Generate an AI summary for a text (public wrapper)
+    ///
+    /// Returns None if summary generation fails.
+    pub async fn generate_summary_for_text(
+        &self,
+        text: &str,
+        prompt_template: &str,
+    ) -> Option<String> {
+        match self.generate_summary(text, prompt_template).await {
+            Ok(summary) => Some(summary),
+            Err(e) => {
+                warn!("Failed to generate summary: {}", e);
+                None
+            }
         }
     }
 

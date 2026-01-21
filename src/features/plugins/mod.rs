@@ -3,13 +3,14 @@
 //! Extensible plugin architecture for executing CLI commands via Discord slash commands.
 //! Supports YAML-based configuration, secure execution, background jobs, and thread-based output.
 //! Now includes multi-video playlist transcription with progress tracking and chunked streaming
-//! for long videos.
+//! for long videos with per-chunk summaries.
 //!
-//! - **Version**: 3.0.0
+//! - **Version**: 3.1.0
 //! - **Since**: 0.9.0
 //! - **Toggleable**: true
 //!
 //! ## Changelog
+//! - 3.1.0: Activate chunked transcription path, add per-chunk transcript files and AI summaries
 //! - 3.0.0: Added chunked streaming transcription for long videos with progressive output
 //! - 2.1.1: Use video title as thread starter message instead of generic "Transcription"
 //! - 2.1.0: Thread-first output - ephemeral responses, minimal starter messages, content in thread
@@ -775,12 +776,15 @@ impl PluginManager {
     ///
     /// This method downloads the audio, splits it into chunks, and transcribes each chunk
     /// progressively, posting results to the Discord thread as they complete.
+    /// Each chunk gets its own transcript file and AI summary, then a final overall summary
+    /// is generated from all chunk summaries.
     pub async fn execute_chunked_transcription(
         &self,
         http: Arc<Http>,
         plugin: Plugin,
         url: String,
         video_title: String,
+        params: HashMap<String, String>,
         user_id: String,
         guild_id: Option<String>,
         channel_id: ChannelId,
@@ -790,10 +794,10 @@ impl PluginManager {
         let chunking_config = plugin.execution.chunking.clone()
             .unwrap_or_default();
 
-        // Create job record
-        let mut params = HashMap::new();
-        params.insert("url".to_string(), url.clone());
-        params.insert("mode".to_string(), "chunked".to_string());
+        // Create job record - merge passed params with job-specific params
+        let mut job_params = params.clone();
+        job_params.insert("url".to_string(), url.clone());
+        job_params.insert("mode".to_string(), "chunked".to_string());
 
         let job_id = self.job_manager
             .create_job(
@@ -801,7 +805,7 @@ impl PluginManager {
                 &user_id,
                 guild_id.as_deref(),
                 &channel_id.to_string(),
-                params.clone(),
+                job_params,
             )
             .await?;
 
@@ -809,6 +813,7 @@ impl PluginManager {
         let executor = self.executor.clone();
         let output_handler = self.output_handler.clone();
         let job_id_clone = job_id.clone();
+        let params = params.clone(); // Clone params for the spawned task
 
         tokio::spawn(async move {
             // Mark as running
@@ -961,6 +966,7 @@ impl PluginManager {
                     &download_result.audio_path,
                     chunker.temp_dir(),
                     plugin.execution.max_output_bytes,
+                    &params,
                 ).await;
 
                 let _ = chunker.cleanup().await;
@@ -1027,6 +1033,7 @@ impl PluginManager {
             let mut completed_chunks = 0usize;
             let mut failed_chunks = 0usize;
             let mut combined_transcript = String::new();
+            let mut chunk_summaries: Vec<String> = Vec::new();
             let mut progress_message_id: Option<serenity::model::id::MessageId> = None;
 
             for (index, chunk_path) in split_result.chunk_paths.iter().enumerate() {
@@ -1060,18 +1067,39 @@ impl PluginManager {
                     chunk_path,
                     chunker.temp_dir(),
                     plugin.execution.max_output_bytes,
+                    &params,
                 ).await;
 
                 match result {
                     Ok(exec_result) => {
                         if exec_result.success && !exec_result.stdout.is_empty() {
-                            // Success - post chunk completion
-                            let preview = exec_result.stdout.lines().next().map(|s| s.to_string());
+                            // Success - post chunk transcript as file
+                            let chunk_filename = format!("chunk-{}-of-{}.txt", chunk_num, total_chunks);
+                            let _ = output_handler
+                                .post_file(&http, output_channel, &exec_result.stdout, &chunk_filename)
+                                .await;
+
+                            // Generate and post per-chunk summary
+                            if let Some(ref summary_prompt) = plugin.output.summary_prompt {
+                                if let Some(chunk_summary) = output_handler
+                                    .generate_summary_for_text(&exec_result.stdout, summary_prompt)
+                                    .await
+                                {
+                                    let summary_msg = format!(
+                                        "**Chunk {}/{} Summary:**\n{}",
+                                        chunk_num, total_chunks, chunk_summary
+                                    );
+                                    let _ = output_channel.say(&http, &summary_msg).await;
+                                    chunk_summaries.push(chunk_summary);
+                                }
+                            }
+
+                            // Post chunk completion status
                             let _ = output_handler
                                 .post_chunk_completed(
                                     &http, output_channel,
                                     chunk_num, total_chunks,
-                                    preview.as_deref()
+                                    None  // No preview needed since we posted the full file
                                 )
                                 .await;
 
@@ -1111,23 +1139,52 @@ impl PluginManager {
 
             // STEP 7: Post final summary
             let runtime = start_time.elapsed();
+            let status_emoji = if failed_chunks == 0 { "✅" } else { "⚠️" };
+            let runtime_str = crate::features::plugins::youtube::format_duration(runtime);
 
-            let combined = if !combined_transcript.is_empty() {
-                Some(combined_transcript.as_str())
-            } else {
-                None
-            };
+            // Post final stats
+            let stats_msg = format!(
+                "---\n\n{} **Transcription Complete: {}**\n\n\
+                 • Successful chunks: {}/{}\n\
+                 • Failed chunks: {}\n\
+                 • Runtime: {}",
+                status_emoji,
+                if video_title.len() > 60 { format!("{}...", &video_title[..57]) } else { video_title.clone() },
+                completed_chunks, total_chunks, failed_chunks, runtime_str
+            );
+            let _ = output_channel.say(&http, &stats_msg).await;
 
-            let _ = output_handler
-                .post_chunked_summary(
-                    &http, output_channel,
-                    &video_title,
-                    completed_chunks, failed_chunks, total_chunks,
-                    runtime,
-                    combined,
-                    &plugin.output
-                )
-                .await;
+            // Generate final overall summary from chunk summaries
+            if !chunk_summaries.is_empty() {
+                let combined_summaries = chunk_summaries.join("\n\n---\n\n");
+                let final_summary_prompt = format!(
+                    "Based on these section summaries from a longer video, provide a comprehensive overall summary:\n\n{}\n\n\
+                     Synthesize the key themes, main points, and conclusions across all sections.",
+                    combined_summaries
+                );
+
+                if let Some(final_summary) = output_handler
+                    .generate_summary_for_text(&final_summary_prompt, "Provide a comprehensive overall summary.")
+                    .await
+                {
+                    let _ = output_channel.say(&http, &format!("**Overall Summary:**\n{}", final_summary)).await;
+                }
+            }
+
+            // Post full transcript file
+            if !combined_transcript.is_empty() {
+                let filename = plugin.output.file_name_template
+                    .as_deref()
+                    .unwrap_or("transcript.txt")
+                    .replace(
+                        "${timestamp}",
+                        &chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string(),
+                    );
+                let _ = output_handler
+                    .post_file(&http, output_channel, &combined_transcript, &filename)
+                    .await;
+                let _ = output_channel.say(&http, &format!("📄 **Full transcript** ({} characters)", combined_transcript.len())).await;
+            }
 
             // STEP 8: Cleanup and complete job
             let _ = chunker.cleanup().await;
@@ -1169,7 +1226,7 @@ fn substitute_params(template: &str, params: &HashMap<String, String>) -> String
 }
 
 /// Fetch YouTube video title via oEmbed API
-async fn fetch_youtube_title(url: &str) -> Option<String> {
+pub async fn fetch_youtube_title(url: &str) -> Option<String> {
     let client = reqwest::Client::new();
     let resp = client
         .get("https://www.youtube.com/oembed")
