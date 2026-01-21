@@ -269,3 +269,103 @@ plugins:
 
     output:
       create_thread: false
+
+  # Minecraft server status checker
+  - name: minecraft
+    description: "Get status and player info for a Minecraft server"
+    enabled: true
+    version: "1.0.0"
+
+    command:
+      name: minecraft
+      description: "Check the status of a Minecraft server"
+      options:
+        - name: server
+          description: "Server address (e.g., hypixel.net or play.example.com:25566)"
+          type: string
+          required: true
+          validation:
+            pattern: "^[a-zA-Z0-9][a-zA-Z0-9.-]+(:[0-9]{1,5})?$"
+            max_length: 253
+        - name: edition
+          description: "Minecraft edition"
+          type: string
+          required: false
+          default: "java"
+          choices:
+            - name: "Java Edition"
+              value: "java"
+            - name: "Bedrock Edition"
+              value: "bedrock"
+
+    execution:
+      command: sh
+      args:
+        - "-c"
+        - |
+          if [ "${edition}" = "bedrock" ]; then
+            API_URL="https://api.mcsrvstat.us/bedrock/3/${server}"
+          else
+            API_URL="https://api.mcsrvstat.us/3/${server}"
+          fi
+
+          RESPONSE=$(curl -s --max-time 10 "$API_URL")
+
+          if [ -z "$RESPONSE" ]; then
+            echo "**Error:** Could not reach the status API"
+            exit 1
+          fi
+
+          ONLINE=$(echo "$RESPONSE" | jq -r '.online // false')
+
+          if [ "$ONLINE" = "false" ]; then
+            echo "## Server Offline"
+            echo ""
+            echo "**Server:** \`${server}\`"
+            echo ""
+            echo "The server is offline or unreachable."
+            exit 0
+          fi
+
+          # Extract server info
+          HOSTNAME=$(echo "$RESPONSE" | jq -r '.hostname // "${server}"')
+          IP=$(echo "$RESPONSE" | jq -r '.ip // "Unknown"')
+          PORT=$(echo "$RESPONSE" | jq -r '.port // "25565"')
+          VERSION=$(echo "$RESPONSE" | jq -r '.version // "Unknown"')
+          PLAYERS_ONLINE=$(echo "$RESPONSE" | jq -r '.players.online // 0')
+          PLAYERS_MAX=$(echo "$RESPONSE" | jq -r '.players.max // 0')
+          MOTD=$(echo "$RESPONSE" | jq -r '.motd.clean[0] // "No MOTD"' | head -c 100)
+          SOFTWARE=$(echo "$RESPONSE" | jq -r '.software // empty')
+
+          # Build output
+          echo "## Server Online"
+          echo ""
+          echo "**Server:** \`$HOSTNAME\` (\`$IP:$PORT\`)"
+          echo "**Version:** $VERSION"
+          if [ -n "$SOFTWARE" ] && [ "$SOFTWARE" != "null" ]; then
+            echo "**Software:** $SOFTWARE"
+          fi
+          echo "**Players:** $PLAYERS_ONLINE / $PLAYERS_MAX"
+          echo ""
+          echo "> $MOTD"
+
+          # List players if any and not too many
+          PLAYER_LIST=$(echo "$RESPONSE" | jq -r '.players.list[]?.name // empty' 2>/dev/null | head -20)
+          if [ -n "$PLAYER_LIST" ]; then
+            echo ""
+            echo "**Online Players:**"
+            echo "$PLAYER_LIST" | while read -r name; do
+              echo "- $name"
+            done
+          fi
+      timeout_seconds: 15
+      max_output_bytes: 4096
+
+    security:
+      cooldown_seconds: 10
+      guild_only: false
+
+    output:
+      create_thread: false
+      max_inline_length: 2000
+
