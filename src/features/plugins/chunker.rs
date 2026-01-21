@@ -111,10 +111,19 @@ impl AudioChunker {
         info!("Downloading audio from: {}", url);
 
         let result = if let Some(ref download_cmd) = self.config.download_command {
-            // Use custom download command
+            // Use custom download command (typically Docker-based)
+            info!(
+                "Using configured download command: {} (args count: {})",
+                download_cmd,
+                self.config.download_args.len()
+            );
             self.download_with_custom_command(url, download_cmd).await
         } else {
-            // Use yt-dlp directly (fallback, requires yt-dlp on host)
+            // Use yt-dlp directly (fallback, requires yt-dlp installed on host)
+            warn!(
+                "No download_command configured - falling back to direct yt-dlp execution. \
+                 This requires yt-dlp to be installed on the host system."
+            );
             self.download_with_ytdlp(url).await
         };
 
