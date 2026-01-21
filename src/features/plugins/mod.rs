@@ -5,11 +5,12 @@
 //! Now includes multi-video playlist transcription with progress tracking and chunked streaming
 //! for long videos with per-chunk summaries.
 //!
-//! - **Version**: 3.2.0
+//! - **Version**: 3.3.0
 //! - **Since**: 0.9.0
 //! - **Toggleable**: true
 //!
 //! ## Changelog
+//! - 3.3.0: Added optional cumulative "story so far" summaries during chunked transcription
 //! - 3.2.0: Added per-user AI usage tracking for plugin summary operations
 //! - 3.1.0: Activate chunked transcription path, add per-chunk transcript files and AI summaries
 //! - 3.0.0: Added chunked streaming transcription for long videos with progressive output
@@ -1129,6 +1130,38 @@ impl PluginManager {
                                     );
                                     let _ = output_channel.say(&http, &summary_msg).await;
                                     chunk_summaries.push(chunk_summary);
+
+                                    // Generate cumulative "story so far" summary if enabled
+                                    if chunking_config.cumulative_summaries
+                                        && chunk_summaries.len() > 1
+                                        && chunk_num as u32 % chunking_config.cumulative_summary_interval == 0
+                                    {
+                                        let summaries_so_far = chunk_summaries.join("\n\n---\n\n");
+                                        let cumulative_prompt = format!(
+                                            "Based on these section summaries from a video transcription in progress, \
+                                             provide a cohesive 'story so far' summary that synthesizes all the key points \
+                                             covered up to this point:\n\n{}\n\n\
+                                             Write a flowing summary that captures the narrative and main themes so far.",
+                                            summaries_so_far
+                                        );
+
+                                        if let Some(cumulative_summary) = output_handler
+                                            .generate_summary_for_text_with_context(
+                                                &cumulative_prompt,
+                                                "Synthesize the content covered so far into a cohesive summary.",
+                                                Some(&user_context),
+                                                Some("cumulative_summary")
+                                            )
+                                            .await
+                                        {
+                                            let cumulative_msg = format!(
+                                                "**Story So Far ({}/{} chunks):**\n{}",
+                                                chunk_num, total_chunks, cumulative_summary
+                                            );
+                                            let _ = output_channel.say(&http, &cumulative_msg).await;
+                                            info!("Posted cumulative summary after chunk {}", chunk_num);
+                                        }
+                                    }
                                 }
                             }
 

@@ -2,10 +2,11 @@
 //!
 //! YAML-based plugin configuration with full schema validation.
 //!
-//! - **Version**: 3.1.0
+//! - **Version**: 3.2.0
 //! - **Since**: 0.9.0
 //!
 //! ## Changelog
+//! - 3.2.0: Added cumulative_summaries option for progressive summarization during chunked transcription
 //! - 3.1.0: Added download_command/download_args for configurable audio download
 //! - 3.0.0: Added chunking configuration for long video streaming transcription
 //! - 2.0.0: Added playlist configuration for multi-video transcription
@@ -285,6 +286,16 @@ pub struct ChunkingConfig {
     /// Arguments for the download command
     #[serde(default)]
     pub download_args: Vec<String>,
+
+    /// Whether to generate cumulative "story so far" summaries during transcription
+    /// When enabled, posts a progressive summary showing all content transcribed so far
+    #[serde(default)]
+    pub cumulative_summaries: bool,
+
+    /// Generate cumulative summary every N chunks (default: 1 = every chunk)
+    /// Set higher to reduce API calls for very long videos
+    #[serde(default = "default_one")]
+    pub cumulative_summary_interval: u32,
 }
 
 impl Default for ChunkingConfig {
@@ -299,6 +310,8 @@ impl Default for ChunkingConfig {
             file_args: Vec::new(),
             download_command: None,
             download_args: Vec::new(),
+            cumulative_summaries: false,     // off by default
+            cumulative_summary_interval: 1,  // every chunk when enabled
         }
     }
 }
