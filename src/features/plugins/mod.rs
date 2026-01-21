@@ -5,11 +5,12 @@
 //! Now includes multi-video playlist transcription with progress tracking and chunked streaming
 //! for long videos with per-chunk summaries.
 //!
-//! - **Version**: 3.15.0
+//! - **Version**: 3.16.0
 //! - **Since**: 0.9.0
 //! - **Toggleable**: true
 //!
 //! ## Changelog
+//! - 3.16.0: Simplified thread starter format with cleaner YouTube heading and proper embed support
 //! - 3.15.0: Escape markdown special characters in video titles to fix thread creation failures
 //! - 3.14.0: Fix video download for URLs with playlist parameters by using clean video URLs
 //! - 3.13.0: Improved Discord markdown formatting with headings, block quotes, and styled links
@@ -946,19 +947,18 @@ impl PluginManager {
                 let metadata = youtube::fetch_video_metadata(&url).await.ok();
 
                 // Send thread starter message to channel
-                // Format: "## 📜 Transcribing\n\n*[title](url)* by **author** | job: `short_id`\n\nurl"
-                // Escape markdown special characters in title to prevent broken link syntax
                 let short_id = short_job_id(&job_id_clone);
-                let escaped_title = output::escape_markdown(&thread_name);
                 let starter_content = if let Some(ref meta) = metadata {
                     if let Some(ref uploader) = meta.uploader {
-                        let escaped_uploader = output::escape_markdown(uploader);
-                        format!("## 📜 Transcribing\n\n*[{}]({})* by **{}** | job: `{}`\n\n{}", escaped_title, url, escaped_uploader, short_id, url)
+                        format!("## YouTube: {} - by {}\nTranscription job: `{}`\n\n{}",
+                                thread_name, uploader, short_id, url)
                     } else {
-                        format!("## 📜 Transcribing\n\n*[{}]({})* | job: `{}`\n\n{}", escaped_title, url, short_id, url)
+                        format!("## YouTube: {}\nTranscription job: `{}`\n\n{}",
+                                thread_name, short_id, url)
                     }
                 } else {
-                    format!("## 📜 Transcribing\n\n*[{}]({})* | job: `{}`\n\n{}", escaped_title, url, short_id, url)
+                    format!("## YouTube: {}\nTranscription job: `{}`\n\n{}",
+                            thread_name, short_id, url)
                 };
 
                 // Create thread from a new message
@@ -1019,19 +1019,19 @@ impl PluginManager {
                 // Fetch video metadata for header and description
                 let metadata = youtube::fetch_video_metadata(&url).await.ok();
 
-                // Post header: "## 📜 Transcribing\n\n*[title](url)* by **author** | job: `short_id`\n\nurl"
-                // Escape markdown special characters in title to prevent broken link syntax
+                // Post header message
                 let short_id = short_job_id(&job_id_clone);
-                let escaped_title = output::escape_markdown(&video_title);
                 let header_content = if let Some(ref meta) = metadata {
                     if let Some(ref uploader) = meta.uploader {
-                        let escaped_uploader = output::escape_markdown(uploader);
-                        format!("## 📜 Transcribing\n\n*[{}]({})* by **{}** | job: `{}`\n\n{}", escaped_title, url, escaped_uploader, short_id, url)
+                        format!("## YouTube: {} - by {}\nTranscription job: `{}`\n\n{}",
+                                video_title, uploader, short_id, url)
                     } else {
-                        format!("## 📜 Transcribing\n\n*[{}]({})* | job: `{}`\n\n{}", escaped_title, url, short_id, url)
+                        format!("## YouTube: {}\nTranscription job: `{}`\n\n{}",
+                                video_title, short_id, url)
                     }
                 } else {
-                    format!("## 📜 Transcribing\n\n*[{}]({})* | job: `{}`\n\n{}", escaped_title, url, short_id, url)
+                    format!("## YouTube: {}\nTranscription job: `{}`\n\n{}",
+                            video_title, short_id, url)
                 };
                 let _ = channel_id.say(&http, &header_content).await;
 
@@ -1389,17 +1389,13 @@ impl PluginManager {
             let word_count_str = format_word_count(word_count);
 
             // Post final stats with improved heading, including job ID for reference
-            // Escape markdown special characters in title to prevent broken link syntax
             let short_id = short_job_id(&job_id_clone);
             let title_display = if video_title.len() > 60 { format!("{}...", &video_title[..57]) } else { video_title.clone() };
-            let escaped_title = output::escape_markdown(&title_display);
             let stats_msg = format!(
-                "---\n\n## {} Transcription Complete\n\n\
-                 *[{}]({})* | job: `{}`\n\n\
-                 **Stats:** {}/{} parts • {} words • **Runtime:** {}",
-                status_emoji,
-                escaped_title, url, short_id,
-                completed_chunks, total_chunks, word_count_str, runtime_str
+                "---\n\n## {} Transcription Complete: {}\nJob: `{}`\n\n\
+                 **Stats:** {}/{} parts • {} words • **Runtime:** {}\n\n{}",
+                status_emoji, title_display, short_id,
+                completed_chunks, total_chunks, word_count_str, runtime_str, url
             );
             let _ = output_channel.say(&http, &stats_msg).await;
 
