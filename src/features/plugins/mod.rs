@@ -5,11 +5,12 @@
 //! Now includes multi-video playlist transcription with progress tracking and chunked streaming
 //! for long videos with per-chunk summaries.
 //!
-//! - **Version**: 3.5.0
+//! - **Version**: 3.6.0
 //! - **Since**: 0.9.0
 //! - **Toggleable**: true
 //!
 //! ## Changelog
+//! - 3.6.0: Added output_format parameter, improved transcription complete heading with word count
 //! - 3.5.0: Added customizable chunk_duration, flexible playlist limits, video description upfront
 //! - 3.4.0: Configurable summary options (summary_style, transcript_interval, custom_prompt),
 //!          fixed overall/cumulative summary bug where content was passed incorrectly to AI
@@ -40,7 +41,7 @@ pub use commands::create_plugin_commands;
 pub use config::{ChunkingConfig, Plugin, PluginConfig};
 pub use executor::{ExecutionResult, PluginExecutor};
 pub use job::{Job, JobManager, JobStatus, PlaylistJob, PlaylistJobStatus};
-pub use output::{OutputHandler, UserContext};
+pub use output::{OutputHandler, UserContext, OutputFormat, format_transcript_sentences, count_words, format_word_count};
 pub use youtube::{parse_youtube_url, enumerate_playlist, fetch_video_metadata, format_description_preview, PlaylistInfo, PlaylistItem, VideoMetadata, YouTubeUrl, YouTubeUrlType};
 
 use crate::database::Database;
@@ -874,6 +875,11 @@ impl PluginManager {
                 .max(60)    // Minimum 1 minute
                 .min(1800); // Maximum 30 minutes
 
+            // Extract output_format (text, files, or auto)
+            let output_format = params.get("output_format")
+                .map(|s| OutputFormat::from_str(s))
+                .unwrap_or_default();
+
             // Determine what summaries to generate based on summary_style
             let generate_per_chunk = matches!(summary_style, "per_chunk" | "both");
             let generate_cumulative = matches!(summary_style, "cumulative" | "both");
@@ -1160,11 +1166,20 @@ impl PluginManager {
                 match result {
                     Ok(exec_result) => {
                         if exec_result.success && !exec_result.stdout.is_empty() {
-                            // Success - post chunk transcript as file
-                            let chunk_filename = format!("chunk-{}-of-{}.txt", chunk_num, total_chunks);
-                            let _ = output_handler
-                                .post_file(&http, output_channel, &exec_result.stdout, &chunk_filename)
-                                .await;
+                            // Success - post chunk transcript based on output_format
+                            let chunk_content = &exec_result.stdout;
+                            if output_format.should_use_file(chunk_content.len()) {
+                                // Format transcript with sentences on separate lines
+                                let formatted = format_transcript_sentences(chunk_content);
+                                let chunk_filename = format!("part-{}-of-{}.txt", chunk_num, total_chunks);
+                                let _ = output_handler
+                                    .post_file(&http, output_channel, &formatted, &chunk_filename)
+                                    .await;
+                            } else {
+                                // Post as text message
+                                let msg = format!("**Part {}/{}:**\n{}", chunk_num, total_chunks, chunk_content);
+                                let _ = output_channel.say(&http, &msg).await;
+                            }
 
                             // Generate chunk summary for accumulation (needed for cumulative or overall)
                             // Skip entirely if summary_style is "none"
@@ -1255,19 +1270,21 @@ impl PluginManager {
                                 combined_transcript.push_str("\n\n");
                             }
                             combined_transcript.push_str(&format!(
-                                "--- Chunk {}/{} ---\n{}",
+                                "--- Part {}/{} ---\n{}",
                                 chunk_num, total_chunks, exec_result.stdout
                             ));
 
                             // Post transcript file at interval if configured (after adding chunk)
                             if transcript_interval > 0 && chunk_num % transcript_interval == 0 {
-                                let partial_filename = format!("transcript_chunks_1-{}.txt", chunk_num);
+                                let partial_filename = format!("transcript_parts_1-{}.txt", chunk_num);
+                                // Format with sentences on separate lines
+                                let formatted = format_transcript_sentences(&combined_transcript);
                                 let _ = output_handler
-                                    .post_file(&http, output_channel, &combined_transcript, &partial_filename)
+                                    .post_file(&http, output_channel, &formatted, &partial_filename)
                                     .await;
                                 let _ = output_channel.say(
                                     &http,
-                                    &format!("📄 **Partial transcript** (chunks 1-{}, {} characters)", chunk_num, combined_transcript.len())
+                                    &format!("📄 **Partial transcript** (parts 1-{}, {} words)", chunk_num, count_words(&combined_transcript))
                                 ).await;
                             }
 
@@ -1298,18 +1315,21 @@ impl PluginManager {
 
             // STEP 7: Post final summary
             let runtime = start_time.elapsed();
-            let status_emoji = if failed_chunks == 0 { "✅" } else { "⚠️" };
+            let status_emoji = if failed_chunks == 0 { "📝" } else { "⚠️" };
             let runtime_str = crate::features::plugins::youtube::format_duration(runtime);
+            let word_count = count_words(&combined_transcript);
+            let word_count_str = format_word_count(word_count);
 
-            // Post final stats
+            // Post final stats with improved heading
             let stats_msg = format!(
                 "---\n\n{} **Transcription Complete: {}**\n\n\
-                 • Successful chunks: {}/{}\n\
-                 • Failed chunks: {}\n\
+                 **Stats**\n\
+                 • Parts: {}/{} successful\n\
+                 • Words: {}\n\
                  • Runtime: {}",
                 status_emoji,
                 if video_title.len() > 60 { format!("{}...", &video_title[..57]) } else { video_title.clone() },
-                completed_chunks, total_chunks, failed_chunks, runtime_str
+                completed_chunks, total_chunks, word_count_str, runtime_str
             );
             let _ = output_channel.say(&http, &stats_msg).await;
 
@@ -1340,28 +1360,44 @@ impl PluginManager {
                 }
             }
 
-            // Post full transcript file
+            // Post full transcript based on output_format
             if !combined_transcript.is_empty() {
-                let filename = plugin.output.file_name_template
-                    .as_deref()
-                    .unwrap_or("transcript.txt")
-                    .replace(
-                        "${timestamp}",
-                        &chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string(),
-                    );
-                let _ = output_handler
-                    .post_file(&http, output_channel, &combined_transcript, &filename)
-                    .await;
-                let _ = output_channel.say(&http, &format!("📄 **Full transcript** ({} characters)", combined_transcript.len())).await;
+                if output_format.should_use_file(combined_transcript.len()) {
+                    let filename = plugin.output.file_name_template
+                        .as_deref()
+                        .unwrap_or("transcript.txt")
+                        .replace(
+                            "${timestamp}",
+                            &chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string(),
+                        );
+                    // Format transcript with sentences on separate lines
+                    let formatted = format_transcript_sentences(&combined_transcript);
+                    let _ = output_handler
+                        .post_file(&http, output_channel, &formatted, &filename)
+                        .await;
+                    let _ = output_channel.say(&http, &format!("📄 **Full transcript** ({} words)", word_count)).await;
+                } else {
+                    // Post as text messages (split if needed)
+                    let _ = output_channel.say(&http, "**Full Transcript:**").await;
+                    // Split into 1900-char chunks to stay under Discord limit
+                    let transcript_chunks: Vec<&str> = combined_transcript
+                        .as_bytes()
+                        .chunks(1900)
+                        .map(|c| std::str::from_utf8(c).unwrap_or(""))
+                        .collect();
+                    for chunk in transcript_chunks {
+                        let _ = output_channel.say(&http, chunk).await;
+                    }
+                }
             }
 
             // STEP 8: Cleanup and complete job
             let _ = chunker.cleanup().await;
 
             if failed_chunks == 0 {
-                let _ = job_manager.complete_job(&job_id_clone, format!("Completed {} chunks", completed_chunks)).await;
+                let _ = job_manager.complete_job(&job_id_clone, format!("Completed {} parts", completed_chunks)).await;
             } else {
-                let _ = job_manager.fail_job(&job_id_clone, format!("{}/{} chunks failed", failed_chunks, total_chunks)).await;
+                let _ = job_manager.fail_job(&job_id_clone, format!("{}/{} parts failed", failed_chunks, total_chunks)).await;
             }
 
             info!(

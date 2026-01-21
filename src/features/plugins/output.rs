@@ -3,10 +3,11 @@
 //! Create Discord threads for plugin output, handle large responses with file attachments,
 //! and generate AI summaries. Supports both single video and playlist transcription.
 //!
-//! - **Version**: 3.2.0
+//! - **Version**: 3.3.0
 //! - **Since**: 0.9.0
 //!
 //! ## Changelog
+//! - 3.3.0: Added output_format support, sentence-per-line transcript formatting, word count helpers
 //! - 3.2.0: Added UsageTracker integration for tracking AI summary costs per user
 //! - 3.1.0: Added public post_file() and generate_summary_for_text() methods for per-chunk summaries
 //! - 3.0.0: Added chunked transcription progress posting for streaming long videos
@@ -480,7 +481,7 @@ impl OutputHandler {
         let progress_bar = create_progress_bar(current_chunk, total_chunks);
 
         let content = format!(
-            "⏳ **Transcribing:** {}/{} chunks | {} | ETA: {}\n{}",
+            "⏳ **Transcribing:** {}/{} parts | {} | ETA: {}\n{}",
             current_chunk, total_chunks, status, eta_str, progress_bar
         );
 
@@ -537,7 +538,7 @@ impl OutputHandler {
         error: &str,
     ) -> Result<()> {
         let content = format!(
-            "⚠️ **Chunk {}/{}** failed: {}",
+            "⚠️ **Part {}/{}** failed: {}",
             chunk_num, total_chunks, truncate_str(error, 200)
         );
 
@@ -559,16 +560,19 @@ impl OutputHandler {
         config: &OutputConfig,
         user_context: Option<&UserContext>,
     ) -> Result<()> {
-        let status_emoji = if failed_chunks == 0 { "✅" } else { "⚠️" };
+        let status_emoji = if failed_chunks == 0 { "📝" } else { "⚠️" };
         let runtime_str = crate::features::plugins::youtube::format_duration(runtime);
+        let word_count = combined_transcript.map(count_words).unwrap_or(0);
+        let word_count_str = format_word_count(word_count);
 
         let summary = format!(
             "---\n\n{} **Transcription Complete: {}**\n\n\
-             • Successful chunks: {}/{}\n\
-             • Failed chunks: {}\n\
+             **Stats**\n\
+             • Parts: {}/{} successful\n\
+             • Words: {}\n\
              • Runtime: {}",
             status_emoji, truncate_str(video_title, 60),
-            completed_chunks, total_chunks, failed_chunks, runtime_str
+            completed_chunks, total_chunks, word_count_str, runtime_str
         );
 
         channel_id.say(http, &summary).await?;
@@ -590,7 +594,7 @@ impl OutputHandler {
                 }
             }
 
-            // Post full transcript as file
+            // Post full transcript as file with sentence-per-line formatting
             let filename = config
                 .file_name_template
                 .as_deref()
@@ -600,10 +604,11 @@ impl OutputHandler {
                     &chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string(),
                 );
 
-            let file_bytes = transcript.as_bytes().to_vec();
+            let formatted = format_transcript_sentences(transcript);
+            let file_bytes = formatted.as_bytes().to_vec();
             channel_id
                 .send_message(http, |m| {
-                    m.content(format!("📄 **Full transcript** ({} characters)", transcript.len()))
+                    m.content(format!("📄 **Full transcript** ({} words)", word_count))
                         .add_file(AttachmentType::Bytes {
                             data: Cow::Owned(file_bytes),
                             filename,
@@ -625,7 +630,7 @@ impl OutputHandler {
         video_title: &str,
     ) -> Result<MessageId> {
         let content = format!(
-            "📥 **Downloading:** {} for chunked transcription...",
+            "📥 **Downloading:** {} for transcription...",
             truncate_str(video_title, 60)
         );
 
@@ -647,7 +652,7 @@ impl OutputHandler {
             .unwrap_or_else(|| "calculating...".to_string());
 
         let content = format!(
-            "📦 **Ready:** Split into {} chunks | Estimated time: {}",
+            "📦 **Ready:** Split into {} parts | Estimated time: {}",
             total_chunks, eta_str
         );
 
@@ -833,6 +838,100 @@ fn sanitize_filename(s: &str) -> String {
         .to_lowercase()
 }
 
+/// Output format for transcripts and summaries
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OutputFormat {
+    /// Always post as Discord messages (split long content)
+    Text,
+    /// Always upload as files
+    Files,
+    /// Auto-detect based on length (default)
+    #[default]
+    Auto,
+}
+
+impl OutputFormat {
+    /// Parse from string (from plugin parameter)
+    pub fn from_str(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "text" => OutputFormat::Text,
+            "files" => OutputFormat::Files,
+            _ => OutputFormat::Auto,
+        }
+    }
+
+    /// Determine if content should be posted as a file based on format and length
+    pub fn should_use_file(&self, content_len: usize) -> bool {
+        match self {
+            OutputFormat::Text => false,
+            OutputFormat::Files => true,
+            OutputFormat::Auto => content_len > 2000,
+        }
+    }
+}
+
+/// Format transcript text with one sentence per line
+///
+/// This creates a cleaner format for transcript files, making them easier to read
+/// and process. The function handles common sentence terminators and preserves
+/// paragraph breaks.
+pub fn format_transcript_sentences(text: &str) -> String {
+    let mut result = String::with_capacity(text.len() + text.len() / 50);
+    let mut buffer = String::new();
+
+    for ch in text.chars() {
+        buffer.push(ch);
+
+        // Check for sentence endings
+        if ch == '.' || ch == '!' || ch == '?' {
+            // Trim and add as a line if non-empty
+            let trimmed = buffer.trim();
+            if !trimmed.is_empty() {
+                if !result.is_empty() {
+                    result.push('\n');
+                }
+                result.push_str(trimmed);
+            }
+            buffer.clear();
+        } else if ch == '\n' {
+            // Preserve paragraph breaks (double newlines)
+            let trimmed = buffer.trim();
+            if !trimmed.is_empty() {
+                if !result.is_empty() {
+                    result.push('\n');
+                }
+                result.push_str(trimmed);
+            }
+            buffer.clear();
+        }
+    }
+
+    // Don't forget any remaining content
+    let trimmed = buffer.trim();
+    if !trimmed.is_empty() {
+        if !result.is_empty() {
+            result.push('\n');
+        }
+        result.push_str(trimmed);
+    }
+
+    result
+}
+
+/// Count words in text
+pub fn count_words(text: &str) -> usize {
+    text.split_whitespace().count()
+}
+
+/// Format word count for display (e.g., "~12,345")
+pub fn format_word_count(count: usize) -> String {
+    if count >= 1000 {
+        format!("~{},{:03}", count / 1000, count % 1000)
+    } else {
+        format!("~{}", count)
+    }
+}
+
 /// Split a message into chunks that fit within Discord's character limit
 fn split_message(content: &str, max_len: usize) -> Vec<String> {
     if content.len() <= max_len {
@@ -908,5 +1007,59 @@ mod tests {
         // Total length should match
         let total_len: usize = chunks.iter().map(|c| c.len()).sum();
         assert_eq!(total_len, 100);
+    }
+
+    #[test]
+    fn test_format_transcript_sentences() {
+        let input = "Hello world. This is a test. Another sentence!";
+        let result = format_transcript_sentences(input);
+        assert_eq!(result, "Hello world.\nThis is a test.\nAnother sentence!");
+    }
+
+    #[test]
+    fn test_format_transcript_sentences_with_questions() {
+        let input = "What is this? It's a test. Really? Yes!";
+        let result = format_transcript_sentences(input);
+        assert_eq!(result, "What is this?\nIt's a test.\nReally?\nYes!");
+    }
+
+    #[test]
+    fn test_format_transcript_sentences_preserves_incomplete() {
+        let input = "This is complete. But this is not";
+        let result = format_transcript_sentences(input);
+        assert_eq!(result, "This is complete.\nBut this is not");
+    }
+
+    #[test]
+    fn test_count_words() {
+        assert_eq!(count_words("hello world"), 2);
+        assert_eq!(count_words("one two three four five"), 5);
+        assert_eq!(count_words(""), 0);
+        assert_eq!(count_words("   spaced   out   "), 2);
+    }
+
+    #[test]
+    fn test_format_word_count() {
+        assert_eq!(format_word_count(500), "~500");
+        assert_eq!(format_word_count(1000), "~1,000");
+        assert_eq!(format_word_count(12345), "~12,345");
+    }
+
+    #[test]
+    fn test_output_format_from_str() {
+        assert_eq!(OutputFormat::from_str("text"), OutputFormat::Text);
+        assert_eq!(OutputFormat::from_str("TEXT"), OutputFormat::Text);
+        assert_eq!(OutputFormat::from_str("files"), OutputFormat::Files);
+        assert_eq!(OutputFormat::from_str("FILES"), OutputFormat::Files);
+        assert_eq!(OutputFormat::from_str("auto"), OutputFormat::Auto);
+        assert_eq!(OutputFormat::from_str("anything"), OutputFormat::Auto);
+    }
+
+    #[test]
+    fn test_output_format_should_use_file() {
+        assert!(!OutputFormat::Text.should_use_file(5000));
+        assert!(OutputFormat::Files.should_use_file(100));
+        assert!(!OutputFormat::Auto.should_use_file(1000));
+        assert!(OutputFormat::Auto.should_use_file(3000));
     }
 }
