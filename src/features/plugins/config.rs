@@ -2,10 +2,11 @@
 //!
 //! YAML-based plugin configuration with full schema validation.
 //!
-//! - **Version**: 3.0.0
+//! - **Version**: 3.1.0
 //! - **Since**: 0.9.0
 //!
 //! ## Changelog
+//! - 3.1.0: Added download_command/download_args for configurable audio download
 //! - 3.0.0: Added chunking configuration for long video streaming transcription
 //! - 2.0.0: Added playlist configuration for multi-video transcription
 //! - 1.1.0: Added source_param for structured output posting
@@ -276,6 +277,14 @@ pub struct ChunkingConfig {
     /// Arguments for the file command
     #[serde(default)]
     pub file_args: Vec<String>,
+
+    /// Command for downloading audio (default: yt-dlp directly)
+    /// Use ${url} for the video URL, ${output_dir} for temp directory
+    pub download_command: Option<String>,
+
+    /// Arguments for the download command
+    #[serde(default)]
+    pub download_args: Vec<String>,
 }
 
 impl Default for ChunkingConfig {
@@ -288,6 +297,8 @@ impl Default for ChunkingConfig {
             min_duration_for_chunking_secs: 600, // 10 minutes
             file_command: None,
             file_args: Vec::new(),
+            download_command: None,
+            download_args: Vec::new(),
         }
     }
 }

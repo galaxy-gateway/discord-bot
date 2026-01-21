@@ -153,10 +153,10 @@ pub const FEATURES: &[Feature] = &[
     Feature {
         id: "startup_notification",
         name: "Startup Notification",
-        version: "1.1.0",
+        version: "1.2.0",
         since: "0.4.0",
         toggleable: true,
-        description: "Rich notifications when bot comes online, configured via /set_guild_setting",
+        description: "Rich notifications when bot comes online with plugin versions and detailed commit threads",
     },
     Feature {
         id: "usage_tracking",

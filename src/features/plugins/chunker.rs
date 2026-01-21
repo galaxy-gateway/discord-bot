@@ -3,10 +3,11 @@
 //! Download and split audio files into manageable chunks for transcription.
 //! Uses yt-dlp for downloading and ffmpeg for splitting.
 //!
-//! - **Version**: 1.0.0
+//! - **Version**: 1.1.0
 //! - **Since**: 3.0.0
 //!
 //! ## Changelog
+//! - 1.1.0: Added configurable download command support for Docker-based downloads
 //! - 1.0.0: Initial release with audio download and chunking support
 
 use anyhow::{Context, Result};
@@ -25,6 +26,12 @@ pub struct ChunkerConfig {
     pub download_timeout_secs: u64,
     /// Timeout for splitting operation in seconds
     pub split_timeout_secs: u64,
+    /// Optional custom download command (e.g., "sh" for shell script)
+    /// If None, uses yt-dlp directly
+    pub download_command: Option<String>,
+    /// Arguments for the download command
+    /// Use ${url} and ${output_dir} as placeholders
+    pub download_args: Vec<String>,
 }
 
 impl Default for ChunkerConfig {
@@ -33,6 +40,8 @@ impl Default for ChunkerConfig {
             chunk_duration_secs: 600,      // 10 minutes per chunk
             download_timeout_secs: 300,    // 5 minutes for download
             split_timeout_secs: 120,       // 2 minutes for split
+            download_command: None,
+            download_args: Vec::new(),
         }
     }
 }
@@ -92,27 +101,114 @@ impl AudioChunker {
         &self.temp_dir
     }
 
-    /// Download audio from a YouTube URL using yt-dlp
+    /// Download audio from a YouTube URL
     ///
+    /// Uses custom download command if configured, otherwise uses yt-dlp directly.
     /// Returns the path to the downloaded audio file.
     pub async fn download_audio(&self, url: &str) -> Result<DownloadResult> {
-        let output_template = self.temp_dir.join("audio.%(ext)s");
         let output_path = self.temp_dir.join("audio.mp3");
 
         info!("Downloading audio from: {}", url);
 
+        let result = if let Some(ref download_cmd) = self.config.download_command {
+            // Use custom download command
+            self.download_with_custom_command(url, download_cmd).await
+        } else {
+            // Use yt-dlp directly (fallback, requires yt-dlp on host)
+            self.download_with_ytdlp(url).await
+        };
+
+        match result {
+            Ok(()) => {
+                // Find the downloaded audio file
+                if let Some(path) = self.find_audio_file().await {
+                    info!("Downloaded audio to: {:?}", path);
+                    Ok(DownloadResult {
+                        audio_path: path,
+                        duration_secs: None,
+                        title: None,
+                    })
+                } else if output_path.exists() {
+                    info!("Downloaded audio to: {:?}", output_path);
+                    Ok(DownloadResult {
+                        audio_path: output_path,
+                        duration_secs: None,
+                        title: None,
+                    })
+                } else {
+                    Err(anyhow::anyhow!("Downloaded audio file not found"))
+                }
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Download using a custom shell command
+    async fn download_with_custom_command(&self, url: &str, cmd_name: &str) -> Result<()> {
+        let output_dir = self.temp_dir.to_str().unwrap();
+
+        // Substitute placeholders in args
+        let args: Vec<String> = self
+            .config
+            .download_args
+            .iter()
+            .map(|arg| {
+                arg.replace("${url}", url)
+                    .replace("${output_dir}", output_dir)
+            })
+            .collect();
+
+        info!("Running download command: {} with {} args", cmd_name, args.len());
+
+        let mut cmd = Command::new(cmd_name);
+        cmd.args(&args)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true);
+
+        let timeout_duration = Duration::from_secs(self.config.download_timeout_secs);
+        let result = timeout(timeout_duration, cmd.output()).await;
+
+        match result {
+            Ok(Ok(output)) => {
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    return Err(anyhow::anyhow!(
+                        "Download command failed: {}\nstdout: {}",
+                        stderr,
+                        stdout
+                    ));
+                }
+                Ok(())
+            }
+            Ok(Err(e)) => Err(anyhow::anyhow!("Failed to execute download command: {}", e)),
+            Err(_) => Err(anyhow::anyhow!(
+                "Download timed out after {} seconds",
+                self.config.download_timeout_secs
+            )),
+        }
+    }
+
+    /// Download using yt-dlp directly (requires yt-dlp on host)
+    async fn download_with_ytdlp(&self, url: &str) -> Result<()> {
+        let output_template = self.temp_dir.join("audio.%(ext)s");
+
         // Build yt-dlp command
         // -x: Extract audio only
         // --audio-format mp3: Convert to MP3
-        // --audio-quality 0: Best quality
+        // --audio-quality 5: Mid quality for faster processing
         // -o: Output template
         // --no-playlist: Don't download playlist, just the video
         let mut cmd = Command::new("yt-dlp");
         cmd.args([
             "-x",
-            "--audio-format", "mp3",
-            "--audio-quality", "5",  // Mid quality for faster processing
-            "-o", output_template.to_str().unwrap(),
+            "--audio-format",
+            "mp3",
+            "--audio-quality",
+            "5",
+            "-o",
+            output_template.to_str().unwrap(),
             "--no-playlist",
             "--no-warnings",
             url,
@@ -130,42 +226,7 @@ impl AudioChunker {
                     let stderr = String::from_utf8_lossy(&output.stderr);
                     return Err(anyhow::anyhow!("yt-dlp failed: {}", stderr));
                 }
-
-                // Check that the file was created
-                if !output_path.exists() {
-                    // Sometimes extension differs, try to find the file
-                    let mut found_path = None;
-                    if let Ok(mut entries) = tokio::fs::read_dir(&self.temp_dir).await {
-                        while let Ok(Some(entry)) = entries.next_entry().await {
-                            let path = entry.path();
-                            if let Some(name) = path.file_name() {
-                                if name.to_str().map_or(false, |n| n.starts_with("audio.")) {
-                                    found_path = Some(path);
-                                    break;
-                                }
-                            }
-                        }
-                    }
-
-                    match found_path {
-                        Some(path) => {
-                            info!("Downloaded audio to: {:?}", path);
-                            Ok(DownloadResult {
-                                audio_path: path,
-                                duration_secs: None,
-                                title: None,
-                            })
-                        }
-                        None => Err(anyhow::anyhow!("Downloaded audio file not found")),
-                    }
-                } else {
-                    info!("Downloaded audio to: {:?}", output_path);
-                    Ok(DownloadResult {
-                        audio_path: output_path,
-                        duration_secs: None,
-                        title: None,
-                    })
-                }
+                Ok(())
             }
             Ok(Err(e)) => Err(anyhow::anyhow!("Failed to execute yt-dlp: {}", e)),
             Err(_) => Err(anyhow::anyhow!(
@@ -173,6 +234,27 @@ impl AudioChunker {
                 self.config.download_timeout_secs
             )),
         }
+    }
+
+    /// Find an audio file in the temp directory
+    async fn find_audio_file(&self) -> Option<PathBuf> {
+        if let Ok(mut entries) = tokio::fs::read_dir(&self.temp_dir).await {
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                let path = entry.path();
+                if let Some(name) = path.file_name() {
+                    let name_str = name.to_str().unwrap_or("");
+                    // Look for audio files (mp3, m4a, opus, etc.)
+                    if name_str.starts_with("audio.")
+                        || name_str.ends_with(".mp3")
+                        || name_str.ends_with(".m4a")
+                        || name_str.ends_with(".opus")
+                    {
+                        return Some(path);
+                    }
+                }
+            }
+        }
+        None
     }
 
     /// Get the duration of an audio file using ffprobe

@@ -106,8 +106,8 @@ impl EventHandler for Handler {
             }
         }
 
-        // Send startup notification if enabled
-        self.startup_notifier.send_if_enabled(&ctx.http, &ready).await;
+        // Send startup notification if enabled (includes plugin versions and commit details)
+        self.startup_notifier.send_if_enabled(&ctx.http, &ready, &self.plugins).await;
     }
 
     async fn interaction_create(&self, ctx: Context, interaction: Interaction) {

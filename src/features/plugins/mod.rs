@@ -920,6 +920,8 @@ impl PluginManager {
                 chunk_duration_secs: chunking_config.chunk_duration_secs,
                 download_timeout_secs: chunking_config.download_timeout_secs,
                 split_timeout_secs: 120,
+                download_command: chunking_config.download_command.clone(),
+                download_args: chunking_config.download_args.clone(),
             };
 
             let chunker = match AudioChunker::new(chunker_config).await {

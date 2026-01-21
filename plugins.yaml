@@ -84,6 +84,19 @@ plugins:
         download_timeout_secs: 300    # 5 minutes for audio download
         min_duration_for_chunking_secs: 600  # Videos longer than 10 min use chunking
 
+        # Command for downloading audio using Docker (yt-dlp runs inside the container)
+        # ${url} is replaced with the video URL
+        # ${output_dir} is replaced with the temp directory path
+        download_command: sh
+        download_args:
+          - "-c"
+          - |
+            docker run --rm -v "${output_dir}:/data/output" --entrypoint yt-dlp whisper-transcribe:latest \
+              -x --audio-format mp3 --audio-quality 5 \
+              -o "/data/output/audio.%(ext)s" \
+              --no-playlist --no-warnings \
+              "${url}"
+
         # Command for transcribing local audio files (chunks)
         # ${file} is replaced with the input file path
         file_command: sh
