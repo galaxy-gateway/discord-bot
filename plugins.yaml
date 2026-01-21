@@ -1,5 +1,5 @@
 # Plugin Configuration for Persona Discord Bot
-# Version: 3.4.0
+# Version: 3.5.0
 #
 # Plugins are config-driven CLI command integrations that allow the bot
 # to execute approved external tools via Discord slash commands.
@@ -9,7 +9,7 @@ plugins:
   - name: transcribe
     description: "Transcribe YouTube videos or playlists to text using Whisper"
     enabled: true
-    version: "3.3.0"
+    version: "3.4.0"
 
     command:
       name: transcribe
@@ -190,6 +190,13 @@ plugins:
         Be thorough but concise. Use markdown formatting.
 
         Transcript:
+        ${output}
+      chunk_summary_prompt: |
+        Summarize the key points from this section of a video transcript.
+        Be concise and conversational - just capture what was discussed.
+        No formal structure needed, just bullet points or a brief paragraph.
+
+        Transcript section:
         ${output}
       error_template: |
         **Transcription failed**

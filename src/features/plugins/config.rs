@@ -2,10 +2,11 @@
 //!
 //! YAML-based plugin configuration with full schema validation.
 //!
-//! - **Version**: 3.3.0
+//! - **Version**: 3.4.0
 //! - **Since**: 0.9.0
 //!
 //! ## Changelog
+//! - 3.4.0: Added chunk_summary_prompt to OutputConfig for casual per-chunk summaries
 //! - 3.3.0: Added recommended_max_videos to PlaylistConfig for flexible playlist limits
 //! - 3.2.0: Added cumulative_summaries option for progressive summarization during chunked transcription
 //! - 3.1.0: Added download_command/download_args for configurable audio download
@@ -368,6 +369,9 @@ pub struct OutputConfig {
 
     /// OpenAI prompt for summarization
     pub summary_prompt: Option<String>,
+
+    /// Simpler prompt for per-chunk summaries (casual, no formal structure)
+    pub chunk_summary_prompt: Option<String>,
 
     /// Custom error message template with ${error} placeholder
     pub error_template: Option<String>,

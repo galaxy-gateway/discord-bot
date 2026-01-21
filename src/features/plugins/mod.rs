@@ -5,11 +5,13 @@
 //! Now includes multi-video playlist transcription with progress tracking and chunked streaming
 //! for long videos with per-chunk summaries.
 //!
-//! - **Version**: 3.6.0
+//! - **Version**: 3.7.0
 //! - **Since**: 0.9.0
 //! - **Toggleable**: true
 //!
 //! ## Changelog
+//! - 3.7.0: Refined transcription output: URL in thread starter for embed, distinct emojis
+//!          (📜 transcripts, 💡 summaries), windowed middle summaries, chunk_summary_prompt
 //! - 3.6.0: Added output_format parameter, improved transcription complete heading with word count
 //! - 3.5.0: Added customizable chunk_duration, flexible playlist limits, video description upfront
 //! - 3.4.0: Configurable summary options (summary_style, transcript_interval, custom_prompt),
@@ -914,11 +916,8 @@ impl PluginManager {
                 }
 
                 // Send thread starter message to channel
-                let starter_content = if url.contains("youtube.com") || url.contains("youtu.be") {
-                    format!("Transcribing YouTube video: {}", thread_name)
-                } else {
-                    thread_name.clone()
-                };
+                // Include URL so Discord shows embed preview at channel level
+                let starter_content = url.clone();
 
                 // Create thread from a new message
                 let thread_channel = match channel_id.say(&http, starter_content).await {
@@ -931,10 +930,10 @@ impl PluginManager {
                                 info!("Created thread for chunked transcription: {} ({})", thread_name, thread.id);
                                 job_manager.set_thread_id(&job_id_clone, thread.id.to_string());
 
-                                // Post URL inside the thread (first message in thread)
+                                // Post title inside the thread (URL is already shown in channel embed)
                                 let thread_id = ChannelId(thread.id.0);
-                                let url_content = format!("**{}**\n{}", thread_name, url);
-                                let _ = thread_id.say(&http, &url_content).await;
+                                let title_content = format!("**{}**", thread_name);
+                                let _ = thread_id.say(&http, &title_content).await;
 
                                 // Fetch and post video description ("doobily doo")
                                 if let Ok(metadata) = youtube::fetch_video_metadata(&url).await {
@@ -978,7 +977,7 @@ impl PluginManager {
                         .await;
                 }
 
-                // Post the URL to the thread
+                // Post title and URL to the thread
                 let content = format!("**{}**\n{}", video_title, url);
                 let _ = channel_id.say(&http, &content).await;
 
@@ -1127,6 +1126,7 @@ impl PluginManager {
             let mut failed_chunks = 0usize;
             let mut combined_transcript = String::new();
             let mut chunk_summaries: Vec<String> = Vec::new();
+            let mut last_summary_chunk: usize = 0; // Track last chunk included in a cumulative summary
             let mut progress_message_id: Option<serenity::model::id::MessageId> = None;
 
             for (index, chunk_path) in split_result.chunk_paths.iter().enumerate() {
@@ -1177,19 +1177,24 @@ impl PluginManager {
                                     .await;
                             } else {
                                 // Post as text message
-                                let msg = format!("**Part {}/{}:**\n{}", chunk_num, total_chunks, chunk_content);
+                                let msg = format!("📜 **Part {}/{}:**\n{}", chunk_num, total_chunks, chunk_content);
                                 let _ = output_channel.say(&http, &msg).await;
                             }
 
                             // Generate chunk summary for accumulation (needed for cumulative or overall)
                             // Skip entirely if summary_style is "none"
                             if summary_style != "none" {
-                                if let Some(ref summary_prompt) = plugin.output.summary_prompt {
+                                // Use chunk_summary_prompt if available, fallback to summary_prompt
+                                let prompt_to_use = plugin.output.chunk_summary_prompt
+                                    .as_ref()
+                                    .or(plugin.output.summary_prompt.as_ref());
+
+                                if let Some(base_prompt) = prompt_to_use {
                                     // Build prompt with custom instructions if provided
                                     let full_prompt = if let Some(ref custom) = custom_prompt {
-                                        format!("{}\n\nAdditional instructions: {}", summary_prompt, custom)
+                                        format!("{}\n\nAdditional instructions: {}", base_prompt, custom)
                                     } else {
-                                        summary_prompt.clone()
+                                        base_prompt.clone()
                                     };
 
                                     if let Some(chunk_summary) = output_handler
@@ -1207,13 +1212,13 @@ impl PluginManager {
                                         // Post per-chunk summary if enabled
                                         if generate_per_chunk {
                                             let summary_msg = format!(
-                                                "**Chunk {}/{} Summary:**\n{}",
+                                                "💡 **Part {}/{} Summary:**\n{}",
                                                 chunk_num, total_chunks, chunk_summary
                                             );
                                             let _ = output_channel.say(&http, &summary_msg).await;
                                         }
 
-                                        // Generate cumulative "story so far" summary if enabled
+                                        // Generate windowed summary if enabled (covers only chunks since last summary)
                                         // Uses user's summary_style preference OR yaml config as fallback
                                         let should_cumulate = generate_cumulative
                                             || (chunking_config.cumulative_summaries && summary_style == "per_chunk");
@@ -1222,22 +1227,33 @@ impl PluginManager {
                                             && chunk_summaries.len() > 1
                                             && chunk_num as u32 % chunking_config.cumulative_summary_interval == 0
                                         {
-                                            let summaries_so_far = chunk_summaries.join("\n\n---\n\n");
-                                            let base_template = "Based on these section summaries from a video \
-                                                transcription in progress, provide a cohesive 'story so far' summary that \
-                                                synthesizes all the key points covered up to this point. Write a flowing \
-                                                summary that captures the narrative and main themes so far:\n\n${output}";
+                                            // Use windowed summaries: only summarize chunks since last summary
+                                            let start_idx = last_summary_chunk;
+                                            let end_idx = chunk_summaries.len();
+                                            let window_summaries = &chunk_summaries[start_idx..end_idx];
+                                            let summaries_window = window_summaries.join("\n\n---\n\n");
 
-                                            // Add custom instructions to cumulative summary too
+                                            // Calculate part range for display (1-indexed)
+                                            let start_part = start_idx + 1;
+                                            let end_part = chunk_num;
+
+                                            let base_template = format!(
+                                                "Summarize what was covered in parts {}-{} of this video transcript. \
+                                                Be conversational - capture the main topics and key points discussed. \
+                                                No formal structure or conclusions needed.\n\nSection summaries:\n${{output}}",
+                                                start_part, end_part
+                                            );
+
+                                            // Add custom instructions to windowed summary too
                                             let cumulative_template = if let Some(ref custom) = custom_prompt {
                                                 format!("{}\n\nAdditional instructions: {}", base_template, custom)
                                             } else {
-                                                base_template.to_string()
+                                                base_template
                                             };
 
                                             if let Some(cumulative_summary) = output_handler
                                                 .generate_summary_for_text_with_context(
-                                                    &summaries_so_far,
+                                                    &summaries_window,
                                                     &cumulative_template,
                                                     Some(&user_context),
                                                     Some("cumulative_summary")
@@ -1245,11 +1261,14 @@ impl PluginManager {
                                                 .await
                                             {
                                                 let cumulative_msg = format!(
-                                                    "**Story So Far ({}/{} chunks):**\n{}",
-                                                    chunk_num, total_chunks, cumulative_summary
+                                                    "💡 **Summary (parts {}-{}):**\n{}",
+                                                    start_part, end_part, cumulative_summary
                                                 );
                                                 let _ = output_channel.say(&http, &cumulative_msg).await;
-                                                info!("Posted cumulative summary after chunk {}", chunk_num);
+                                                info!("Posted windowed summary for parts {}-{}", start_part, end_part);
+
+                                                // Update last_summary_chunk to current position
+                                                last_summary_chunk = chunk_summaries.len();
                                             }
                                         }
                                     }
@@ -1284,7 +1303,7 @@ impl PluginManager {
                                     .await;
                                 let _ = output_channel.say(
                                     &http,
-                                    &format!("📄 **Partial transcript** (parts 1-{}, {} words)", chunk_num, count_words(&combined_transcript))
+                                    &format!("📜 **Partial transcript** (parts 1-{}, {} words)", chunk_num, count_words(&combined_transcript))
                                 ).await;
                             }
 
@@ -1356,7 +1375,7 @@ impl PluginManager {
                     )
                     .await
                 {
-                    let _ = output_channel.say(&http, &format!("**Overall Summary:**\n{}", final_summary)).await;
+                    let _ = output_channel.say(&http, &format!("💡 **Overall Summary:**\n{}", final_summary)).await;
                 }
             }
 
@@ -1375,10 +1394,10 @@ impl PluginManager {
                     let _ = output_handler
                         .post_file(&http, output_channel, &formatted, &filename)
                         .await;
-                    let _ = output_channel.say(&http, &format!("📄 **Full transcript** ({} words)", word_count)).await;
+                    let _ = output_channel.say(&http, &format!("📜 **Full transcript** ({} words)", word_count)).await;
                 } else {
                     // Post as text messages (split if needed)
-                    let _ = output_channel.say(&http, "**Full Transcript:**").await;
+                    let _ = output_channel.say(&http, "📜 **Full Transcript:**").await;
                     // Split into 1900-char chunks to stay under Discord limit
                     let transcript_chunks: Vec<&str> = combined_transcript
                         .as_bytes()
