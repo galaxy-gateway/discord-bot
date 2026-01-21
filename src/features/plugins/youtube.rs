@@ -2,10 +2,11 @@
 //!
 //! Parse YouTube URLs and enumerate playlist videos using yt-dlp.
 //!
-//! - **Version**: 1.1.0
+//! - **Version**: 1.2.0
 //! - **Since**: 1.0.0
 //!
 //! ## Changelog
+//! - 1.2.0: Added video_url() method to get clean video URLs without playlist parameters
 //! - 1.1.0: Added VideoMetadata, fetch_video_metadata, format_description_preview for video descriptions
 //! - 1.0.0: Initial release with URL parsing and yt-dlp playlist enumeration
 
@@ -49,6 +50,16 @@ impl YouTubeUrl {
     /// Check if this is a single video (no playlist)
     pub fn is_single_video(&self) -> bool {
         self.url_type == YouTubeUrlType::SingleVideo
+    }
+
+    /// Get a clean video URL without playlist parameters
+    ///
+    /// Returns a URL in the format `https://www.youtube.com/watch?v=VIDEO_ID`
+    /// This strips out any playlist parameters that might confuse downloaders.
+    pub fn video_url(&self) -> Option<String> {
+        self.video_id.as_ref().map(|id| {
+            format!("https://www.youtube.com/watch?v={}", id)
+        })
     }
 
     /// Get the playlist URL for enumeration
@@ -469,6 +480,8 @@ mod tests {
         assert_eq!(parsed.url_type, YouTubeUrlType::VideoInPlaylist);
         assert!(parsed.has_playlist());
         assert!(!parsed.is_single_video());
+        // video_url() should return a clean URL without playlist parameter
+        assert_eq!(parsed.video_url(), Some("https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_string()));
     }
 
     #[test]

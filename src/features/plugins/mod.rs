@@ -5,11 +5,12 @@
 //! Now includes multi-video playlist transcription with progress tracking and chunked streaming
 //! for long videos with per-chunk summaries.
 //!
-//! - **Version**: 3.13.0
+//! - **Version**: 3.14.0
 //! - **Since**: 0.9.0
 //! - **Toggleable**: true
 //!
 //! ## Changelog
+//! - 3.14.0: Fix video download for URLs with playlist parameters by using clean video URLs
 //! - 3.13.0: Improved Discord markdown formatting with headings, block quotes, and styled links
 //! - 3.12.0: Display job ID in thread starter and final stats messages for easy reference
 //! - 3.11.0: Renamed summary options for clarity: summary_style→summaries (each/periodic/all/none),
@@ -1072,7 +1073,14 @@ impl PluginManager {
                 }
             };
 
-            let download_result = match chunker.download_audio(&url).await {
+            // Parse URL to get a clean video URL without playlist parameters
+            // This prevents issues where yt-dlp or the container might extract the wrong ID
+            let download_url = match parse_youtube_url(&url) {
+                Ok(parsed) => parsed.video_url().unwrap_or_else(|| url.clone()),
+                Err(_) => url.clone(), // Fall back to original URL if parsing fails
+            };
+
+            let download_result = match chunker.download_audio(&download_url).await {
                 Ok(r) => r,
                 Err(e) => {
                     let error_msg = format!("Failed to download audio: {}", e);
