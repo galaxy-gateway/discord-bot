@@ -3,16 +3,18 @@
 //! Create Discord threads for plugin output, handle large responses with file attachments,
 //! and generate AI summaries. Supports both single video and playlist transcription.
 //!
-//! - **Version**: 3.1.0
+//! - **Version**: 3.2.0
 //! - **Since**: 0.9.0
 //!
 //! ## Changelog
+//! - 3.2.0: Added UsageTracker integration for tracking AI summary costs per user
 //! - 3.1.0: Added public post_file() and generate_summary_for_text() methods for per-chunk summaries
 //! - 3.0.0: Added chunked transcription progress posting for streaming long videos
 //! - 2.0.0: Added playlist progress tracking, per-video results, and summary posting
 //! - 1.1.0: Added structured output posting (URL -> summary -> file)
 //! - 1.0.0: Initial release
 
+use crate::features::analytics::UsageTracker;
 use crate::features::plugins::config::OutputConfig;
 use anyhow::Result;
 use log::{info, warn};
@@ -23,16 +25,34 @@ use serenity::model::id::{ChannelId, MessageId};
 use std::borrow::Cow;
 use std::sync::Arc;
 
+/// Context for tracking AI usage per user
+#[derive(Clone, Default)]
+pub struct UserContext {
+    pub user_id: String,
+    pub guild_id: Option<String>,
+    pub channel_id: Option<String>,
+}
+
 /// Handler for plugin output posting
 #[derive(Clone)]
 pub struct OutputHandler {
     openai_model: String,
+    usage_tracker: Option<UsageTracker>,
 }
 
 impl OutputHandler {
     /// Create a new output handler
     pub fn new(openai_model: String) -> Self {
-        Self { openai_model }
+        Self {
+            openai_model,
+            usage_tracker: None,
+        }
+    }
+
+    /// Builder method to add a UsageTracker
+    pub fn with_usage_tracker(mut self, tracker: UsageTracker) -> Self {
+        self.usage_tracker = Some(tracker);
+        self
     }
 
     /// Create a thread for plugin output attached to a message
@@ -91,6 +111,7 @@ impl OutputHandler {
         channel_id: ChannelId,
         output: &str,
         config: &OutputConfig,
+        user_context: Option<&UserContext>,
     ) -> Result<()> {
         if output.is_empty() {
             channel_id.say(http, "*No output*").await?;
@@ -103,7 +124,7 @@ impl OutputHandler {
         if use_file {
             // Generate summary if configured
             let summary = if let Some(ref prompt) = config.summary_prompt {
-                match self.generate_summary(output, prompt).await {
+                match self.generate_summary_with_tracking(output, prompt, user_context, Some("result_summary")).await {
                     Ok(s) => s,
                     Err(e) => {
                         warn!("Failed to generate summary: {}", e);
@@ -194,6 +215,7 @@ impl OutputHandler {
         output: &str,
         config: &OutputConfig,
         url_already_posted: bool,
+        user_context: Option<&UserContext>,
     ) -> Result<()> {
         // 1. Post the source URL first (so it can embed/preview), unless already posted
         if !url_already_posted {
@@ -208,7 +230,7 @@ impl OutputHandler {
 
         // 2. Generate and post the summary
         if let Some(ref prompt) = config.summary_prompt {
-            match self.generate_summary(output, prompt).await {
+            match self.generate_summary_with_tracking(output, prompt, user_context, Some("video_summary")).await {
                 Ok(summary) => {
                     // Post summary, splitting if needed
                     let summary_chunks = split_message(&summary, 1900);
@@ -299,6 +321,7 @@ impl OutputHandler {
         video_url: &str,
         output: &str,
         config: &OutputConfig,
+        user_context: Option<&UserContext>,
     ) -> Result<()> {
         // Post video header with separator
         let header = format!(
@@ -314,7 +337,7 @@ impl OutputHandler {
 
         // Generate and post summary if configured
         if let Some(ref prompt) = config.summary_prompt {
-            match self.generate_summary(output, prompt).await {
+            match self.generate_summary_with_tracking(output, prompt, user_context, Some("playlist_video_summary")).await {
                 Ok(summary) => {
                     let summary_chunks = split_message(&summary, 1900);
                     for chunk in summary_chunks {
@@ -534,6 +557,7 @@ impl OutputHandler {
         runtime: std::time::Duration,
         combined_transcript: Option<&str>,
         config: &OutputConfig,
+        user_context: Option<&UserContext>,
     ) -> Result<()> {
         let status_emoji = if failed_chunks == 0 { "✅" } else { "⚠️" };
         let runtime_str = crate::features::plugins::youtube::format_duration(runtime);
@@ -552,7 +576,7 @@ impl OutputHandler {
         // Generate and post AI summary if we have transcript
         if let Some(transcript) = combined_transcript {
             if let Some(ref prompt) = config.summary_prompt {
-                match self.generate_summary(transcript, prompt).await {
+                match self.generate_summary_with_tracking(transcript, prompt, user_context, Some("chunked_final_summary")).await {
                     Ok(ai_summary) => {
                         let summary_chunks = split_message(&ai_summary, 1900);
                         for chunk in summary_chunks {
@@ -667,7 +691,20 @@ impl OutputHandler {
         text: &str,
         prompt_template: &str,
     ) -> Option<String> {
-        match self.generate_summary(text, prompt_template).await {
+        self.generate_summary_for_text_with_context(text, prompt_template, None, None).await
+    }
+
+    /// Generate an AI summary for a text with user context for usage tracking
+    ///
+    /// Returns None if summary generation fails.
+    pub async fn generate_summary_for_text_with_context(
+        &self,
+        text: &str,
+        prompt_template: &str,
+        user_context: Option<&UserContext>,
+        request_context: Option<&str>,
+    ) -> Option<String> {
+        match self.generate_summary_with_tracking(text, prompt_template, user_context, request_context).await {
             Ok(summary) => Some(summary),
             Err(e) => {
                 warn!("Failed to generate summary: {}", e);
@@ -676,8 +713,14 @@ impl OutputHandler {
         }
     }
 
-    /// Generate an AI summary of the output
-    async fn generate_summary(&self, output: &str, prompt_template: &str) -> Result<String> {
+    /// Generate an AI summary with usage tracking
+    async fn generate_summary_with_tracking(
+        &self,
+        output: &str,
+        prompt_template: &str,
+        user_context: Option<&UserContext>,
+        request_context: Option<&str>,
+    ) -> Result<String> {
         // Truncate output for summary to avoid token limits
         let truncated = if output.len() > 8000 {
             format!(
@@ -720,6 +763,27 @@ impl OutputHandler {
         )
         .create()
         .await?;
+
+        // Log usage if tracker and user context are available
+        if let (Some(tracker), Some(ctx), Some(usage)) = (&self.usage_tracker, user_context, &completion.usage) {
+            let request_id = request_context.map(|c| format!("plugin_{}", c));
+            tracker.log_chat(
+                &self.openai_model,
+                usage.prompt_tokens,
+                usage.completion_tokens,
+                usage.total_tokens,
+                &ctx.user_id,
+                ctx.guild_id.as_deref(),
+                ctx.channel_id.as_deref(),
+                request_id.as_deref(),
+            );
+            info!(
+                "Logged plugin AI usage: {} tokens for user {} ({})",
+                usage.total_tokens,
+                ctx.user_id,
+                request_context.unwrap_or("summary")
+            );
+        }
 
         let summary = completion
             .choices

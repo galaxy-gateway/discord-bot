@@ -339,10 +339,11 @@ async fn main() -> Result<()> {
             // Create allowed commands list
             let allowed_commands = vec!["docker".to_string(), "sh".to_string()];
 
-            // Create plugin manager
+            // Create plugin manager with usage tracker for AI summary tracking
             let job_manager = Arc::new(JobManager::new(database.clone()));
             let executor = PluginExecutor::new(allowed_commands);
-            let output_handler = OutputHandler::new(config.openai_model.clone());
+            let output_handler = OutputHandler::new(config.openai_model.clone())
+                .with_usage_tracker(usage_tracker.clone());
 
             let pm = Arc::new(PluginManager {
                 config: plugin_config,

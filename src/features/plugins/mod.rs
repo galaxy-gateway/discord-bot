@@ -5,11 +5,12 @@
 //! Now includes multi-video playlist transcription with progress tracking and chunked streaming
 //! for long videos with per-chunk summaries.
 //!
-//! - **Version**: 3.1.0
+//! - **Version**: 3.2.0
 //! - **Since**: 0.9.0
 //! - **Toggleable**: true
 //!
 //! ## Changelog
+//! - 3.2.0: Added per-user AI usage tracking for plugin summary operations
 //! - 3.1.0: Activate chunked transcription path, add per-chunk transcript files and AI summaries
 //! - 3.0.0: Added chunked streaming transcription for long videos with progressive output
 //! - 2.1.1: Use video title as thread starter message instead of generic "Transcription"
@@ -35,7 +36,7 @@ pub use commands::create_plugin_commands;
 pub use config::{ChunkingConfig, Plugin, PluginConfig};
 pub use executor::{ExecutionResult, PluginExecutor};
 pub use job::{Job, JobManager, JobStatus, PlaylistJob, PlaylistJobStatus};
-pub use output::OutputHandler;
+pub use output::{OutputHandler, UserContext};
 pub use youtube::{parse_youtube_url, enumerate_playlist, PlaylistInfo, PlaylistItem, YouTubeUrl, YouTubeUrlType};
 
 use crate::database::Database;
@@ -233,8 +234,17 @@ impl PluginManager {
         let executor = self.executor.clone();
         let output_handler = self.output_handler.clone();
         let job_id_clone = job_id.clone();
+        let user_id_clone = user_id.clone();
+        let guild_id_clone = guild_id.clone();
+        let channel_id_str = channel_id.to_string();
 
         tokio::spawn(async move {
+            // Create user context for usage tracking
+            let user_context = UserContext {
+                user_id: user_id_clone,
+                guild_id: guild_id_clone,
+                channel_id: Some(channel_id_str),
+            };
             // Mark as running
             if let Err(e) = job_manager.start_job(&job_id_clone).await {
                 warn!("Failed to mark job as running: {}", e);
@@ -390,11 +400,11 @@ impl PluginManager {
                         let url_already_posted = plugin.output.create_thread;
                         let post_result = if let Some(ref url) = source_url {
                             output_handler
-                                .post_structured_result(&http, output_channel, url, &exec_result.stdout, &plugin.output, url_already_posted)
+                                .post_structured_result(&http, output_channel, url, &exec_result.stdout, &plugin.output, url_already_posted, Some(&user_context))
                                 .await
                         } else {
                             output_handler
-                                .post_result(&http, output_channel, &exec_result.stdout, &plugin.output)
+                                .post_result(&http, output_channel, &exec_result.stdout, &plugin.output, Some(&user_context))
                                 .await
                         };
 
@@ -505,8 +515,18 @@ impl PluginManager {
         let playlist_job_id_clone = playlist_job_id.clone();
         let playlist_title = playlist_info.title.clone();
         let playlist_url = format!("https://www.youtube.com/playlist?list={}", playlist_info.id);
+        let user_id_clone = user_id.clone();
+        let guild_id_clone = guild_id.clone();
+        let channel_id_str = channel_id.to_string();
 
         tokio::spawn(async move {
+            // Create user context for usage tracking
+            let user_context = UserContext {
+                user_id: user_id_clone,
+                guild_id: guild_id_clone,
+                channel_id: Some(channel_id_str),
+            };
+
             // Mark as running
             if let Err(e) = job_manager.start_playlist_job(&playlist_job_id_clone).await {
                 warn!("Failed to mark playlist job as running: {}", e);
@@ -665,7 +685,8 @@ impl PluginManager {
                                     &http, output_channel,
                                     video_index, total_videos,
                                     &video.title, &video.url,
-                                    &exec_result.stdout, &plugin.output
+                                    &exec_result.stdout, &plugin.output,
+                                    Some(&user_context)
                                 )
                                 .await
                             {
@@ -814,8 +835,18 @@ impl PluginManager {
         let output_handler = self.output_handler.clone();
         let job_id_clone = job_id.clone();
         let params = params.clone(); // Clone params for the spawned task
+        let user_id_clone = user_id.clone();
+        let guild_id_clone = guild_id.clone();
+        let channel_id_str = channel_id.to_string();
 
         tokio::spawn(async move {
+            // Create user context for usage tracking
+            let user_context = UserContext {
+                user_id: user_id_clone,
+                guild_id: guild_id_clone,
+                channel_id: Some(channel_id_str),
+            };
+
             // Mark as running
             if let Err(e) = job_manager.start_job(&job_id_clone).await {
                 warn!("Failed to mark job as running: {}", e);
@@ -979,7 +1010,7 @@ impl PluginManager {
                             let _ = output_handler
                                 .post_structured_result(
                                     &http, output_channel, &url, &exec_result.stdout,
-                                    &plugin.output, true
+                                    &plugin.output, true, Some(&user_context)
                                 )
                                 .await;
                             let _ = job_manager.complete_job(&job_id_clone, "completed".to_string()).await;
@@ -1084,7 +1115,12 @@ impl PluginManager {
                             // Generate and post per-chunk summary
                             if let Some(ref summary_prompt) = plugin.output.summary_prompt {
                                 if let Some(chunk_summary) = output_handler
-                                    .generate_summary_for_text(&exec_result.stdout, summary_prompt)
+                                    .generate_summary_for_text_with_context(
+                                        &exec_result.stdout,
+                                        summary_prompt,
+                                        Some(&user_context),
+                                        Some("chunk_summary")
+                                    )
                                     .await
                                 {
                                     let summary_msg = format!(
@@ -1166,7 +1202,12 @@ impl PluginManager {
                 );
 
                 if let Some(final_summary) = output_handler
-                    .generate_summary_for_text(&final_summary_prompt, "Provide a comprehensive overall summary.")
+                    .generate_summary_for_text_with_context(
+                        &final_summary_prompt,
+                        "Provide a comprehensive overall summary.",
+                        Some(&user_context),
+                        Some("overall_summary")
+                    )
                     .await
                 {
                     let _ = output_channel.say(&http, &format!("**Overall Summary:**\n{}", final_summary)).await;
