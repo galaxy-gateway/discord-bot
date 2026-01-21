@@ -5,11 +5,12 @@
 //! Now includes multi-video playlist transcription with progress tracking and chunked streaming
 //! for long videos with per-chunk summaries.
 //!
-//! - **Version**: 3.12.0
+//! - **Version**: 3.13.0
 //! - **Since**: 0.9.0
 //! - **Toggleable**: true
 //!
 //! ## Changelog
+//! - 3.13.0: Improved Discord markdown formatting with headings, block quotes, and styled links
 //! - 3.12.0: Display job ID in thread starter and final stats messages for easy reference
 //! - 3.11.0: Renamed summary options for clarity: summary_style→summaries (each/periodic/all/none),
 //!           transcript_interval→transcript_file_interval, added user-configurable summary_interval
@@ -943,16 +944,16 @@ impl PluginManager {
                 let metadata = youtube::fetch_video_metadata(&url).await.ok();
 
                 // Send thread starter message to channel
-                // Format: "Transcribing YouTube video: {title} by {author} | job: {short_id}\n{url}"
+                // Format: "## 📜 Transcribing\n\n*[title](url)* by **author** | job: `short_id`\n\nurl"
                 let short_id = short_job_id(&job_id_clone);
                 let starter_content = if let Some(ref meta) = metadata {
                     if let Some(ref uploader) = meta.uploader {
-                        format!("Transcribing YouTube video: {} by {} | job: {}\n{}", thread_name, uploader, short_id, url)
+                        format!("## 📜 Transcribing\n\n*[{}]({})* by **{}** | job: `{}`\n\n{}", thread_name, url, uploader, short_id, url)
                     } else {
-                        format!("Transcribing YouTube video: {} | job: {}\n{}", thread_name, short_id, url)
+                        format!("## 📜 Transcribing\n\n*[{}]({})* | job: `{}`\n\n{}", thread_name, url, short_id, url)
                     }
                 } else {
-                    format!("Transcribing YouTube video: {} | job: {}\n{}", thread_name, short_id, url)
+                    format!("## 📜 Transcribing\n\n*[{}]({})* | job: `{}`\n\n{}", thread_name, url, short_id, url)
                 };
 
                 // Create thread from a new message
@@ -1013,16 +1014,16 @@ impl PluginManager {
                 // Fetch video metadata for header and description
                 let metadata = youtube::fetch_video_metadata(&url).await.ok();
 
-                // Post header: "Transcribing YouTube video: {title} by {author} | job: {short_id}\n{url}"
+                // Post header: "## 📜 Transcribing\n\n*[title](url)* by **author** | job: `short_id`\n\nurl"
                 let short_id = short_job_id(&job_id_clone);
                 let header_content = if let Some(ref meta) = metadata {
                     if let Some(ref uploader) = meta.uploader {
-                        format!("Transcribing YouTube video: {} by {} | job: {}\n{}", video_title, uploader, short_id, url)
+                        format!("## 📜 Transcribing\n\n*[{}]({})* by **{}** | job: `{}`\n\n{}", video_title, url, uploader, short_id, url)
                     } else {
-                        format!("Transcribing YouTube video: {} | job: {}\n{}", video_title, short_id, url)
+                        format!("## 📜 Transcribing\n\n*[{}]({})* | job: `{}`\n\n{}", video_title, url, short_id, url)
                     }
                 } else {
-                    format!("Transcribing YouTube video: {} | job: {}\n{}", video_title, short_id, url)
+                    format!("## 📜 Transcribing\n\n*[{}]({})* | job: `{}`\n\n{}", video_title, url, short_id, url)
                 };
                 let _ = channel_id.say(&http, &header_content).await;
 
@@ -1221,8 +1222,8 @@ impl PluginManager {
                                     .post_file(&http, output_channel, &formatted, &chunk_filename)
                                     .await;
                             } else {
-                                // Post as text message
-                                let msg = format!("📜 **Part {}/{}:**\n{}", chunk_num, total_chunks, chunk_content);
+                                // Post as text message with block quote formatting
+                                let msg = format!("### 📜 Part {}/{}\n\n>>> {}", chunk_num, total_chunks, chunk_content);
                                 let _ = output_channel.say(&http, &msg).await;
                             }
 
@@ -1257,7 +1258,7 @@ impl PluginManager {
                                         // Post per-chunk summary if enabled
                                         if generate_per_chunk {
                                             let summary_msg = format!(
-                                                "💡 **Part {}/{} Summary:**\n{}",
+                                                "### 💡 Summary (Part {}/{})\n\n{}",
                                                 chunk_num, total_chunks, chunk_summary
                                             );
                                             let _ = output_channel.say(&http, &summary_msg).await;
@@ -1303,7 +1304,7 @@ impl PluginManager {
                                                 .await
                                             {
                                                 let cumulative_msg = format!(
-                                                    "💡 **Summary (parts {}-{}):**\n{}",
+                                                    "### 💡 Summary (Parts {}-{})\n\n{}",
                                                     start_part, end_part, cumulative_summary
                                                 );
                                                 let _ = output_channel.say(&http, &cumulative_msg).await;
@@ -1316,15 +1317,6 @@ impl PluginManager {
                                     }
                                 }
                             }
-
-                            // Post chunk completion status
-                            let _ = output_handler
-                                .post_chunk_completed(
-                                    &http, output_channel,
-                                    chunk_num, total_chunks,
-                                    None  // No preview needed since we posted the full file
-                                )
-                                .await;
 
                             // Add to combined transcript
                             if !combined_transcript.is_empty() {
@@ -1383,16 +1375,14 @@ impl PluginManager {
 
             // Post final stats with improved heading, including job ID for reference
             let short_id = short_job_id(&job_id_clone);
+            let title_display = if video_title.len() > 60 { format!("{}...", &video_title[..57]) } else { video_title.clone() };
             let stats_msg = format!(
-                "---\n\n{} **Transcription Complete: {}**\n\n\
-                 **Stats**\n\
-                 • Job: `{}`\n\
-                 • Parts: {}/{} successful\n\
-                 • Words: {}\n\
-                 • Runtime: {}",
+                "---\n\n## {} Transcription Complete\n\n\
+                 *[{}]({})* | job: `{}`\n\n\
+                 **Stats:** {}/{} parts • {} words • **Runtime:** {}",
                 status_emoji,
-                if video_title.len() > 60 { format!("{}...", &video_title[..57]) } else { video_title.clone() },
-                short_id, completed_chunks, total_chunks, word_count_str, runtime_str
+                title_display, url, short_id,
+                completed_chunks, total_chunks, word_count_str, runtime_str
             );
             let _ = output_channel.say(&http, &stats_msg).await;
 
@@ -1419,7 +1409,7 @@ impl PluginManager {
                     )
                     .await
                 {
-                    let _ = output_channel.say(&http, &format!("💡 **Overall Summary:**\n{}", final_summary)).await;
+                    let _ = output_channel.say(&http, &format!("### 💡 Overall Summary\n\n{}", final_summary)).await;
                 }
             }
 
