@@ -5,11 +5,12 @@
 //! Now includes multi-video playlist transcription with progress tracking and chunked streaming
 //! for long videos with per-chunk summaries.
 //!
-//! - **Version**: 3.7.0
+//! - **Version**: 3.10.0
 //! - **Since**: 0.9.0
 //! - **Toggleable**: true
 //!
 //! ## Changelog
+//! - 3.10.0: Thread starter includes title, author, and URL; first thread message is description only
 //! - 3.7.0: Refined transcription output: URL in thread starter for embed, distinct emojis
 //!          (📜 transcripts, 💡 summaries), windowed middle summaries, chunk_summary_prompt
 //! - 3.6.0: Added output_format parameter, improved transcription complete heading with word count
@@ -915,9 +916,20 @@ impl PluginManager {
                         .await;
                 }
 
+                // Fetch video metadata early for thread starter and description
+                let metadata = youtube::fetch_video_metadata(&url).await.ok();
+
                 // Send thread starter message to channel
-                // Include URL so Discord shows embed preview at channel level
-                let starter_content = url.clone();
+                // Format: "Transcribing YouTube video: {title} by {author}\n{url}"
+                let starter_content = if let Some(ref meta) = metadata {
+                    if let Some(ref uploader) = meta.uploader {
+                        format!("Transcribing YouTube video: {} by {}\n{}", thread_name, uploader, url)
+                    } else {
+                        format!("Transcribing YouTube video: {}\n{}", thread_name, url)
+                    }
+                } else {
+                    format!("Transcribing YouTube video: {}\n{}", thread_name, url)
+                };
 
                 // Create thread from a new message
                 let thread_channel = match channel_id.say(&http, starter_content).await {
@@ -930,14 +942,11 @@ impl PluginManager {
                                 info!("Created thread for chunked transcription: {} ({})", thread_name, thread.id);
                                 job_manager.set_thread_id(&job_id_clone, thread.id.to_string());
 
-                                // Post title inside the thread (URL is already shown in channel embed)
                                 let thread_id = ChannelId(thread.id.0);
-                                let title_content = format!("**{}**", thread_name);
-                                let _ = thread_id.say(&http, &title_content).await;
 
-                                // Fetch and post video description ("doobily doo")
-                                if let Ok(metadata) = youtube::fetch_video_metadata(&url).await {
-                                    if let Some(ref desc) = metadata.description {
+                                // First thread message: video description ("doobily doo")
+                                if let Some(ref meta) = metadata {
+                                    if let Some(ref desc) = meta.description {
                                         if !desc.is_empty() {
                                             let preview = youtube::format_description_preview(desc, 10);
                                             let desc_msg = format!("**Description:**\n>>> {}", preview);
@@ -977,13 +986,24 @@ impl PluginManager {
                         .await;
                 }
 
-                // Post title and URL to the thread
-                let content = format!("**{}**\n{}", video_title, url);
-                let _ = channel_id.say(&http, &content).await;
+                // Fetch video metadata for header and description
+                let metadata = youtube::fetch_video_metadata(&url).await.ok();
 
-                // Fetch and post video description
-                if let Ok(metadata) = youtube::fetch_video_metadata(&url).await {
-                    if let Some(ref desc) = metadata.description {
+                // Post header: "Transcribing YouTube video: {title} by {author}\n{url}"
+                let header_content = if let Some(ref meta) = metadata {
+                    if let Some(ref uploader) = meta.uploader {
+                        format!("Transcribing YouTube video: {} by {}\n{}", video_title, uploader, url)
+                    } else {
+                        format!("Transcribing YouTube video: {}\n{}", video_title, url)
+                    }
+                } else {
+                    format!("Transcribing YouTube video: {}\n{}", video_title, url)
+                };
+                let _ = channel_id.say(&http, &header_content).await;
+
+                // Post video description
+                if let Some(ref meta) = metadata {
+                    if let Some(ref desc) = meta.description {
                         if !desc.is_empty() {
                             let preview = youtube::format_description_preview(desc, 10);
                             let desc_msg = format!("**Description:**\n>>> {}", preview);
