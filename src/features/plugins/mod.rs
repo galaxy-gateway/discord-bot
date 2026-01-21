@@ -5,11 +5,13 @@
 //! Now includes multi-video playlist transcription with progress tracking and chunked streaming
 //! for long videos with per-chunk summaries.
 //!
-//! - **Version**: 3.10.0
+//! - **Version**: 3.11.0
 //! - **Since**: 0.9.0
 //! - **Toggleable**: true
 //!
 //! ## Changelog
+//! - 3.11.0: Renamed summary options for clarity: summary_style→summaries (each/periodic/all/none),
+//!           transcript_interval→transcript_file_interval, added user-configurable summary_interval
 //! - 3.10.0: Thread starter includes title, author, and URL; first thread message is description only
 //! - 3.7.0: Refined transcription output: URL in thread starter for embed, distinct emojis
 //!          (📜 transcripts, 💡 summaries), windowed middle summaries, chunk_summary_prompt
@@ -862,10 +864,19 @@ impl PluginManager {
             };
 
             // Extract user options from params
-            let summary_style = params.get("summary_style")
+            // "summaries" replaces "summary_style" with clearer naming:
+            //   each = per-chunk summaries, periodic = windowed combined, all = both, none = no summaries
+            let summaries = params.get("summaries")
                 .map(|s| s.as_str())
-                .unwrap_or("per_chunk");
-            let transcript_interval: usize = params.get("transcript_interval")
+                .unwrap_or("each");
+            // "summary_interval" controls chunks between periodic summaries (default: 5, range: 2-20)
+            let summary_interval: u32 = params.get("summary_interval")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(5)
+                .max(2)
+                .min(20);
+            // "transcript_file_interval" replaces "transcript_interval" for clarity
+            let transcript_file_interval: usize = params.get("transcript_file_interval")
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(0);
             let custom_prompt = params.get("custom_prompt").cloned();
@@ -883,9 +894,10 @@ impl PluginManager {
                 .map(|s| OutputFormat::from_str(s))
                 .unwrap_or_default();
 
-            // Determine what summaries to generate based on summary_style
-            let generate_per_chunk = matches!(summary_style, "per_chunk" | "both");
-            let generate_cumulative = matches!(summary_style, "cumulative" | "both");
+            // Determine what summaries to generate based on summaries option
+            // "each" = per-chunk, "periodic" = windowed combined, "all" = both, "none" = none
+            let generate_per_chunk = matches!(summaries, "each" | "all");
+            let generate_cumulative = matches!(summaries, "periodic" | "all");
 
             // Mark as running
             if let Err(e) = job_manager.start_job(&job_id_clone).await {
@@ -1201,9 +1213,9 @@ impl PluginManager {
                                 let _ = output_channel.say(&http, &msg).await;
                             }
 
-                            // Generate chunk summary for accumulation (needed for cumulative or overall)
-                            // Skip entirely if summary_style is "none"
-                            if summary_style != "none" {
+                            // Generate chunk summary for accumulation (needed for periodic or overall)
+                            // Skip entirely if summaries is "none"
+                            if summaries != "none" {
                                 // Use chunk_summary_prompt if available, fallback to summary_prompt
                                 let prompt_to_use = plugin.output.chunk_summary_prompt
                                     .as_ref()
@@ -1238,14 +1250,11 @@ impl PluginManager {
                                             let _ = output_channel.say(&http, &summary_msg).await;
                                         }
 
-                                        // Generate windowed summary if enabled (covers only chunks since last summary)
-                                        // Uses user's summary_style preference OR yaml config as fallback
-                                        let should_cumulate = generate_cumulative
-                                            || (chunking_config.cumulative_summaries && summary_style == "per_chunk");
-
-                                        if should_cumulate
+                                        // Generate periodic windowed summary if enabled (covers only chunks since last summary)
+                                        // Uses user's summary_interval parameter (default: 5, range: 2-20)
+                                        if generate_cumulative
                                             && chunk_summaries.len() > 1
-                                            && chunk_num as u32 % chunking_config.cumulative_summary_interval == 0
+                                            && chunk_num as u32 % summary_interval == 0
                                         {
                                             // Use windowed summaries: only summarize chunks since last summary
                                             let start_idx = last_summary_chunk;
@@ -1314,7 +1323,7 @@ impl PluginManager {
                             ));
 
                             // Post transcript file at interval if configured (after adding chunk)
-                            if transcript_interval > 0 && chunk_num % transcript_interval == 0 {
+                            if transcript_file_interval > 0 && chunk_num % transcript_file_interval == 0 {
                                 let partial_filename = format!("transcript_parts_1-{}.txt", chunk_num);
                                 // Format with sentences on separate lines
                                 let formatted = format_transcript_sentences(&combined_transcript);
@@ -1373,7 +1382,7 @@ impl PluginManager {
             let _ = output_channel.say(&http, &stats_msg).await;
 
             // Generate final overall summary from chunk summaries (skip if "none" style)
-            if !chunk_summaries.is_empty() && summary_style != "none" {
+            if !chunk_summaries.is_empty() && summaries != "none" {
                 let combined_summaries = chunk_summaries.join("\n\n---\n\n");
                 let base_template = "Based on these section summaries from a longer video, \
                     provide a comprehensive overall summary that synthesizes the key themes, \
