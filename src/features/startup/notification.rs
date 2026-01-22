@@ -4,11 +4,13 @@
 //! Supports DM to bot owner and/or specific guild channels.
 //! Configuration is stored in the database and managed via /set_guild_setting.
 //!
-//! - **Version**: 1.2.0
+//! - **Version**: 1.4.0
 //! - **Since**: 0.4.0
 //! - **Toggleable**: true
 //!
 //! ## Changelog
+//! - 1.4.0: Export CommitInfo and get_detailed_commits for /commits slash command
+//! - 1.3.0: Multi-column layout for features and plugins to reduce embed verbosity
 //! - 1.2.0: Added plugin versions to embed, detailed commit thread for channels, inline commits for DMs
 //! - 1.1.0: Moved configuration from env vars to database
 //! - 1.0.0: Initial release with DM and channel support, rich embeds
@@ -35,20 +37,24 @@ static FIRST_READY: AtomicBool = AtomicBool::new(true);
 
 /// Detailed commit information fetched at runtime
 #[derive(Debug, Clone)]
-struct CommitInfo {
-    hash: String,
-    subject: String,
-    body: String,
-    files: Vec<String>,
+pub struct CommitInfo {
+    pub hash: String,
+    pub subject: String,
+    pub body: String,
+    pub files: Vec<String>,
 }
 
 /// Fetches detailed commit information at runtime via git
-async fn get_detailed_commits() -> Vec<CommitInfo> {
+///
+/// # Arguments
+/// * `count` - Number of commits to fetch (1-10 recommended)
+pub async fn get_detailed_commits(count: usize) -> Vec<CommitInfo> {
     // Run git log with full info
+    let count_arg = format!("-{}", count.clamp(1, 20));
     let output = match Command::new("git")
         .args([
             "log",
-            "-5",
+            &count_arg,
             "--format=COMMIT_START%n%h%n%s%n%b%nFILES_START",
             "--name-only",
         ])
@@ -229,23 +235,21 @@ impl StartupNotifier {
             embed.field("Shard", format!("{}/{}", shard[0] + 1, shard[1]), true);
         }
 
-        // Feature versions (non-inline for more space)
-        let feature_list: String = features
+        // Feature versions in multi-column layout (2-3 columns)
+        let feature_items: Vec<String> = features
             .iter()
-            .map(|f| format!("{} `v{}`", f.name, f.version))
-            .collect::<Vec<_>>()
-            .join("\n");
-        embed.field("Features", feature_list, false);
+            .map(|f| format!("{} `{}`", f.name, f.version))
+            .collect();
+        add_multi_column_fields(&mut embed, "Features", &feature_items, 3);
 
-        // Plugin versions
+        // Plugin versions in multi-column layout
         let enabled_plugins: Vec<_> = plugins.iter().filter(|p| p.enabled).collect();
         if !enabled_plugins.is_empty() {
-            let plugin_list: String = enabled_plugins
+            let plugin_items: Vec<String> = enabled_plugins
                 .iter()
-                .map(|p| format!("/{} `v{}`", p.command.name, p.version))
-                .collect::<Vec<_>>()
-                .join("\n");
-            embed.field("Registered Plugins", plugin_list, false);
+                .map(|p| format!("/{} `{}`", p.command.name, p.version))
+                .collect();
+            add_multi_column_fields(&mut embed, "Plugins", &plugin_items, 3);
         }
 
         // Recent changes from git commits (summary only - detailed view in thread/DM follow-up)
@@ -287,7 +291,7 @@ impl StartupNotifier {
         info!("Sent startup notification to owner {} via DM", owner_id);
 
         // Send detailed commit info as follow-up message (DMs can't have threads)
-        let commits = get_detailed_commits().await;
+        let commits = get_detailed_commits(5).await;
         if !commits.is_empty() {
             let commit_text = Self::format_commits_for_dm(&commits);
             if !commit_text.is_empty() {
@@ -356,7 +360,7 @@ impl StartupNotifier {
         info!("Sent startup notification to channel {}", channel_id);
 
         // Create a thread for detailed commit info
-        let commits = get_detailed_commits().await;
+        let commits = get_detailed_commits(5).await;
         if !commits.is_empty() {
             // Create thread from the message
             match channel
@@ -469,6 +473,37 @@ impl StartupNotifier {
         }
 
         msg
+    }
+}
+
+/// Adds items as multiple inline embed fields for column layout
+///
+/// Splits items into the specified number of columns (max 3 for Discord inline).
+/// Each column gets a portion of the items, creating a multi-column appearance.
+fn add_multi_column_fields(embed: &mut CreateEmbed, title: &str, items: &[String], max_columns: usize) {
+    if items.is_empty() {
+        return;
+    }
+
+    // For small lists, use fewer columns
+    let num_columns = if items.len() <= 3 {
+        1
+    } else if items.len() <= 6 {
+        2.min(max_columns)
+    } else {
+        max_columns.min(3) // Discord max inline is effectively 3
+    };
+
+    let items_per_column = (items.len() + num_columns - 1) / num_columns;
+
+    for (col_idx, chunk) in items.chunks(items_per_column).enumerate() {
+        let column_content = chunk.join("\n");
+        let field_title = if col_idx == 0 {
+            title.to_string()
+        } else {
+            "\u{200B}".to_string() // Zero-width space for continuation columns
+        };
+        embed.field(&field_title, column_content, true);
     }
 }
 

@@ -671,6 +671,10 @@ impl CommandHandler {
                 debug!("[{request_id}] ⏱️ Handling uptime command");
                 self.handle_slash_uptime(ctx, command, request_id).await?;
             }
+            "commits" => {
+                debug!("[{request_id}] 📝 Handling commits command");
+                self.handle_slash_commits(ctx, command, request_id).await?;
+            }
             // Feature management commands
             "features" => {
                 debug!("[{request_id}] 📋 Handling features command");
@@ -3467,6 +3471,85 @@ Use the buttons below for more help or to try custom prompts!"#;
 
         self.database.log_usage(&user_id, "uptime", None).await?;
         info!("[{request_id}] ✅ Uptime command completed");
+        Ok(())
+    }
+
+    /// Handle the /commits slash command - shows recent git commits
+    async fn handle_slash_commits(
+        &self,
+        ctx: &Context,
+        command: &ApplicationCommandInteraction,
+        request_id: Uuid,
+    ) -> Result<()> {
+        use crate::features::startup::notification::get_detailed_commits;
+        use serenity::model::application::interaction::InteractionResponseType;
+
+        let user_id = command.user.id.to_string();
+
+        let count = get_integer_option(&command.data.options, "count")
+            .unwrap_or(1) as usize;
+        let count = count.clamp(1, 10);
+
+        let commits = get_detailed_commits(count).await;
+
+        if commits.is_empty() {
+            command
+                .create_interaction_response(&ctx.http, |response| {
+                    response
+                        .kind(InteractionResponseType::ChannelMessageWithSource)
+                        .interaction_response_data(|msg| {
+                            msg.content("No commit history available.")
+                        })
+                })
+                .await?;
+            return Ok(());
+        }
+
+        // Format commits into embed
+        let mut content = String::new();
+        for commit in &commits {
+            content.push_str(&format!("**{}** (`{}`)\n", commit.subject, commit.hash));
+            if !commit.body.is_empty() {
+                let body_preview = if commit.body.len() > 150 {
+                    format!("{}...", &commit.body[..150])
+                } else {
+                    commit.body.clone()
+                };
+                content.push_str(&format!("{}\n", body_preview));
+            }
+            if !commit.files.is_empty() {
+                let files_preview: Vec<_> = commit.files.iter().take(5).collect();
+                content.push_str(&format!("Files: `{}`", files_preview.iter().map(|s| s.as_str()).collect::<Vec<_>>().join("`, `")));
+                if commit.files.len() > 5 {
+                    content.push_str(&format!(" +{} more", commit.files.len() - 5));
+                }
+                content.push('\n');
+            }
+            content.push('\n');
+        }
+
+        // Truncate if too long
+        if content.len() > 1900 {
+            content.truncate(1900);
+            content.push_str("\n... (truncated)");
+        }
+
+        command
+            .create_interaction_response(&ctx.http, |response| {
+                response
+                    .kind(InteractionResponseType::ChannelMessageWithSource)
+                    .interaction_response_data(|msg| {
+                        msg.embed(|e| {
+                            e.title(format!("Recent Commits ({})", commits.len()))
+                                .description(content)
+                                .color(0x57F287)
+                        })
+                    })
+            })
+            .await?;
+
+        self.database.log_usage(&user_id, "commits", None).await?;
+        info!("[{request_id}] ✅ Commits command completed");
         Ok(())
     }
 

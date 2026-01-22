@@ -1,6 +1,7 @@
-//! Utility slash commands: /ping, /help, /forget, /status, /version, /uptime
+//! Utility slash commands: /ping, /help, /forget, /status, /version, /uptime, /commits
 
 use serenity::builder::CreateApplicationCommand;
+use serenity::model::application::command::CommandOptionType;
 
 /// Creates utility commands
 pub fn create_commands() -> Vec<CreateApplicationCommand> {
@@ -11,6 +12,7 @@ pub fn create_commands() -> Vec<CreateApplicationCommand> {
         create_status_command(),
         create_version_command(),
         create_uptime_command(),
+        create_commits_command(),
     ]
 }
 
@@ -59,5 +61,22 @@ fn create_uptime_command() -> CreateApplicationCommand {
     CreateApplicationCommand::default()
         .name("uptime")
         .description("Show how long the bot has been running")
+        .to_owned()
+}
+
+/// Creates the commits command
+fn create_commits_command() -> CreateApplicationCommand {
+    CreateApplicationCommand::default()
+        .name("commits")
+        .description("Show recent git commits for this bot")
+        .create_option(|option| {
+            option
+                .name("count")
+                .description("Number of commits to show (1-10, default: 1)")
+                .kind(CommandOptionType::Integer)
+                .min_int_value(1)
+                .max_int_value(10)
+                .required(false)
+        })
         .to_owned()
 }
