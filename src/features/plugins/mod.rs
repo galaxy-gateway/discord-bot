@@ -5,11 +5,12 @@
 //! Now includes multi-video playlist transcription with progress tracking and chunked streaming
 //! for long videos with per-chunk summaries.
 //!
-//! - **Version**: 3.16.0
+//! - **Version**: 3.17.0
 //! - **Since**: 0.9.0
 //! - **Toggleable**: true
 //!
 //! ## Changelog
+//! - 3.17.0: Fix race condition in concurrent thread creation with retry logic and proper error reporting
 //! - 3.16.0: Simplified thread starter format with cleaner YouTube heading and proper embed support
 //! - 3.15.0: Escape markdown special characters in video titles to fix thread creation failures
 //! - 3.14.0: Fix video download for URLs with playlist parameters by using clean video URLs
@@ -339,9 +340,10 @@ impl PluginManager {
                 // Create thread from a new message (not the ephemeral response)
                 let thread_channel = match channel_id.say(&http, starter_content).await {
                     Ok(msg) => {
-                        match output_handler
-                            .create_output_thread(&http, channel_id, msg.id, &thread_name, plugin.output.auto_archive_minutes)
-                            .await
+                        match create_thread_with_retry(
+                            &output_handler, &http, channel_id, msg.id,
+                            &thread_name, plugin.output.auto_archive_minutes, 3
+                        ).await
                         {
                             Ok(thread) => {
                                 info!("Created thread: {} ({})", thread_name, thread.id);
@@ -357,13 +359,21 @@ impl PluginManager {
                                 Some(thread_id)
                             }
                             Err(e) => {
-                                error!("Failed to create thread: {}", e);
+                                error!("Failed to create thread after retries: {}", e);
+                                finalize_interaction_response(
+                                    &interaction_info,
+                                    &format!("Failed to create thread: {}. Posting to channel instead.", e)
+                                ).await;
                                 None
                             }
                         }
                     }
                     Err(e) => {
                         error!("Failed to send thread starter message: {}", e);
+                        finalize_interaction_response(
+                            &interaction_info,
+                            &format!("Failed to start transcription: {}", e)
+                        ).await;
                         None
                     }
                 };
@@ -601,9 +611,9 @@ impl PluginManager {
             // Create thread from a new message (not the ephemeral response)
             let thread_channel = match channel_id.say(&http, starter_content).await {
                 Ok(msg) => {
-                    match output_handler
-                        .create_output_thread(&http, channel_id, msg.id, &thread_name, 1440)
-                        .await
+                    match create_thread_with_retry(
+                        &output_handler, &http, channel_id, msg.id, &thread_name, 1440, 3
+                    ).await
                     {
                         Ok(thread) => {
                             info!("Created playlist thread: {} ({})", thread_name, thread.id);
@@ -617,13 +627,21 @@ impl PluginManager {
                             Some(thread_id)
                         }
                         Err(e) => {
-                            error!("Failed to create thread: {}", e);
+                            error!("Failed to create playlist thread after retries: {}", e);
+                            finalize_interaction_response(
+                                &interaction_info,
+                                &format!("Failed to create thread: {}. Posting to channel instead.", e)
+                            ).await;
                             None
                         }
                     }
                 }
                 Err(e) => {
                     error!("Failed to send thread starter message: {}", e);
+                    finalize_interaction_response(
+                        &interaction_info,
+                        &format!("Failed to start playlist transcription: {}", e)
+                    ).await;
                     None
                 }
             };
@@ -964,9 +982,10 @@ impl PluginManager {
                 // Create thread from a new message
                 let thread_channel = match channel_id.say(&http, starter_content).await {
                     Ok(msg) => {
-                        match output_handler
-                            .create_output_thread(&http, channel_id, msg.id, &thread_name, plugin.output.auto_archive_minutes)
-                            .await
+                        match create_thread_with_retry(
+                            &output_handler, &http, channel_id, msg.id,
+                            &thread_name, plugin.output.auto_archive_minutes, 3
+                        ).await
                         {
                             Ok(thread) => {
                                 info!("Created thread for chunked transcription: {} ({})", thread_name, thread.id);
@@ -988,13 +1007,21 @@ impl PluginManager {
                                 Some(thread_id)
                             }
                             Err(e) => {
-                                error!("Failed to create thread: {}", e);
+                                error!("Failed to create thread after retries: {}", e);
+                                finalize_interaction_response(
+                                    &interaction_info,
+                                    &format!("Failed to create thread: {}. Posting to channel instead.", e)
+                                ).await;
                                 None
                             }
                         }
                     }
                     Err(e) => {
                         error!("Failed to send thread starter message: {}", e);
+                        finalize_interaction_response(
+                            &interaction_info,
+                            &format!("Failed to start chunked transcription: {}", e)
+                        ).await;
                         None
                     }
                 };
@@ -1483,6 +1510,64 @@ impl PluginManager {
             .as_ref()
             .map(|c| c.enabled)
             .unwrap_or(false)
+    }
+}
+
+/// Create a thread with retry logic for rate limiting
+///
+/// Retries thread creation with exponential backoff to handle Discord rate limits
+/// that can occur when multiple threads are created in rapid succession.
+async fn create_thread_with_retry(
+    output_handler: &OutputHandler,
+    http: &Arc<Http>,
+    channel_id: ChannelId,
+    message_id: serenity::model::id::MessageId,
+    thread_name: &str,
+    auto_archive_minutes: u64,
+    max_retries: u32,
+) -> Result<serenity::model::channel::GuildChannel> {
+    let mut last_error = None;
+    for attempt in 0..max_retries {
+        if attempt > 0 {
+            let delay = std::time::Duration::from_secs(2u64.pow(attempt));
+            info!("Retrying thread creation after {:?} (attempt {})", delay, attempt + 1);
+            tokio::time::sleep(delay).await;
+        }
+
+        match output_handler
+            .create_output_thread(http, channel_id, message_id, thread_name, auto_archive_minutes)
+            .await
+        {
+            Ok(thread) => return Ok(thread),
+            Err(e) => {
+                warn!("Thread creation attempt {} failed: {}", attempt + 1, e);
+                last_error = Some(e);
+            }
+        }
+    }
+    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Thread creation failed after {} retries", max_retries)))
+}
+
+/// Finalize the ephemeral interaction response
+///
+/// Updates the ephemeral "thinking" message to show the final status.
+/// This ensures users always see feedback even if thread creation fails.
+async fn finalize_interaction_response(
+    interaction_info: &Option<(u64, String)>,
+    message: &str,
+) {
+    if let Some((app_id, token)) = interaction_info {
+        let client = reqwest::Client::new();
+        let edit_url = format!(
+            "https://discord.com/api/v10/webhooks/{}/{}/messages/@original",
+            app_id, token
+        );
+        let _ = client
+            .patch(&edit_url)
+            .header("Content-Type", "application/json")
+            .json(&serde_json::json!({ "content": message }))
+            .send()
+            .await;
     }
 }
 
