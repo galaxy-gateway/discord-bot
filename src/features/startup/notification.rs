@@ -4,11 +4,12 @@
 //! Supports DM to bot owner and/or specific guild channels.
 //! Configuration is stored in the database and managed via /set_guild_setting.
 //!
-//! - **Version**: 1.4.0
+//! - **Version**: 1.5.0
 //! - **Since**: 0.4.0
 //! - **Toggleable**: true
 //!
 //! ## Changelog
+//! - 1.5.0: Export format_commit_for_thread for /commits slash command thread posting
 //! - 1.4.0: Export CommitInfo and get_detailed_commits for /commits slash command
 //! - 1.3.0: Multi-column layout for features and plugins to reduce embed verbosity
 //! - 1.2.0: Added plugin versions to embed, detailed commit thread for channels, inline commits for DMs
@@ -133,6 +134,36 @@ fn parse_detailed_commits(output: &str) -> Vec<CommitInfo> {
     }
 
     commits
+}
+
+/// Formats a single commit for thread display
+///
+/// Creates a nicely formatted message with the commit subject, hash, body, and files changed.
+/// This is used by both startup notifications and the /commits command.
+pub fn format_commit_for_thread(commit: &CommitInfo) -> String {
+    let mut msg = format!("**{}** (`{}`)\n", commit.subject, commit.hash);
+
+    if !commit.body.is_empty() {
+        msg.push_str(&format!("\n{}\n", commit.body));
+    }
+
+    if !commit.files.is_empty() {
+        // Show all files, but use code block for better formatting
+        msg.push_str("\n**Files changed:**\n```\n");
+        for file in &commit.files {
+            msg.push_str(file);
+            msg.push('\n');
+        }
+        msg.push_str("```");
+    }
+
+    // Truncate if too long for Discord
+    if msg.len() > 1900 {
+        msg.truncate(1900);
+        msg.push_str("\n... (truncated)");
+    }
+
+    msg
 }
 
 /// Handles sending startup notifications to configured destinations
@@ -400,7 +431,7 @@ impl StartupNotifier {
         commits: &[CommitInfo],
     ) {
         for commit in commits {
-            let msg = Self::format_commit_for_thread(commit);
+            let msg = format_commit_for_thread(commit);
             if let Err(e) = thread_id.say(http, &msg).await {
                 warn!("Failed to post commit {} to thread: {}", commit.hash, e);
             }
@@ -448,32 +479,6 @@ impl StartupNotifier {
         }
     }
 
-    /// Formats a single commit for thread display
-    fn format_commit_for_thread(commit: &CommitInfo) -> String {
-        let mut msg = format!("**{}** (`{}`)\n", commit.subject, commit.hash);
-
-        if !commit.body.is_empty() {
-            msg.push_str(&format!("\n{}\n", commit.body));
-        }
-
-        if !commit.files.is_empty() {
-            // Show all files, but use code block for better formatting
-            msg.push_str("\n**Files changed:**\n```\n");
-            for file in &commit.files {
-                msg.push_str(file);
-                msg.push('\n');
-            }
-            msg.push_str("```");
-        }
-
-        // Truncate if too long for Discord
-        if msg.len() > 1900 {
-            msg.truncate(1900);
-            msg.push_str("\n... (truncated)");
-        }
-
-        msg
-    }
 }
 
 /// Adds items as multiple inline embed fields for column layout
@@ -580,7 +585,7 @@ mod tests {
             files: vec!["src/main.rs".to_string(), "src/lib.rs".to_string()],
         };
 
-        let formatted = StartupNotifier::format_commit_for_thread(&commit);
+        let formatted = format_commit_for_thread(&commit);
         assert!(formatted.contains("feat: add new feature"));
         assert!(formatted.contains("abc1234"));
         assert!(formatted.contains("This is the body"));

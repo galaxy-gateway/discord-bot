@@ -3475,16 +3475,21 @@ Use the buttons below for more help or to try custom prompts!"#;
     }
 
     /// Handle the /commits slash command - shows recent git commits
+    ///
+    /// In guild channels: sends a minimal embed summary and creates a thread with detailed commit info.
+    /// In DMs: only sends the minimal embed (threads not supported in DMs).
     async fn handle_slash_commits(
         &self,
         ctx: &Context,
         command: &ApplicationCommandInteraction,
         request_id: Uuid,
     ) -> Result<()> {
-        use crate::features::startup::notification::get_detailed_commits;
+        use crate::features::startup::notification::{format_commit_for_thread, get_detailed_commits};
         use serenity::model::application::interaction::InteractionResponseType;
+        use serenity::model::channel::ChannelType;
 
         let user_id = command.user.id.to_string();
+        let is_dm = command.guild_id.is_none();
 
         let count = get_integer_option(&command.data.options, "count")
             .unwrap_or(1) as usize;
@@ -3505,35 +3510,13 @@ Use the buttons below for more help or to try custom prompts!"#;
             return Ok(());
         }
 
-        // Format commits into embed
-        let mut content = String::new();
+        // Build minimal summary for main embed (just subjects and hashes)
+        let mut summary = String::new();
         for commit in &commits {
-            content.push_str(&format!("**{}** (`{}`)\n", commit.subject, commit.hash));
-            if !commit.body.is_empty() {
-                let body_preview = if commit.body.len() > 150 {
-                    format!("{}...", &commit.body[..150])
-                } else {
-                    commit.body.clone()
-                };
-                content.push_str(&format!("{}\n", body_preview));
-            }
-            if !commit.files.is_empty() {
-                let files_preview: Vec<_> = commit.files.iter().take(5).collect();
-                content.push_str(&format!("Files: `{}`", files_preview.iter().map(|s| s.as_str()).collect::<Vec<_>>().join("`, `")));
-                if commit.files.len() > 5 {
-                    content.push_str(&format!(" +{} more", commit.files.len() - 5));
-                }
-                content.push('\n');
-            }
-            content.push('\n');
+            summary.push_str(&format!("• **{}** (`{}`)\n", commit.subject, commit.hash));
         }
 
-        // Truncate if too long
-        if content.len() > 1900 {
-            content.truncate(1900);
-            content.push_str("\n... (truncated)");
-        }
-
+        // Send minimal embed
         command
             .create_interaction_response(&ctx.http, |response| {
                 response
@@ -3541,12 +3524,50 @@ Use the buttons below for more help or to try custom prompts!"#;
                     .interaction_response_data(|msg| {
                         msg.embed(|e| {
                             e.title(format!("Recent Commits ({})", commits.len()))
-                                .description(content)
+                                .description(&summary)
                                 .color(0x57F287)
                         })
                     })
             })
             .await?;
+
+        // Only create thread in guild channels (DMs can't have threads)
+        if !is_dm {
+            // Get the message we just sent
+            if let Ok(msg) = command.get_interaction_response(&ctx.http).await {
+                // Create thread from the message
+                match command
+                    .channel_id
+                    .create_public_thread(&ctx.http, msg.id, |t| {
+                        t.name("Commit Details")
+                            .kind(ChannelType::PublicThread)
+                            .auto_archive_duration(60) // 1 hour
+                    })
+                    .await
+                {
+                    Ok(thread) => {
+                        info!(
+                            "[{request_id}] Created thread '{}' for commit details",
+                            thread.name()
+                        );
+
+                        // Post detailed commits to thread
+                        for commit in &commits {
+                            let formatted = format_commit_for_thread(commit);
+                            if let Err(e) = thread.say(&ctx.http, &formatted).await {
+                                warn!(
+                                    "[{request_id}] Failed to post commit {} to thread: {}",
+                                    commit.hash, e
+                                );
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!("[{request_id}] Failed to create thread for commit details: {}", e);
+                    }
+                }
+            }
+        }
 
         self.database.log_usage(&user_id, "commits", None).await?;
         info!("[{request_id}] ✅ Commits command completed");

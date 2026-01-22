@@ -163,7 +163,7 @@ plugins:
             rm -rf "$TMPDIR" "$ERRFILE"
 
     security:
-      cooldown_seconds: 60      # 1 minute between requests per user
+      cooldown_seconds: 0       # No cooldown
       guild_only: false         # Allow in DMs too
 
     # Playlist-specific configuration
