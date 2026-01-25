@@ -4,11 +4,12 @@
 //! Supports DM to bot owner and/or specific guild channels.
 //! Configuration is stored in the database and managed via /set_guild_setting.
 //!
-//! - **Version**: 1.8.0
+//! - **Version**: 1.9.0
 //! - **Since**: 0.4.0
 //! - **Toggleable**: true
 //!
 //! ## Changelog
+//! - 1.9.0: Store DM notifications in conversation history for context continuity
 //! - 1.8.0: Add configurable commit counts for DM and channel notifications
 //! - 1.7.0: Add GitHub commit links to startup notification and thread messages
 //! - 1.6.0: Include updateMessage.txt content in startup embed, removed feature version columns
@@ -276,10 +277,11 @@ impl StartupNotifier {
         }
 
         let embed = Self::build_embed(ready, plugins);
+        let notification_text = Self::build_notification_text(ready, plugins);
 
         // Send to owner DM (includes commit messages inline since DMs can't have threads)
         if let Some(oid) = owner_id {
-            if let Err(e) = self.send_to_owner(http, oid, embed.clone()).await {
+            if let Err(e) = self.send_to_owner(http, oid, embed.clone(), &notification_text).await {
                 warn!("Failed to send startup DM to owner {}: {}", oid, e);
             }
         }
@@ -374,12 +376,79 @@ impl StartupNotifier {
         embed
     }
 
+    /// Builds a plain text representation of the startup notification for conversation history
+    fn build_notification_text(ready: &Ready, plugins: &[Plugin]) -> String {
+        let version = get_bot_version();
+        let mut text = format!(
+            "🟢 **{} is Online!**\n\nVersion: v{}\nConnected to {} guild(s)",
+            ready.user.name, version, ready.guilds.len()
+        );
+
+        // Include updateMessage.txt content if it exists
+        if let Ok(update_message) = std::fs::read_to_string("updateMessage.txt") {
+            let trimmed = update_message.trim();
+            if !trimmed.is_empty() {
+                let description = if trimmed.len() > 500 {
+                    format!("{}...", &trimmed[..500])
+                } else {
+                    trimmed.to_string()
+                };
+                text.push_str(&format!("\n\n**Update Notes:**\n{}", description));
+            }
+        }
+
+        // Include enabled plugins
+        let enabled_plugins: Vec<_> = plugins.iter().filter(|p| p.enabled).collect();
+        if !enabled_plugins.is_empty() {
+            let plugin_list: Vec<String> = enabled_plugins
+                .iter()
+                .map(|p| format!("/{} v{}", p.command.name, p.version))
+                .collect();
+            text.push_str(&format!("\n\n**Enabled Plugins:** {}", plugin_list.join(", ")));
+        }
+
+        // Include recent commits summary
+        if !RECENT_COMMITS.is_empty() {
+            let changes: String = RECENT_COMMITS
+                .lines()
+                .take(3)
+                .filter_map(|line| {
+                    let parts: Vec<&str> = line.splitn(2, '|').collect();
+                    if parts.len() == 2 {
+                        Some(format!("- {} ({})", parts[1], parts[0]))
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            if !changes.is_empty() {
+                text.push_str(&format!("\n\n**Recent Changes:**\n{}", changes));
+            }
+        }
+
+        text
+    }
+
     /// Sends the embed to the bot owner via DM with inline commit details
-    async fn send_to_owner(&self, http: &Http, owner_id: u64, embed: CreateEmbed) -> anyhow::Result<()> {
+    async fn send_to_owner(&self, http: &Http, owner_id: u64, embed: CreateEmbed, notification_text: &str) -> anyhow::Result<()> {
         let user = UserId(owner_id);
         let dm = user.create_dm_channel(http).await?;
         dm.send_message(http, |m| m.set_embed(embed)).await?;
         info!("Sent startup notification to owner {} via DM", owner_id);
+
+        // Store the notification in conversation history so bot can reference it later
+        let user_id_str = owner_id.to_string();
+        let channel_id_str = dm.id.0.to_string();
+        if let Err(e) = self.database.store_message(
+            &user_id_str,
+            &channel_id_str,
+            "assistant",
+            notification_text,
+            None,
+        ).await {
+            warn!("Failed to store startup notification in conversation history: {}", e);
+        }
 
         // Get configurable commit count (default 5)
         let commit_count: usize = self
@@ -400,6 +469,17 @@ impl StartupNotifier {
                 if !commit_text.is_empty() {
                     dm.send_message(http, |m| m.content(&commit_text)).await?;
                     info!("Sent detailed commit info to owner {} via DM", owner_id);
+
+                    // Store commit details in conversation history
+                    if let Err(e) = self.database.store_message(
+                        &user_id_str,
+                        &channel_id_str,
+                        "assistant",
+                        &commit_text,
+                        None,
+                    ).await {
+                        warn!("Failed to store commit details in conversation history: {}", e);
+                    }
                 }
             }
         }
