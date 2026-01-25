@@ -35,7 +35,7 @@ impl MessageComponentHandler {
         info!("Processing component interaction: {custom_id} from user: {user_id}");
 
         match custom_id.as_str() {
-            "persona_muppet" | "persona_chef" | "persona_obi" | "persona_teacher" | "persona_analyst" => {
+            "persona_muppet" | "persona_chef" | "persona_obi" | "persona_teacher" | "persona_analyst" | "persona_visionary" => {
                 self.handle_persona_button(ctx, interaction).await?;
             }
             id if id.starts_with("confirm_") => {
@@ -137,6 +137,14 @@ impl MessageComponentHandler {
                         .style(ButtonStyle::Secondary)
                 })
             })
+            .create_action_row(|row| {
+                row.create_button(|button| {
+                    button
+                        .custom_id("persona_visionary")
+                        .label("🔮 Visionary")
+                        .style(ButtonStyle::Secondary)
+                })
+            })
             .to_owned()
     }
 
@@ -231,6 +239,7 @@ impl MessageComponentHandler {
             "persona_obi" => "obi",
             "persona_teacher" => "teacher",
             "persona_analyst" => "analyst",
+            "persona_visionary" => "visionary",
             _ => return Ok(()),
         };
 

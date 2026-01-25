@@ -4,11 +4,12 @@
 //! Supports DM to bot owner and/or specific guild channels.
 //! Configuration is stored in the database and managed via /set_guild_setting.
 //!
-//! - **Version**: 1.5.0
+//! - **Version**: 1.6.0
 //! - **Since**: 0.4.0
 //! - **Toggleable**: true
 //!
 //! ## Changelog
+//! - 1.6.0: Include updateMessage.txt content in startup embed, removed feature version columns
 //! - 1.5.0: Export format_commit_for_thread for /commits slash command thread posting
 //! - 1.4.0: Export CommitInfo and get_detailed_commits for /commits slash command
 //! - 1.3.0: Multi-column layout for features and plugins to reduce embed verbosity
@@ -18,7 +19,7 @@
 
 use crate::database::Database;
 use crate::features::plugins::Plugin;
-use crate::features::{get_bot_version, get_features};
+use crate::features::get_bot_version;
 use log::{info, warn};
 use serenity::builder::CreateEmbed;
 use serenity::http::Http;
@@ -244,7 +245,6 @@ impl StartupNotifier {
     /// Builds the rich embed for the startup notification
     fn build_embed(ready: &Ready, plugins: &[Plugin]) -> CreateEmbed {
         let version = get_bot_version();
-        let features = get_features();
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -257,6 +257,20 @@ impl StartupNotifier {
             .title(format!("{} is Online!", ready.user.name))
             .color(Color::from_rgb(87, 242, 135)); // Discord green
 
+        // Include updateMessage.txt content as description if it exists
+        if let Ok(update_message) = std::fs::read_to_string("updateMessage.txt") {
+            let trimmed = update_message.trim();
+            if !trimmed.is_empty() {
+                // Discord embed description limit is 4096 chars
+                let description = if trimmed.len() > 4000 {
+                    format!("{}...", &trimmed[..4000])
+                } else {
+                    trimmed.to_string()
+                };
+                embed.description(description);
+            }
+        }
+
         // Basic info fields (inline)
         embed.field("Version", format!("`v{}`", version), true);
         embed.field("Guilds", ready.guilds.len().to_string(), true);
@@ -265,13 +279,6 @@ impl StartupNotifier {
         if let Some(shard) = ready.shard {
             embed.field("Shard", format!("{}/{}", shard[0] + 1, shard[1]), true);
         }
-
-        // Feature versions in multi-column layout (2-3 columns)
-        let feature_items: Vec<String> = features
-            .iter()
-            .map(|f| format!("{} `{}`", f.name, f.version))
-            .collect();
-        add_multi_column_fields(&mut embed, "Features", &feature_items, 3);
 
         // Plugin versions in multi-column layout
         let enabled_plugins: Vec<_> = plugins.iter().filter(|p| p.enabled).collect();
