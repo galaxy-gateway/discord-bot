@@ -1,7 +1,7 @@
 - When recommending what a git commit should be always specify a description detailed and related to the files changed, output using commitizen formatting
 - After completing a set of work recommend the git commit, then afterwards update the Cargo.toml version number and create and push a git tag
 - include the package version numbers in the recommended commit message
-- overwrite a file called updateMessage.txt with all the latest changes use the Obi persona
+- delete and overwrite a file called updateMessage.txt with all the latest changes use the Visionary persona
 
 ## GitHub Issue Creation
 

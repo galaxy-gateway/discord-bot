@@ -1,21 +1,23 @@
-Ah, my friend, I bring news of greater control over your notifications.
+Okay but picture this - you now have full control over how much noise hits your notifications.
 
-From a certain point of view, not every detail needs to be shared in every place. The Force has guided us to add configurable commit counts for startup notifications.
+Here's what I'm seeing: not everyone needs a wall of commit history every time the bot spins up. Some of you want the details in your DMs, others just want a quick pulse check in the channel. Now you get to decide.
 
 **Configurable Commit Counts (1.8.0)**
-- New setting `startup_dm_commit_count` controls commits shown in owner DM (default: 5)
-- New setting `startup_channel_commit_count` controls commits in channel thread (default: 5)
-- Set to 0 to disable commit details entirely for that destination
+- `startup_dm_commit_count` - how many commits show up in owner DMs (default: 5)
+- `startup_channel_commit_count` - how many land in the channel thread (default: 5)
+- Set either to 0 to turn it off completely. Clean. Simple. Your call.
 
-**Configuration:**
+**How to set it up:**
 ```
-/set_bot_setting startup_dm_commit_count 0
-/set_bot_setting startup_channel_commit_count 1
+/set_guild_setting startup_dm_commit_count 0
+/set_guild_setting startup_channel_commit_count 1
 ```
 
-**Files Modified:**
-- `src/features/startup/notification.rs` - Added database setting lookups for commit counts
+**What changed:**
+- `src/features/startup/notification.rs` - reads your preferences from the database now
+- `src/commands/slash/admin.rs` - new settings in the dropdown
+- `src/command_handler.rs` - validation and routing for the new options
 
-A small refinement, but one that grants you mastery over what information flows where.
+The bigger picture here? This is about giving you the controls to shape the bot's behavior around YOUR workflow, not the other way around. More of this coming.
 
-May the Force be with you.
+Trust the process.

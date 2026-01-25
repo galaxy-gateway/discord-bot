@@ -2793,6 +2793,17 @@ Use the buttons below for more help or to try custom prompts!"#;
                     (false, "Invalid channel ID. Enter a valid Discord channel ID (numeric). Get it by right-clicking the channel with Developer Mode enabled.")
                 }
             }
+            "startup_dm_commit_count" | "startup_channel_commit_count" => {
+                if let Ok(count) = value.parse::<usize>() {
+                    if count <= 20 {
+                        (true, "")
+                    } else {
+                        (false, "Commit count must be between 0 and 20.")
+                    }
+                } else {
+                    (false, "Invalid value. Enter a number between 0 and 20 (0 to disable).")
+                }
+            }
             _ => (false, "Unknown setting. Use `/settings` to see available options."),
         };
 
@@ -2813,6 +2824,7 @@ Use the buttons below for more help or to try custom prompts!"#;
         let is_global_setting = matches!(
             setting.as_str(),
             "startup_notification" | "startup_notify_owner_id" | "startup_notify_channel_id"
+            | "startup_dm_commit_count" | "startup_channel_commit_count"
         );
 
         if is_global_setting {

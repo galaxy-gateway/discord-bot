@@ -95,6 +95,8 @@ fn create_set_guild_setting_command() -> CreateApplicationCommand {
                 .add_string_choice("startup_notification", "startup_notification")
                 .add_string_choice("startup_notify_owner_id", "startup_notify_owner_id")
                 .add_string_choice("startup_notify_channel_id", "startup_notify_channel_id")
+                .add_string_choice("startup_dm_commit_count", "startup_dm_commit_count")
+                .add_string_choice("startup_channel_commit_count", "startup_channel_commit_count")
         })
         .create_option(|option| {
             option
