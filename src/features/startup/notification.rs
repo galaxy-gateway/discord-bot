@@ -4,11 +4,12 @@
 //! Supports DM to bot owner and/or specific guild channels.
 //! Configuration is stored in the database and managed via /set_guild_setting.
 //!
-//! - **Version**: 1.7.0
+//! - **Version**: 1.8.0
 //! - **Since**: 0.4.0
 //! - **Toggleable**: true
 //!
 //! ## Changelog
+//! - 1.8.0: Add configurable commit counts for DM and channel notifications
 //! - 1.7.0: Add GitHub commit links to startup notification and thread messages
 //! - 1.6.0: Include updateMessage.txt content in startup embed, removed feature version columns
 //! - 1.5.0: Export format_commit_for_thread for /commits slash command thread posting
@@ -278,14 +279,14 @@ impl StartupNotifier {
 
         // Send to owner DM (includes commit messages inline since DMs can't have threads)
         if let Some(oid) = owner_id {
-            if let Err(e) = Self::send_to_owner(http, oid, embed.clone()).await {
+            if let Err(e) = self.send_to_owner(http, oid, embed.clone()).await {
                 warn!("Failed to send startup DM to owner {}: {}", oid, e);
             }
         }
 
         // Send to channel (creates a thread with detailed commit info)
         if let Some(cid) = channel_id {
-            if let Err(e) = Self::send_to_channel(http, cid, embed).await {
+            if let Err(e) = self.send_to_channel(http, cid, embed).await {
                 warn!(
                     "Failed to send startup notification to channel {}: {}",
                     cid, e
@@ -374,20 +375,32 @@ impl StartupNotifier {
     }
 
     /// Sends the embed to the bot owner via DM with inline commit details
-    async fn send_to_owner(http: &Http, owner_id: u64, embed: CreateEmbed) -> anyhow::Result<()> {
+    async fn send_to_owner(&self, http: &Http, owner_id: u64, embed: CreateEmbed) -> anyhow::Result<()> {
         let user = UserId(owner_id);
         let dm = user.create_dm_channel(http).await?;
         dm.send_message(http, |m| m.set_embed(embed)).await?;
         info!("Sent startup notification to owner {} via DM", owner_id);
 
+        // Get configurable commit count (default 5)
+        let commit_count: usize = self
+            .database
+            .get_bot_setting("startup_dm_commit_count")
+            .await
+            .ok()
+            .flatten()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(5);
+
         // Send detailed commit info as follow-up message (DMs can't have threads)
-        let commits = get_detailed_commits(5).await;
-        if !commits.is_empty() {
-            let repo_url = get_github_repo_url().await;
-            let commit_text = Self::format_commits_for_dm(&commits, repo_url.as_deref());
-            if !commit_text.is_empty() {
-                dm.send_message(http, |m| m.content(&commit_text)).await?;
-                info!("Sent detailed commit info to owner {} via DM", owner_id);
+        if commit_count > 0 {
+            let commits = get_detailed_commits(commit_count).await;
+            if !commits.is_empty() {
+                let repo_url = get_github_repo_url().await;
+                let commit_text = Self::format_commits_for_dm(&commits, repo_url.as_deref());
+                if !commit_text.is_empty() {
+                    dm.send_message(http, |m| m.content(&commit_text)).await?;
+                    info!("Sent detailed commit info to owner {} via DM", owner_id);
+                }
             }
         }
 
@@ -447,6 +460,7 @@ impl StartupNotifier {
 
     /// Sends the embed to a specific channel and creates a thread with detailed commit info
     async fn send_to_channel(
+        &self,
         http: &Http,
         channel_id: u64,
         embed: CreateEmbed,
@@ -455,8 +469,22 @@ impl StartupNotifier {
         let msg = channel.send_message(http, |m| m.set_embed(embed)).await?;
         info!("Sent startup notification to channel {}", channel_id);
 
+        // Get configurable commit count (default 5)
+        let commit_count: usize = self
+            .database
+            .get_bot_setting("startup_channel_commit_count")
+            .await
+            .ok()
+            .flatten()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(5);
+
         // Create a thread for detailed commit info
-        let commits = get_detailed_commits(5).await;
+        if commit_count == 0 {
+            return Ok(());
+        }
+
+        let commits = get_detailed_commits(commit_count).await;
         if !commits.is_empty() {
             let repo_url = get_github_repo_url().await;
 

@@ -1,17 +1,21 @@
-Ah, my friend, I bring news of an elegant enhancement to our capabilities.
+Ah, my friend, I bring news of greater control over your notifications.
 
-From a certain point of view, every commit tells a story - and now those stories are but a click away. The Force has guided us to weave GitHub links throughout our commit displays.
+From a certain point of view, not every detail needs to be shared in every place. The Force has guided us to add configurable commit counts for startup notifications.
 
-**GitHub Commit Links (1.7.0)**
-- Commit hashes in startup notifications are now clickable links to GitHub
-- The `/commits` command displays linked hashes in both the embed and thread details
-- DM notifications to the owner also include these convenient links
-- Supports both SSH and HTTPS remote URL formats
+**Configurable Commit Counts (1.8.0)**
+- New setting `startup_dm_commit_count` controls commits shown in owner DM (default: 5)
+- New setting `startup_channel_commit_count` controls commits in channel thread (default: 5)
+- Set to 0 to disable commit details entirely for that destination
+
+**Configuration:**
+```
+/set_bot_setting startup_dm_commit_count 0
+/set_bot_setting startup_channel_commit_count 1
+```
 
 **Files Modified:**
-- `src/features/startup/notification.rs` - Added `get_github_repo_url()` and `parse_github_url()` functions, updated all commit formatting to include links
-- `src/command_handler.rs` - Updated `/commits` slash command to pass repo URL for linked hashes
+- `src/features/startup/notification.rs` - Added database setting lookups for commit counts
 
-A small change, perhaps, but one that brings clarity and convenience to those who seek to understand our history.
+A small refinement, but one that grants you mastery over what information flows where.
 
 May the Force be with you.
