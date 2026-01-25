@@ -3484,7 +3484,7 @@ Use the buttons below for more help or to try custom prompts!"#;
         command: &ApplicationCommandInteraction,
         request_id: Uuid,
     ) -> Result<()> {
-        use crate::features::startup::notification::{format_commit_for_thread, get_detailed_commits};
+        use crate::features::startup::notification::{format_commit_for_thread, get_detailed_commits, get_github_repo_url};
         use serenity::model::application::interaction::InteractionResponseType;
         use serenity::model::channel::ChannelType;
 
@@ -3496,6 +3496,7 @@ Use the buttons below for more help or to try custom prompts!"#;
         let count = count.clamp(1, 10);
 
         let commits = get_detailed_commits(count).await;
+        let repo_url = get_github_repo_url().await;
 
         if commits.is_empty() {
             command
@@ -3510,10 +3511,15 @@ Use the buttons below for more help or to try custom prompts!"#;
             return Ok(());
         }
 
-        // Build minimal summary for main embed (just subjects and hashes)
+        // Build minimal summary for main embed (subjects with linked hashes)
         let mut summary = String::new();
         for commit in &commits {
-            summary.push_str(&format!("• **{}** (`{}`)\n", commit.subject, commit.hash));
+            let hash_display = if let Some(ref url) = repo_url {
+                format!("[`{}`]({}/commit/{})", commit.hash, url, commit.hash)
+            } else {
+                format!("`{}`", commit.hash)
+            };
+            summary.push_str(&format!("• **{}** ({})\n", commit.subject, hash_display));
         }
 
         // Send minimal embed
@@ -3553,7 +3559,7 @@ Use the buttons below for more help or to try custom prompts!"#;
 
                         // Post detailed commits to thread
                         for commit in &commits {
-                            let formatted = format_commit_for_thread(commit);
+                            let formatted = format_commit_for_thread(commit, repo_url.as_deref());
                             if let Err(e) = thread.say(&ctx.http, &formatted).await {
                                 warn!(
                                     "[{request_id}] Failed to post commit {} to thread: {}",

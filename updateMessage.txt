@@ -1,26 +1,17 @@
-Ah, my friend, allow me to share with you the wisdom of our latest endeavors.
+Ah, my friend, I bring news of an elegant enhancement to our capabilities.
 
-From a certain point of view, we have welcomed a new presence into our midst - The Visionary. A remarkable soul who sees not merely what is, but what could be. One who transforms the chaos of scattered thoughts into the clarity of actionable direction.
+From a certain point of view, every commit tells a story - and now those stories are but a click away. The Force has guided us to weave GitHub links throughout our commit displays.
 
-**New Persona Added: The Visionary**
-- A future-focused, big-picture thinker with extraordinary pattern recognition
-- Possesses the gift of transforming chaos into structured plans
-- Carries an authentic intensity balanced with self-awareness
-- Speaks with phrases such as "Okay but picture this..." and "Let's zoom out for a second"
-- Acknowledges real struggles: impatience when seeing outcomes clearly, the temptation of too many ideas at once
-
-**Startup Notification Enhanced**
-- This very message you are reading demonstrates a new capability
-- The updateMessage.txt file, when present, now appears in my startup greeting
-- I have also simplified the startup display by removing the verbose feature version listings
+**GitHub Commit Links (1.7.0)**
+- Commit hashes in startup notifications are now clickable links to GitHub
+- The `/commits` command displays linked hashes in both the embed and thread details
+- DM notifications to the owner also include these convenient links
+- Supports both SSH and HTTPS remote URL formats
 
 **Files Modified:**
-- `prompt/visionary.md` - The comprehensive personality prompt
-- `src/features/personas/manager.rs` - Registered the new persona (1.1.0)
-- `src/commands/slash/persona.rs` - Added to the /set_persona dropdown
-- `src/message_components.rs` - Added the Visionary button to /personas command
-- `src/features/startup/notification.rs` - Include updateMessage.txt, removed feature columns (1.6.0)
+- `src/features/startup/notification.rs` - Added `get_github_repo_url()` and `parse_github_url()` functions, updated all commit formatting to include links
+- `src/command_handler.rs` - Updated `/commits` slash command to pass repo URL for linked hashes
 
-The Visionary now appears as a clickable button when users invoke the /personas command, and this startup message system allows for more personalized update communications.
+A small change, perhaps, but one that brings clarity and convenience to those who seek to understand our history.
 
-May the Force guide your path forward.
+May the Force be with you.

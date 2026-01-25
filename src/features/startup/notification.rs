@@ -4,11 +4,12 @@
 //! Supports DM to bot owner and/or specific guild channels.
 //! Configuration is stored in the database and managed via /set_guild_setting.
 //!
-//! - **Version**: 1.6.0
+//! - **Version**: 1.7.0
 //! - **Since**: 0.4.0
 //! - **Toggleable**: true
 //!
 //! ## Changelog
+//! - 1.7.0: Add GitHub commit links to startup notification and thread messages
 //! - 1.6.0: Include updateMessage.txt content in startup embed, removed feature version columns
 //! - 1.5.0: Export format_commit_for_thread for /commits slash command thread posting
 //! - 1.4.0: Export CommitInfo and get_detailed_commits for /commits slash command
@@ -137,12 +138,63 @@ fn parse_detailed_commits(output: &str) -> Vec<CommitInfo> {
     commits
 }
 
+/// Gets the GitHub repository URL from git remote origin
+///
+/// Parses both SSH (git@github.com:user/repo.git) and HTTPS formats
+/// Returns the base URL like `https://github.com/user/repo`
+pub async fn get_github_repo_url() -> Option<String> {
+    let output = match Command::new("git")
+        .args(["remote", "get-url", "origin"])
+        .output()
+        .await
+    {
+        Ok(o) => o,
+        Err(e) => {
+            warn!("Failed to get git remote URL: {}", e);
+            return None;
+        }
+    };
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    parse_github_url(&url)
+}
+
+/// Parses a git remote URL into a GitHub web URL
+fn parse_github_url(url: &str) -> Option<String> {
+    // Handle SSH format: git@github.com:user/repo.git
+    if url.starts_with("git@github.com:") {
+        let path = url.strip_prefix("git@github.com:")?;
+        let path = path.strip_suffix(".git").unwrap_or(path);
+        return Some(format!("https://github.com/{}", path));
+    }
+
+    // Handle HTTPS format: https://github.com/user/repo.git
+    if url.starts_with("https://github.com/") {
+        let path = url.strip_prefix("https://github.com/")?;
+        let path = path.strip_suffix(".git").unwrap_or(path);
+        return Some(format!("https://github.com/{}", path));
+    }
+
+    None
+}
+
 /// Formats a single commit for thread display
 ///
 /// Creates a nicely formatted message with the commit subject, hash, body, and files changed.
 /// This is used by both startup notifications and the /commits command.
-pub fn format_commit_for_thread(commit: &CommitInfo) -> String {
-    let mut msg = format!("**{}** (`{}`)\n", commit.subject, commit.hash);
+/// If repo_url is provided, the hash will be a clickable link to the commit.
+pub fn format_commit_for_thread(commit: &CommitInfo, repo_url: Option<&str>) -> String {
+    let hash_display = if let Some(url) = repo_url {
+        format!("[`{}`]({}/commit/{})", commit.hash, url, commit.hash)
+    } else {
+        format!("`{}`", commit.hash)
+    };
+
+    let mut msg = format!("**{}** ({})\n", commit.subject, hash_display);
 
     if !commit.body.is_empty() {
         msg.push_str(&format!("\n{}\n", commit.body));
@@ -331,7 +383,8 @@ impl StartupNotifier {
         // Send detailed commit info as follow-up message (DMs can't have threads)
         let commits = get_detailed_commits(5).await;
         if !commits.is_empty() {
-            let commit_text = Self::format_commits_for_dm(&commits);
+            let repo_url = get_github_repo_url().await;
+            let commit_text = Self::format_commits_for_dm(&commits, repo_url.as_deref());
             if !commit_text.is_empty() {
                 dm.send_message(http, |m| m.content(&commit_text)).await?;
                 info!("Sent detailed commit info to owner {} via DM", owner_id);
@@ -342,11 +395,16 @@ impl StartupNotifier {
     }
 
     /// Formats commit info for inline display in DMs
-    fn format_commits_for_dm(commits: &[CommitInfo]) -> String {
+    fn format_commits_for_dm(commits: &[CommitInfo], repo_url: Option<&str>) -> String {
         let mut result = String::from("**Recent Changes (Detailed):**\n");
 
         for commit in commits {
-            result.push_str(&format!("\n**{}** (`{}`)\n", commit.subject, commit.hash));
+            let hash_display = if let Some(url) = repo_url {
+                format!("[`{}`]({}/commit/{})", commit.hash, url, commit.hash)
+            } else {
+                format!("`{}`", commit.hash)
+            };
+            result.push_str(&format!("\n**{}** ({})\n", commit.subject, hash_display));
 
             if !commit.body.is_empty() {
                 // Truncate body if too long for DM
@@ -400,6 +458,8 @@ impl StartupNotifier {
         // Create a thread for detailed commit info
         let commits = get_detailed_commits(5).await;
         if !commits.is_empty() {
+            let repo_url = get_github_repo_url().await;
+
             // Create thread from the message
             match channel
                 .create_public_thread(http, msg.id, |t| {
@@ -417,13 +477,13 @@ impl StartupNotifier {
                     );
 
                     // Post each commit as a separate message in the thread
-                    Self::post_detailed_commits_to_thread(http, ChannelId(thread.id.0), &commits)
+                    Self::post_detailed_commits_to_thread(http, ChannelId(thread.id.0), &commits, repo_url.as_deref())
                         .await;
                 }
                 Err(e) => {
                     warn!("Failed to create thread for commit details: {}", e);
                     // Fall back to posting in the channel directly
-                    Self::post_detailed_commits_to_channel(http, channel, &commits).await;
+                    Self::post_detailed_commits_to_channel(http, channel, &commits, repo_url.as_deref()).await;
                 }
             }
         }
@@ -436,9 +496,10 @@ impl StartupNotifier {
         http: &Http,
         thread_id: ChannelId,
         commits: &[CommitInfo],
+        repo_url: Option<&str>,
     ) {
         for commit in commits {
-            let msg = format_commit_for_thread(commit);
+            let msg = format_commit_for_thread(commit, repo_url);
             if let Err(e) = thread_id.say(http, &msg).await {
                 warn!("Failed to post commit {} to thread: {}", commit.hash, e);
             }
@@ -450,11 +511,17 @@ impl StartupNotifier {
         http: &Http,
         channel_id: ChannelId,
         commits: &[CommitInfo],
+        repo_url: Option<&str>,
     ) {
         // Combine all commits into one message for channel fallback
         let mut combined = String::from("**Recent Changes (Detailed):**\n");
         for commit in commits.iter().take(3) {
-            combined.push_str(&format!("\n**{}** (`{}`)", commit.subject, commit.hash));
+            let hash_display = if let Some(url) = repo_url {
+                format!("[`{}`]({}/commit/{})", commit.hash, url, commit.hash)
+            } else {
+                format!("`{}`", commit.hash)
+            };
+            combined.push_str(&format!("\n**{}** ({})", commit.subject, hash_display));
             if !commit.files.is_empty() {
                 let files_preview: Vec<_> = commit.files.iter().take(3).collect();
                 combined.push_str(&format!(
@@ -592,12 +659,26 @@ mod tests {
             files: vec!["src/main.rs".to_string(), "src/lib.rs".to_string()],
         };
 
-        let formatted = format_commit_for_thread(&commit);
+        let formatted = format_commit_for_thread(&commit, None);
         assert!(formatted.contains("feat: add new feature"));
         assert!(formatted.contains("abc1234"));
         assert!(formatted.contains("This is the body"));
         assert!(formatted.contains("src/main.rs"));
         assert!(formatted.contains("src/lib.rs"));
+    }
+
+    #[test]
+    fn test_format_commit_for_thread_with_link() {
+        let commit = CommitInfo {
+            hash: "abc1234".to_string(),
+            subject: "feat: add new feature".to_string(),
+            body: String::new(),
+            files: vec![],
+        };
+
+        let formatted = format_commit_for_thread(&commit, Some("https://github.com/user/repo"));
+        assert!(formatted.contains("feat: add new feature"));
+        assert!(formatted.contains("[`abc1234`](https://github.com/user/repo/commit/abc1234)"));
     }
 
     #[test]
@@ -609,10 +690,51 @@ mod tests {
             files: vec!["src/main.rs".to_string()],
         }];
 
-        let formatted = StartupNotifier::format_commits_for_dm(&commits);
+        let formatted = StartupNotifier::format_commits_for_dm(&commits, None);
         assert!(formatted.contains("Recent Changes"));
         assert!(formatted.contains("feat: add new feature"));
         assert!(formatted.contains("abc1234"));
         assert!(formatted.contains("src/main.rs"));
+    }
+
+    #[test]
+    fn test_format_commits_for_dm_with_link() {
+        let commits = vec![CommitInfo {
+            hash: "abc1234".to_string(),
+            subject: "feat: add new feature".to_string(),
+            body: String::new(),
+            files: vec![],
+        }];
+
+        let formatted = StartupNotifier::format_commits_for_dm(&commits, Some("https://github.com/user/repo"));
+        assert!(formatted.contains("[`abc1234`](https://github.com/user/repo/commit/abc1234)"));
+    }
+
+    #[test]
+    fn test_parse_github_url_ssh() {
+        let url = "git@github.com:user/repo.git";
+        let result = parse_github_url(url);
+        assert_eq!(result, Some("https://github.com/user/repo".to_string()));
+    }
+
+    #[test]
+    fn test_parse_github_url_https() {
+        let url = "https://github.com/user/repo.git";
+        let result = parse_github_url(url);
+        assert_eq!(result, Some("https://github.com/user/repo".to_string()));
+    }
+
+    #[test]
+    fn test_parse_github_url_https_no_git_suffix() {
+        let url = "https://github.com/user/repo";
+        let result = parse_github_url(url);
+        assert_eq!(result, Some("https://github.com/user/repo".to_string()));
+    }
+
+    #[test]
+    fn test_parse_github_url_invalid() {
+        let url = "https://gitlab.com/user/repo.git";
+        let result = parse_github_url(url);
+        assert_eq!(result, None);
     }
 }
