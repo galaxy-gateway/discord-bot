@@ -1,13 +1,14 @@
 //! # Feature: Persona System
 //!
-//! Multi-personality AI responses with 5 distinct personas (obi, muppet, chef, teacher, analyst).
+//! Multi-personality AI responses with 6 distinct personas (obi, muppet, chef, teacher, analyst, visionary).
 //! Each persona has a unique system prompt loaded from prompt/*.md files at compile time.
 //!
-//! - **Version**: 1.0.0
+//! - **Version**: 1.1.0
 //! - **Since**: 0.1.0
 //! - **Toggleable**: false
 //!
 //! ## Changelog
+//! - 1.1.0: Added visionary persona - a future-focused big-picture thinker
 //! - 1.0.0: Initial release with 5 personas and verbosity modifiers
 
 use serde::{Deserialize, Serialize};
@@ -64,6 +65,12 @@ impl PersonaManager {
             name: "Step-by-Step Analyst".to_string(),
             system_prompt: include_str!("../../../prompt/analyst.md").to_string(),
             description: "An analyst who breaks things down into clear steps".to_string(),
+        });
+
+        personas.insert("visionary".to_string(), Persona {
+            name: "The Visionary".to_string(),
+            system_prompt: include_str!("../../../prompt/visionary.md").to_string(),
+            description: "A future-focused big-picture thinker who transforms chaos into actionable plans".to_string(),
         });
 
         PersonaManager { personas }
@@ -129,6 +136,7 @@ mod tests {
         assert!(manager.get_persona("chef").is_some());
         assert!(manager.get_persona("teacher").is_some());
         assert!(manager.get_persona("analyst").is_some());
+        assert!(manager.get_persona("visionary").is_some());
         assert!(manager.get_persona("nonexistent").is_none());
     }
 
@@ -176,6 +184,20 @@ mod tests {
         assert!(obi.system_prompt.contains("Philosophical"));
         assert!(obi.system_prompt.contains("Diplomatic Restraint"));
         assert!(obi.system_prompt.len() > 100, "Prompt should be substantial");
+    }
+
+    #[test]
+    fn test_visionary_prompt_loaded() {
+        let manager = PersonaManager::new();
+        let visionary = manager.get_persona("visionary").expect("visionary persona should exist");
+
+        // Verify the prompt contains Visionary specific phrases
+        assert!(visionary.system_prompt.contains("The Visionary"));
+        assert!(visionary.system_prompt.contains("big-picture"));
+        assert!(visionary.system_prompt.contains("Future-Focused"));
+        assert!(visionary.system_prompt.contains("Transformation Energy"));
+        assert!(visionary.system_prompt.contains("Hardcore Intensity"));
+        assert!(visionary.system_prompt.len() > 100, "Prompt should be substantial");
     }
 
     #[test]

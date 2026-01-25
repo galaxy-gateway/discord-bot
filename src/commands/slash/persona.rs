@@ -32,6 +32,7 @@ fn create_set_persona_command() -> CreateApplicationCommand {
                 .add_string_choice("obi", "obi")
                 .add_string_choice("teacher", "teacher")
                 .add_string_choice("analyst", "analyst")
+                .add_string_choice("visionary", "visionary")
         })
         .to_owned()
 }
