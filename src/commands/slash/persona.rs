@@ -1,11 +1,11 @@
-//! Persona slash commands: /personas, /set_persona
+//! Persona slash commands: /personas, /set_user
 
 use serenity::builder::CreateApplicationCommand;
 use serenity::model::application::command::CommandOptionType;
 
 /// Creates persona commands
 pub fn create_commands() -> Vec<CreateApplicationCommand> {
-    vec![create_personas_command(), create_set_persona_command()]
+    vec![create_personas_command(), create_set_user_command()]
 }
 
 /// Creates the personas command
@@ -16,23 +16,26 @@ fn create_personas_command() -> CreateApplicationCommand {
         .to_owned()
 }
 
-/// Creates the set_persona command
-fn create_set_persona_command() -> CreateApplicationCommand {
+/// Creates the set_user command - unified user settings
+fn create_set_user_command() -> CreateApplicationCommand {
     CreateApplicationCommand::default()
-        .name("set_persona")
-        .description("Set your default persona")
+        .name("set_user")
+        .description("Set your personal bot preferences")
         .create_option(|option| {
             option
-                .name("persona")
-                .description("The persona to set as your default")
+                .name("setting")
+                .description("The setting to change")
                 .kind(CommandOptionType::String)
                 .required(true)
-                .add_string_choice("muppet", "muppet")
-                .add_string_choice("chef", "chef")
-                .add_string_choice("obi", "obi")
-                .add_string_choice("teacher", "teacher")
-                .add_string_choice("analyst", "analyst")
-                .add_string_choice("visionary", "visionary")
+                .add_string_choice("persona", "persona")
+        })
+        .create_option(|option| {
+            option
+                .name("value")
+                .description("The value to set")
+                .kind(CommandOptionType::String)
+                .required(true)
+                .set_autocomplete(true)
         })
         .to_owned()
 }

@@ -3,11 +3,12 @@
 //! Multi-personality AI responses with 6 distinct personas (obi, muppet, chef, teacher, analyst, visionary).
 //! Each persona has a unique system prompt loaded from prompt/*.md files at compile time.
 //!
-//! - **Version**: 1.1.0
+//! - **Version**: 1.2.0
 //! - **Since**: 0.1.0
 //! - **Toggleable**: false
 //!
 //! ## Changelog
+//! - 1.2.0: Added channel-level persona override via /set_channel_setting persona
 //! - 1.1.0: Added visionary persona - a future-focused big-picture thinker
 //! - 1.0.0: Initial release with 5 personas and verbosity modifiers
 

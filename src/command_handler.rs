@@ -407,9 +407,13 @@ impl CommandHandler {
         debug!("[{}] 🏷️ Processing mention in channel | User: {} | Message: '{}'",
                request_id, user_id, user_message.chars().take(100).collect::<String>());
 
-        // Get user's persona with guild default fallback
+        // Get user's persona with channel override -> user -> guild default cascade
         debug!("[{request_id}] 🎭 Fetching user persona from database");
-        let user_persona = self.database.get_user_persona_with_guild(&user_id, guild_id_opt).await?;
+        let user_persona = if let Some(gid) = guild_id_opt {
+            self.database.get_persona_with_channel(&user_id, gid, &channel_id).await?
+        } else {
+            self.database.get_user_persona_with_guild(&user_id, None).await?
+        };
         debug!("[{request_id}] 🎭 User persona: {user_persona}");
 
         // Get max_context_messages from guild settings
@@ -604,9 +608,9 @@ impl CommandHandler {
                 debug!("[{request_id}] 🎭 Handling personas command");
                 self.handle_slash_personas_with_id(ctx, command, request_id).await?;
             }
-            "set_persona" => {
-                debug!("[{request_id}] ⚙️ Handling set_persona command");
-                self.handle_slash_set_persona_with_id(ctx, command, request_id).await?;
+            "set_user" => {
+                debug!("[{request_id}] ⚙️ Handling set_user command");
+                self.handle_set_user(ctx, command, request_id).await?;
             }
             "forget" => {
                 debug!("[{request_id}] 🧹 Handling forget command");
@@ -629,13 +633,13 @@ impl CommandHandler {
                 self.handle_context_menu_user_with_id(ctx, command, request_id).await?;
             }
             // Admin commands
-            "set_channel_verbosity" => {
-                debug!("[{request_id}] ⚙️ Handling set_channel_verbosity command");
-                self.handle_set_channel_verbosity(ctx, command, request_id).await?;
+            "set_channel" => {
+                debug!("[{request_id}] ⚙️ Handling set_channel command");
+                self.handle_set_channel(ctx, command, request_id).await?;
             }
-            "set_guild_setting" => {
-                debug!("[{request_id}] ⚙️ Handling set_guild_setting command");
-                self.handle_set_guild_setting(ctx, command, request_id).await?;
+            "set_guild" => {
+                debug!("[{request_id}] ⚙️ Handling set_guild command");
+                self.handle_set_guild(ctx, command, request_id).await?;
             }
             "settings" => {
                 debug!("[{request_id}] ⚙️ Handling settings command");
@@ -1330,7 +1334,7 @@ impl CommandHandler {
 `/ping` - Test bot responsiveness
 `/help` - Show this help message
 `/personas` - List available personas
-`/set_persona` - Set your default persona
+`/set_user` - Set your personal preferences
 `/hey <message>` - Chat with your current persona
 `/explain <topic>` - Get an explanation
 `/simple <topic>` - Get a simple explanation with analogies
@@ -1387,17 +1391,29 @@ Use the buttons below for more help or to try custom prompts!"#;
         Ok(())
     }
 
-    async fn handle_slash_set_persona(&self, ctx: &Context, command: &ApplicationCommandInteraction) -> Result<()> {
-        let persona_name = get_string_option(&command.data.options, "persona")
-            .ok_or_else(|| anyhow::anyhow!("Missing persona parameter"))?;
+    /// Handle /set_user command (unified user settings)
+    async fn handle_set_user(
+        &self,
+        ctx: &Context,
+        command: &ApplicationCommandInteraction,
+        request_id: Uuid,
+    ) -> Result<()> {
+        use crate::commands::slash::admin::validate_user_setting;
 
-        if self.persona_manager.get_persona(&persona_name).is_none() {
+        let setting = get_string_option(&command.data.options, "setting")
+            .ok_or_else(|| anyhow::anyhow!("Missing setting parameter"))?;
+        let value = get_string_option(&command.data.options, "value")
+            .ok_or_else(|| anyhow::anyhow!("Missing value parameter"))?;
+
+        // Validate setting and value
+        let (is_valid, error_msg) = validate_user_setting(&setting, &value);
+        if !is_valid {
             command
                 .create_interaction_response(&ctx.http, |response| {
                     response
                         .kind(serenity::model::application::interaction::InteractionResponseType::ChannelMessageWithSource)
                         .interaction_response_data(|message| {
-                            message.content("Invalid persona. Use `/personas` to see available options.")
+                            message.content(format!("❌ {error_msg}"))
                         })
                 })
                 .await?;
@@ -1405,14 +1421,25 @@ Use the buttons below for more help or to try custom prompts!"#;
         }
 
         let user_id = command.user.id.to_string();
-        self.database.set_user_persona(&user_id, &persona_name).await?;
-        
+
+        // Apply the setting
+        let response_message = match setting.as_str() {
+            "persona" => {
+                self.database.set_user_persona(&user_id, &value).await?;
+                info!("[{request_id}] Set persona for user {user_id} to {value}");
+                format!("✅ Your persona has been set to **{value}**")
+            }
+            _ => {
+                format!("❌ Unknown setting: {setting}")
+            }
+        };
+
         command
             .create_interaction_response(&ctx.http, |response| {
                 response
                     .kind(serenity::model::application::interaction::InteractionResponseType::ChannelMessageWithSource)
                     .interaction_response_data(|message| {
-                        message.content(format!("Your persona has been set to: `{persona_name}`"))
+                        message.content(response_message)
                     })
             })
             .await?;
@@ -1438,13 +1465,19 @@ Use the buttons below for more help or to try custom prompts!"#;
             .ok_or_else(|| anyhow::anyhow!("Missing message parameter"))?;
 
         let user_id = command.user.id.to_string();
-        debug!("[{}] 👤 Processing for user: {} | Message: '{}'", 
+        let channel_id = command.channel_id.to_string();
+        debug!("[{}] 👤 Processing for user: {} | Message: '{}'",
                request_id, user_id, user_message.chars().take(100).collect::<String>());
 
+        // Get user's persona with channel override -> user -> guild default cascade
         debug!("[{request_id}] 🔍 Getting user persona from database");
-        let user_persona = self.database.get_user_persona(&user_id).await?;
+        let user_persona = if let Some(guild_id) = command.guild_id {
+            self.database.get_persona_with_channel(&user_id, &guild_id.to_string(), &channel_id).await?
+        } else {
+            self.database.get_user_persona(&user_id).await?
+        };
         debug!("[{request_id}] 🎭 User persona: {user_persona}");
-        
+
         let modifier = match command.data.name.as_str() {
             "explain" => Some("explain"),
             "simple" => Some("simple"),
@@ -1455,7 +1488,7 @@ Use the buttons below for more help or to try custom prompts!"#;
 
         // Get channel verbosity (only for guild channels)
         let verbosity = if let Some(guild_id) = command.guild_id {
-            self.database.get_channel_verbosity(&guild_id.to_string(), &command.channel_id.to_string()).await?
+            self.database.get_channel_verbosity(&guild_id.to_string(), &channel_id).await?
         } else {
             "concise".to_string() // Default to concise for DMs
         };
@@ -1758,11 +1791,6 @@ Use the buttons below for more help or to try custom prompts!"#;
         self.handle_slash_personas(ctx, command).await
     }
 
-    async fn handle_slash_set_persona_with_id(&self, ctx: &Context, command: &ApplicationCommandInteraction, request_id: Uuid) -> Result<()> {
-        debug!("[{request_id}] ⚙️ Processing set_persona slash command");
-        self.handle_slash_set_persona(ctx, command).await
-    }
-
     async fn handle_slash_forget_with_id(&self, ctx: &Context, command: &ApplicationCommandInteraction, request_id: Uuid) -> Result<()> {
         let user_id = command.user.id.to_string();
         let channel_id = command.channel_id.to_string();
@@ -1934,7 +1962,7 @@ Use the buttons below for more help or to try custom prompts!"#;
 `!ping` - Test bot responsiveness
 `/help` - Show this help message
 `/personas` - List available personas
-`/set_persona <name>` - Set your default persona
+`/set_user setting:persona value:<name>` - Set your default persona
 `/hey <message>` - Chat with your current persona
 `/explain <message>` - Get an explanation
 `/simple <message>` - Get a simple explanation with analogies
@@ -2605,13 +2633,15 @@ Use the buttons below for more help or to try custom prompts!"#;
 
     // ==================== Admin Command Handlers ====================
 
-    /// Handle /set_channel_verbosity command
-    async fn handle_set_channel_verbosity(
+    /// Handle /set_channel command (unified channel settings)
+    async fn handle_set_channel(
         &self,
         ctx: &Context,
         command: &ApplicationCommandInteraction,
         request_id: Uuid,
     ) -> Result<()> {
+        use crate::commands::slash::admin::validate_channel_setting;
+
         let guild_id = match command.guild_id {
             Some(id) => id.to_string(),
             None => {
@@ -2628,17 +2658,20 @@ Use the buttons below for more help or to try custom prompts!"#;
             }
         };
 
-        let level = get_string_option(&command.data.options, "level")
-            .ok_or_else(|| anyhow::anyhow!("Missing level parameter"))?;
+        let setting = get_string_option(&command.data.options, "setting")
+            .ok_or_else(|| anyhow::anyhow!("Missing setting parameter"))?;
+        let value = get_string_option(&command.data.options, "value")
+            .ok_or_else(|| anyhow::anyhow!("Missing value parameter"))?;
 
-        // Validate level
-        if !["concise", "normal", "detailed"].contains(&level.as_str()) {
+        // Validate setting and value
+        let (is_valid, error_msg) = validate_channel_setting(&setting, &value);
+        if !is_valid {
             command
                 .create_interaction_response(&ctx.http, |response| {
                     response
                         .kind(serenity::model::application::interaction::InteractionResponseType::ChannelMessageWithSource)
                         .interaction_response_data(|message| {
-                            message.content("❌ Invalid verbosity level. Use: `concise`, `normal`, or `detailed`.")
+                            message.content(format!("❌ {error_msg}"))
                         })
                 })
                 .await?;
@@ -2650,19 +2683,42 @@ Use the buttons below for more help or to try custom prompts!"#;
             .map(|id| id.to_string())
             .unwrap_or_else(|| command.channel_id.to_string());
 
-        info!("[{request_id}] Setting verbosity for channel {target_channel_id} to {level}");
-
-        // Set the verbosity
-        self.database.set_channel_verbosity(&guild_id, &target_channel_id, &level).await?;
+        // Apply the setting
+        let response_message = match setting.as_str() {
+            "verbosity" => {
+                self.database.set_channel_verbosity(&guild_id, &target_channel_id, &value).await?;
+                info!("[{request_id}] Set verbosity for channel {target_channel_id} to {value}");
+                format!("✅ Verbosity for <#{target_channel_id}> set to **{value}**")
+            }
+            "persona" => {
+                if value == "clear" {
+                    self.database.set_channel_persona(&guild_id, &target_channel_id, None).await?;
+                    info!("[{request_id}] Cleared persona override for channel {target_channel_id}");
+                    format!("✅ Persona override cleared for <#{target_channel_id}>. Users will use their own personas.")
+                } else {
+                    self.database.set_channel_persona(&guild_id, &target_channel_id, Some(&value)).await?;
+                    info!("[{request_id}] Set persona for channel {target_channel_id} to {value}");
+                    format!("✅ Persona for <#{target_channel_id}> set to **{value}**. All users in this channel will use this persona.")
+                }
+            }
+            "conflict_mediation" => {
+                let enabled = value == "enabled";
+                self.database.set_channel_conflict_enabled(&guild_id, &target_channel_id, enabled).await?;
+                info!("[{request_id}] Set conflict_mediation for channel {target_channel_id} to {value}");
+                let status = if enabled { "Enabled ✅" } else { "Disabled ❌" };
+                format!("✅ Conflict mediation for <#{target_channel_id}> is now **{status}**")
+            }
+            _ => {
+                format!("❌ Unknown setting: {setting}")
+            }
+        };
 
         command
             .create_interaction_response(&ctx.http, |response| {
                 response
                     .kind(serenity::model::application::interaction::InteractionResponseType::ChannelMessageWithSource)
                     .interaction_response_data(|message| {
-                        message.content(format!(
-                            "✅ Verbosity for <#{target_channel_id}> set to **{level}**"
-                        ))
+                        message.content(response_message)
                     })
             })
             .await?;
@@ -2670,13 +2726,15 @@ Use the buttons below for more help or to try custom prompts!"#;
         Ok(())
     }
 
-    /// Handle /set_guild_setting command
-    async fn handle_set_guild_setting(
+    /// Handle /set_guild command
+    async fn handle_set_guild(
         &self,
         ctx: &Context,
         command: &ApplicationCommandInteraction,
         request_id: Uuid,
     ) -> Result<()> {
+        use crate::commands::slash::admin::validate_guild_setting;
+
         let guild_id = match command.guild_id {
             Some(id) => id.to_string(),
             None => {
@@ -2699,113 +2757,8 @@ Use the buttons below for more help or to try custom prompts!"#;
         let value = get_string_option(&command.data.options, "value")
             .ok_or_else(|| anyhow::anyhow!("Missing value parameter"))?;
 
-        // Validate setting and value
-        let (is_valid, error_msg) = match setting.as_str() {
-            "default_verbosity" => {
-                if ["concise", "normal", "detailed"].contains(&value.as_str()) {
-                    (true, "")
-                } else {
-                    (false, "Invalid verbosity level. Use: `concise`, `normal`, or `detailed`.")
-                }
-            }
-            "default_persona" => {
-                if ["obi", "muppet", "chef", "teacher", "analyst"].contains(&value.as_str()) {
-                    (true, "")
-                } else {
-                    (false, "Invalid persona. Use: `obi`, `muppet`, `chef`, `teacher`, or `analyst`.")
-                }
-            }
-            "conflict_mediation" => {
-                if ["enabled", "disabled"].contains(&value.as_str()) {
-                    (true, "")
-                } else {
-                    (false, "Invalid value. Use: `enabled` or `disabled`.")
-                }
-            }
-            "conflict_sensitivity" => {
-                if ["low", "medium", "high", "ultra"].contains(&value.as_str()) {
-                    (true, "")
-                } else {
-                    (false, "Invalid sensitivity. Use: `low`, `medium`, `high`, or `ultra`.")
-                }
-            }
-            "mediation_cooldown" => {
-                if ["1", "5", "10", "15", "30", "60"].contains(&value.as_str()) {
-                    (true, "")
-                } else {
-                    (false, "Invalid cooldown. Use: `1`, `5`, `10`, `15`, `30`, or `60` (minutes).")
-                }
-            }
-            "max_context_messages" => {
-                if ["10", "20", "40", "60"].contains(&value.as_str()) {
-                    (true, "")
-                } else {
-                    (false, "Invalid context size. Use: `10`, `20`, `40`, or `60` (messages).")
-                }
-            }
-            "audio_transcription" => {
-                if ["enabled", "disabled"].contains(&value.as_str()) {
-                    (true, "")
-                } else {
-                    (false, "Invalid value. Use: `enabled` or `disabled`.")
-                }
-            }
-            "audio_transcription_mode" => {
-                if ["always", "mention_only"].contains(&value.as_str()) {
-                    (true, "")
-                } else {
-                    (false, "Invalid mode. Use: `always` or `mention_only`.")
-                }
-            }
-            "audio_transcription_output" => {
-                if ["transcription_only", "with_commentary"].contains(&value.as_str()) {
-                    (true, "")
-                } else {
-                    (false, "Invalid mode. Use: `transcription_only` or `with_commentary`.")
-                }
-            }
-            "mention_responses" => {
-                if ["enabled", "disabled"].contains(&value.as_str()) {
-                    (true, "")
-                } else {
-                    (false, "Invalid value. Use: `enabled` or `disabled`.")
-                }
-            }
-            // Global bot settings (stored in bot_settings table)
-            "startup_notification" => {
-                if ["enabled", "disabled"].contains(&value.as_str()) {
-                    (true, "")
-                } else {
-                    (false, "Invalid value. Use: `enabled` or `disabled`.")
-                }
-            }
-            "startup_notify_owner_id" => {
-                if !value.is_empty() && value.parse::<u64>().is_ok() {
-                    (true, "")
-                } else {
-                    (false, "Invalid user ID. Enter a valid Discord user ID (numeric). Get it by right-clicking your username with Developer Mode enabled.")
-                }
-            }
-            "startup_notify_channel_id" => {
-                if !value.is_empty() && value.parse::<u64>().is_ok() {
-                    (true, "")
-                } else {
-                    (false, "Invalid channel ID. Enter a valid Discord channel ID (numeric). Get it by right-clicking the channel with Developer Mode enabled.")
-                }
-            }
-            "startup_dm_commit_count" | "startup_channel_commit_count" => {
-                if let Ok(count) = value.parse::<usize>() {
-                    if count <= 20 {
-                        (true, "")
-                    } else {
-                        (false, "Commit count must be between 0 and 20.")
-                    }
-                } else {
-                    (false, "Invalid value. Enter a number between 0 and 20 (0 to disable).")
-                }
-            }
-            _ => (false, "Unknown setting. Use `/settings` to see available options."),
-        };
+        // Validate setting and value using shared validation
+        let (is_valid, error_msg) = validate_guild_setting(&setting, &value);
 
         if !is_valid {
             command
@@ -2876,8 +2829,11 @@ Use the buttons below for more help or to try custom prompts!"#;
 
         let channel_id = command.channel_id.to_string();
 
-        // Get channel settings
-        let (channel_verbosity, conflict_enabled) = self.database.get_channel_settings(&guild_id, &channel_id).await?;
+        // Get channel settings (verbosity, conflict_enabled, persona)
+        let (channel_verbosity, conflict_enabled, channel_persona) = self.database.get_channel_settings(&guild_id, &channel_id).await?;
+        let channel_persona_display = channel_persona
+            .map(|p| format!("`{p}` (override)"))
+            .unwrap_or_else(|| "Not set (uses user/guild default)".to_string());
 
         // Get guild settings with defaults
         let guild_default_verbosity = self.database.get_guild_setting(&guild_id, "default_verbosity").await?
@@ -2912,6 +2868,7 @@ Use the buttons below for more help or to try custom prompts!"#;
             "**Bot Settings**\n\n\
             **Channel Settings** (<#{}>):\n\
             • Verbosity: `{}`\n\
+            • Persona: {}\n\
             • Conflict Mediation: {}\n\n\
             **Guild Settings**:\n\
             • Default Verbosity: `{}`\n\
@@ -2927,6 +2884,7 @@ Use the buttons below for more help or to try custom prompts!"#;
             • Bot Admin Role: {}\n",
             channel_id,
             channel_verbosity,
+            channel_persona_display,
             if conflict_enabled { "Enabled ✅" } else { "Disabled ❌" },
             guild_default_verbosity,
             guild_default_persona,
@@ -3283,6 +3241,7 @@ Use the buttons below for more help or to try custom prompts!"#;
         request_id: Uuid,
     ) -> Result<()> {
         let user_id = command.user.id.to_string();
+        let channel_id = command.channel_id.to_string();
         let guild_id = command.guild_id.map(|id| id.to_string());
 
         let component = get_string_option(&command.data.options, "component")
@@ -3297,8 +3256,12 @@ Use the buttons below for more help or to try custom prompts!"#;
             })
             .await?;
 
-        // Get user's persona
-        let persona_name = self.database.get_user_persona_with_guild(&user_id, guild_id.as_deref()).await?;
+        // Get user's persona with channel override -> user -> guild default cascade
+        let persona_name = if let Some(gid) = &guild_id {
+            self.database.get_persona_with_channel(&user_id, gid, &channel_id).await?
+        } else {
+            self.database.get_user_persona(&user_id).await?
+        };
 
         // Get the code snippet for this component
         let (component_title, code_snippet) = get_component_snippet(&component);

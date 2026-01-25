@@ -9,7 +9,7 @@
 //! ## Changelog
 //! - 1.0.0: Reorganized from monolithic slash_commands.rs
 
-mod admin;
+pub mod admin;
 mod chat;
 mod context_menu;
 mod dm_stats;
@@ -200,7 +200,7 @@ mod tests {
             "ping",
             "help",
             "personas",
-            "set_persona",
+            "set_user",
             "hey",
             "explain",
             "simple",
@@ -211,8 +211,8 @@ mod tests {
             "remind",
             "reminders",
             "introspect",
-            "set_channel_verbosity",
-            "set_guild_setting",
+            "set_channel",
+            "set_guild",
             "settings",
             "admin_role",
             // New utility commands

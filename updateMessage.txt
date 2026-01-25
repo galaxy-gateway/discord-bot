@@ -1,23 +1,42 @@
-Okay but picture this - you now have full control over how much noise hits your notifications.
+Picture this: three unified commands for three scopes. User, channel, guild. Clean separation, simple mental model.
 
-Here's what I'm seeing: not everyone needs a wall of commit history every time the bot spins up. Some of you want the details in your DMs, others just want a quick pulse check in the channel. Now you get to decide.
+**Unified Settings Commands (3.16.0)**
 
-**Configurable Commit Counts (1.8.0)**
-- `startup_dm_commit_count` - how many commits show up in owner DMs (default: 5)
-- `startup_channel_commit_count` - how many land in the channel thread (default: 5)
-- Set either to 0 to turn it off completely. Clean. Simple. Your call.
+The refactor:
+- `/set_user` - your personal preferences
+- `/set_channel` - channel-level settings (admin)
+- `/set_guild` - guild-wide settings (admin)
 
-**How to set it up:**
-```
-/set_guild_setting startup_dm_commit_count 0
-/set_guild_setting startup_channel_commit_count 1
-```
+User settings (via `/set_user setting:X value:Y`):
+- `persona` - your default persona (obi, muppet, chef, teacher, analyst, visionary)
+
+Channel settings (via `/set_channel setting:X value:Y`):
+- `verbosity` - concise, normal, detailed
+- `persona` - force a persona override (includes clear option)
+- `conflict_mediation` - enabled, disabled
+
+Guild settings (via `/set_guild setting:X value:Y`):
+- `default_verbosity`, `default_persona`
+- `conflict_mediation`, `conflict_sensitivity`, `mediation_cooldown`
+- `max_context_messages`, `audio_transcription`, `audio_transcription_mode`
+- `audio_transcription_output`, `mention_responses`
+- `startup_notification`, `startup_notify_owner_id`, `startup_notify_channel_id`
+- `startup_dm_commit_count`, `startup_channel_commit_count`
+
+Persona Resolution Order:
+1. Channel persona (if set) - highest priority
+2. User preference
+3. Guild default
+4. Environment variable
+5. "obi" fallback
 
 **What changed:**
-- `src/features/startup/notification.rs` - reads your preferences from the database now
-- `src/commands/slash/admin.rs` - new settings in the dropdown
-- `src/command_handler.rs` - validation and routing for the new options
+- `src/commands/slash/persona.rs` - /set_user command
+- `src/commands/slash/admin.rs` - /set_channel, /set_guild, validation functions, 29 tests
+- `src/command_handler.rs` - unified handlers for all three scopes
+- `src/database.rs` - schema migration for channel persona
+- Removed: `/set_persona`, `/set_channel_verbosity`, `/set_channel_persona`, `/set_guild_setting`
 
-The bigger picture here? This is about giving you the controls to shape the bot's behavior around YOUR workflow, not the other way around. More of this coming.
+Three scopes. Three commands. Thats it.
 
 Trust the process.

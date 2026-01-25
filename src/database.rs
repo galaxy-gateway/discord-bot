@@ -371,6 +371,25 @@ impl Database {
              ON channel_settings(channel_id)",
         )?;
 
+        // Add default_persona column to channel_settings if it doesn't exist
+        // SQLite doesn't support ADD COLUMN IF NOT EXISTS, so we check pragmatically
+        let has_channel_persona: bool = {
+            let mut stmt = conn.prepare("PRAGMA table_info(channel_settings)")?;
+            let mut found = false;
+            while let Ok(State::Row) = stmt.next() {
+                let col_name: String = stmt.read(1)?;
+                if col_name == "default_persona" {
+                    found = true;
+                    break;
+                }
+            }
+            found
+        };
+
+        if !has_channel_persona {
+            conn.execute("ALTER TABLE channel_settings ADD COLUMN default_persona TEXT")?;
+        }
+
         // Bot Settings (for global bot configuration, not per-guild)
         conn.execute(
             "CREATE TABLE IF NOT EXISTS bot_settings (
@@ -643,6 +662,86 @@ impl Database {
             if let Ok(State::Row) = guild_stmt.next() {
                 return Ok(guild_stmt.read::<String, _>(0)?);
             }
+        }
+
+        // Fall back to PERSONA environment variable, then 'obi'
+        Ok(std::env::var("PERSONA").unwrap_or_else(|_| "obi".to_string()))
+    }
+
+    /// Get the channel-level persona override if set
+    pub async fn get_channel_persona(&self, guild_id: &str, channel_id: &str) -> Result<Option<String>> {
+        let conn = self.connection.lock().await;
+        let mut statement = conn.prepare(
+            "SELECT default_persona FROM channel_settings WHERE guild_id = ? AND channel_id = ?"
+        )?;
+        statement.bind((1, guild_id))?;
+        statement.bind((2, channel_id))?;
+
+        if let Ok(State::Row) = statement.next() {
+            let persona: Option<String> = statement.read::<Option<String>, _>(0)?;
+            Ok(persona)
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Set or clear the channel-level persona override
+    /// Pass None to clear the override
+    pub async fn set_channel_persona(&self, guild_id: &str, channel_id: &str, persona: Option<&str>) -> Result<()> {
+        let conn = self.connection.lock().await;
+        let mut statement = conn.prepare(
+            "INSERT INTO channel_settings (guild_id, channel_id, default_persona, updated_at)
+             VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+             ON CONFLICT(guild_id, channel_id) DO UPDATE SET
+             default_persona = excluded.default_persona,
+             updated_at = CURRENT_TIMESTAMP"
+        )?;
+        statement.bind((1, guild_id))?;
+        statement.bind((2, channel_id))?;
+        statement.bind((3, persona))?;
+        statement.next()?;
+        match persona {
+            Some(p) => info!("Set persona for channel {channel_id} to {p}"),
+            None => info!("Cleared persona override for channel {channel_id}"),
+        }
+        Ok(())
+    }
+
+    /// Get persona with full cascade: channel override -> user preference -> guild default -> env -> "obi"
+    pub async fn get_persona_with_channel(&self, user_id: &str, guild_id: &str, channel_id: &str) -> Result<String> {
+        let conn = self.connection.lock().await;
+
+        // First check channel override (highest priority)
+        let mut channel_stmt = conn.prepare(
+            "SELECT default_persona FROM channel_settings WHERE guild_id = ? AND channel_id = ?"
+        )?;
+        channel_stmt.bind((1, guild_id))?;
+        channel_stmt.bind((2, channel_id))?;
+
+        if let Ok(State::Row) = channel_stmt.next() {
+            if let Ok(Some(persona)) = channel_stmt.read::<Option<String>, _>(0) {
+                return Ok(persona);
+            }
+        }
+
+        // Check user preference
+        drop(channel_stmt);
+        let mut user_stmt = conn.prepare("SELECT default_persona FROM user_preferences WHERE user_id = ?")?;
+        user_stmt.bind((1, user_id))?;
+
+        if let Ok(State::Row) = user_stmt.next() {
+            return Ok(user_stmt.read::<String, _>("default_persona")?);
+        }
+
+        // Check guild default
+        drop(user_stmt);
+        let mut guild_stmt = conn.prepare(
+            "SELECT setting_value FROM guild_settings WHERE guild_id = ? AND setting_key = 'default_persona'"
+        )?;
+        guild_stmt.bind((1, guild_id))?;
+
+        if let Ok(State::Row) = guild_stmt.next() {
+            return Ok(guild_stmt.read::<String, _>(0)?);
         }
 
         // Fall back to PERSONA environment variable, then 'obi'
@@ -1604,11 +1703,11 @@ impl Database {
         Ok(())
     }
 
-    /// Get all settings for a channel
-    pub async fn get_channel_settings(&self, guild_id: &str, channel_id: &str) -> Result<(String, bool)> {
+    /// Get all settings for a channel (verbosity, conflict_enabled, persona)
+    pub async fn get_channel_settings(&self, guild_id: &str, channel_id: &str) -> Result<(String, bool, Option<String>)> {
         let conn = self.connection.lock().await;
         let mut statement = conn.prepare(
-            "SELECT verbosity, conflict_enabled FROM channel_settings WHERE guild_id = ? AND channel_id = ?"
+            "SELECT verbosity, conflict_enabled, default_persona FROM channel_settings WHERE guild_id = ? AND channel_id = ?"
         )?;
         statement.bind((1, guild_id))?;
         statement.bind((2, channel_id))?;
@@ -1616,10 +1715,11 @@ impl Database {
         if let Ok(State::Row) = statement.next() {
             let verbosity = statement.read::<String, _>(0)?;
             let conflict_enabled = statement.read::<i64, _>(1)? == 1;
-            Ok((verbosity, conflict_enabled))
+            let persona = statement.read::<Option<String>, _>(2)?;
+            Ok((verbosity, conflict_enabled, persona))
         } else {
             // Return defaults
-            Ok(("concise".to_string(), true))
+            Ok(("concise".to_string(), true, None))
         }
     }
 
