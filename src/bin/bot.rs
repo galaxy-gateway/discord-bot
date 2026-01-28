@@ -193,7 +193,69 @@ impl EventHandler for Handler {
 
                 // Handle autocomplete based on command
                 let _ = match autocomplete.data.name.as_str() {
-                    "set_guild_setting" => {
+                    "set_user" => {
+                        // Get the setting option to determine which choices to show
+                        let setting = autocomplete.data.options.iter()
+                            .find(|opt| opt.name == "setting")
+                            .and_then(|opt| opt.value.as_ref())
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+
+                        autocomplete
+                            .create_autocomplete_response(&ctx.http, |response| {
+                                match setting {
+                                    "persona" => {
+                                        response
+                                            .add_string_choice("obi - Obi-Wan Kenobi (wise mentor)", "obi")
+                                            .add_string_choice("muppet - Enthusiastic Muppet expert", "muppet")
+                                            .add_string_choice("chef - Passionate cooking expert", "chef")
+                                            .add_string_choice("teacher - Patient educator", "teacher")
+                                            .add_string_choice("analyst - Step-by-step analyst", "analyst")
+                                            .add_string_choice("visionary - Inspirational futurist", "visionary")
+                                    }
+                                    _ => response
+                                }
+                            })
+                            .await
+                    }
+                    "set_channel" => {
+                        // Get the setting option to determine which choices to show
+                        let setting = autocomplete.data.options.iter()
+                            .find(|opt| opt.name == "setting")
+                            .and_then(|opt| opt.value.as_ref())
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+
+                        autocomplete
+                            .create_autocomplete_response(&ctx.http, |response| {
+                                match setting {
+                                    "verbosity" => {
+                                        response
+                                            .add_string_choice("concise - Brief responses (2-3 sentences)", "concise")
+                                            .add_string_choice("normal - Balanced responses", "normal")
+                                            .add_string_choice("detailed - Comprehensive responses", "detailed")
+                                    }
+                                    "persona" => {
+                                        response
+                                            .add_string_choice("obi - Obi-Wan Kenobi (wise mentor)", "obi")
+                                            .add_string_choice("muppet - Enthusiastic Muppet expert", "muppet")
+                                            .add_string_choice("chef - Passionate cooking expert", "chef")
+                                            .add_string_choice("teacher - Patient educator", "teacher")
+                                            .add_string_choice("analyst - Step-by-step analyst", "analyst")
+                                            .add_string_choice("visionary - Inspirational futurist", "visionary")
+                                            .add_string_choice("clear - Remove channel persona override", "clear")
+                                    }
+                                    "conflict_mediation" => {
+                                        response
+                                            .add_string_choice("enabled - Enable conflict mediation in this channel", "enabled")
+                                            .add_string_choice("disabled - Disable conflict mediation in this channel", "disabled")
+                                    }
+                                    _ => response
+                                }
+                            })
+                            .await
+                    }
+                    "set_guild" => {
                         // Get the setting option to determine which choices to show
                         let setting = autocomplete.data.options.iter()
                             .find(|opt| opt.name == "setting")
@@ -217,6 +279,7 @@ impl EventHandler for Handler {
                                             .add_string_choice("chef - Passionate cooking expert", "chef")
                                             .add_string_choice("teacher - Patient educator", "teacher")
                                             .add_string_choice("analyst - Step-by-step analyst", "analyst")
+                                            .add_string_choice("visionary - Inspirational futurist", "visionary")
                                     }
                                     "conflict_mediation" => {
                                         response
@@ -271,6 +334,14 @@ impl EventHandler for Handler {
                                         response
                                             .add_string_choice("enabled - Send notification on startup", "enabled")
                                             .add_string_choice("disabled - No startup notification", "disabled")
+                                    }
+                                    "startup_dm_commit_count" | "startup_channel_commit_count" => {
+                                        response
+                                            .add_string_choice("0 - No commits shown", "0")
+                                            .add_string_choice("1 - Most recent commit only", "1")
+                                            .add_string_choice("3 - Last 3 commits", "3")
+                                            .add_string_choice("5 - Last 5 commits (default)", "5")
+                                            .add_string_choice("10 - Last 10 commits", "10")
                                     }
                                     // For ID fields, don't show autocomplete - user must type the ID directly
                                     // Return empty response so Discord shows the text input
