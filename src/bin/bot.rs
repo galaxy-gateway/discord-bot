@@ -207,11 +207,17 @@ impl EventHandler for Handler {
                                     "persona" => {
                                         response
                                             .add_string_choice("obi - Obi-Wan Kenobi (wise mentor)", "obi")
-                                            .add_string_choice("muppet - Enthusiastic Muppet expert", "muppet")
+                                            .add_string_choice("muppet - Enthusiastic Muppet friend", "muppet")
                                             .add_string_choice("chef - Passionate cooking expert", "chef")
                                             .add_string_choice("teacher - Patient educator", "teacher")
                                             .add_string_choice("analyst - Step-by-step analyst", "analyst")
-                                            .add_string_choice("visionary - Inspirational futurist", "visionary")
+                                            .add_string_choice("visionary - Future-focused big thinker", "visionary")
+                                            .add_string_choice("noir - Hard-boiled detective", "noir")
+                                            .add_string_choice("zen - Contemplative sage", "zen")
+                                            .add_string_choice("bard - Charismatic storyteller", "bard")
+                                            .add_string_choice("coach - Motivational coach", "coach")
+                                            .add_string_choice("scientist - Curious researcher", "scientist")
+                                            .add_string_choice("gamer - Friendly gaming enthusiast", "gamer")
                                     }
                                     _ => response
                                 }
@@ -238,11 +244,17 @@ impl EventHandler for Handler {
                                     "persona" => {
                                         response
                                             .add_string_choice("obi - Obi-Wan Kenobi (wise mentor)", "obi")
-                                            .add_string_choice("muppet - Enthusiastic Muppet expert", "muppet")
+                                            .add_string_choice("muppet - Enthusiastic Muppet friend", "muppet")
                                             .add_string_choice("chef - Passionate cooking expert", "chef")
                                             .add_string_choice("teacher - Patient educator", "teacher")
                                             .add_string_choice("analyst - Step-by-step analyst", "analyst")
-                                            .add_string_choice("visionary - Inspirational futurist", "visionary")
+                                            .add_string_choice("visionary - Future-focused big thinker", "visionary")
+                                            .add_string_choice("noir - Hard-boiled detective", "noir")
+                                            .add_string_choice("zen - Contemplative sage", "zen")
+                                            .add_string_choice("bard - Charismatic storyteller", "bard")
+                                            .add_string_choice("coach - Motivational coach", "coach")
+                                            .add_string_choice("scientist - Curious researcher", "scientist")
+                                            .add_string_choice("gamer - Friendly gaming enthusiast", "gamer")
                                             .add_string_choice("clear - Remove channel persona override", "clear")
                                     }
                                     "conflict_mediation" => {
@@ -275,11 +287,17 @@ impl EventHandler for Handler {
                                     "default_persona" => {
                                         response
                                             .add_string_choice("obi - Obi-Wan Kenobi (wise mentor)", "obi")
-                                            .add_string_choice("muppet - Enthusiastic Muppet expert", "muppet")
+                                            .add_string_choice("muppet - Enthusiastic Muppet friend", "muppet")
                                             .add_string_choice("chef - Passionate cooking expert", "chef")
                                             .add_string_choice("teacher - Patient educator", "teacher")
                                             .add_string_choice("analyst - Step-by-step analyst", "analyst")
-                                            .add_string_choice("visionary - Inspirational futurist", "visionary")
+                                            .add_string_choice("visionary - Future-focused big thinker", "visionary")
+                                            .add_string_choice("noir - Hard-boiled detective", "noir")
+                                            .add_string_choice("zen - Contemplative sage", "zen")
+                                            .add_string_choice("bard - Charismatic storyteller", "bard")
+                                            .add_string_choice("coach - Motivational coach", "coach")
+                                            .add_string_choice("scientist - Curious researcher", "scientist")
+                                            .add_string_choice("gamer - Friendly gaming enthusiast", "gamer")
                                     }
                                     "conflict_mediation" => {
                                         response

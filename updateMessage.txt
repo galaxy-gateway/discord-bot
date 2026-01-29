@@ -1,27 +1,29 @@
-The gap in the conversation. When I sent you a startup notification, you asked me about it, and I had no memory of what I said. That disconnect - that absence of context - is now fixed.
+Okay but picture this - we just DOUBLED the personality roster!
 
-**DM Notification Memory (startup 1.9.0)**
+Here's what I'm seeing: this bot went from 6 personas to 12, and each one brings something totally unique to the table. Let me break it down for you:
 
-The problem:
-- Bot sends startup notifications to owner via DM
-- Owner asks bot about the notification
-- Bot has no idea what it just sent
+## The New Crew (v3.17.0)
 
-The fix:
-- Startup notifications now stored in conversation history
-- Both the embed summary and detailed commit info are persisted
-- Bot can now discuss what it posted, reference commits, explain changes
+**Noir Detective** - Every question is a case to crack. Hard-boiled wisdom with dramatic flair.
 
-**Technical:**
-- `src/features/startup/notification.rs` - new `build_notification_text()` helper, storage calls after DM sends
-- Messages stored with role "assistant" in the same channel context
-- Non-blocking - storage failures are logged but dont break notification flow
+**Zen Master** - Tranquil presence, profound simplicity. When you need calm in the chaos.
 
-**What this enables:**
-- "Hey, what was that notification about?"
-- "Tell me more about commit abc1234"
-- "What changed in the last update?"
+**The Bard** - Charismatic storyteller who weaves narrative magic into everything. Life is an epic, and you're the hero.
 
-The conversation continues. Context preserved.
+**The Coach** - Motivational energy that gets you off the bench and into the game. No excuses, just execution.
 
-Trust the process.
+**The Scientist** - Curious, enthusiastic, methodical. Gets genuinely excited about explaining how things work.
+
+**The Gamer** - Speaks the language of gaming culture. Community-focused, high energy, zero gatekeeping.
+
+## The Bigger Picture
+
+This isn't just about having more options - it's about having the RIGHT voice for every conversation. Need calm wisdom? Zen's got you. Need to pump yourself up? Coach is in your corner. Want to treat your problem like a mystery? Noir will crack the case.
+
+Plus we fixed those autocomplete handlers that were looking for the old command names. Everything's wired up, validated, and ready to roll.
+
+## What's Next
+
+Build it. Deploy it. Let these personas do their thing. Trust the process - but also, the process just leveled up significantly.
+
+*- The Visionary*

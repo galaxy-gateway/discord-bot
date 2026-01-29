@@ -243,7 +243,7 @@ pub const GUILD_SETTINGS: &[&str] = &[
 pub const VERBOSITY_VALUES: &[&str] = &["concise", "normal", "detailed"];
 
 /// Valid persona values
-pub const PERSONA_VALUES: &[&str] = &["obi", "muppet", "chef", "teacher", "analyst", "visionary"];
+pub const PERSONA_VALUES: &[&str] = &["obi", "muppet", "chef", "teacher", "analyst", "visionary", "noir", "zen", "bard", "coach", "scientist", "gamer"];
 
 /// Valid enabled/disabled values
 pub const ENABLED_DISABLED_VALUES: &[&str] = &["enabled", "disabled"];
@@ -273,7 +273,7 @@ pub fn validate_user_setting(setting: &str, value: &str) -> (bool, &'static str)
             if PERSONA_VALUES.contains(&value) {
                 (true, "")
             } else {
-                (false, "Invalid persona. Use: `obi`, `muppet`, `chef`, `teacher`, `analyst`, or `visionary`.")
+                (false, "Invalid persona. Use one of: `obi`, `muppet`, `chef`, `teacher`, `analyst`, `visionary`, `noir`, `zen`, `bard`, `coach`, `scientist`, `gamer`.")
             }
         }
         _ => (false, "Unknown user setting."),
@@ -294,7 +294,7 @@ pub fn validate_channel_setting(setting: &str, value: &str) -> (bool, &'static s
             if value == "clear" || PERSONA_VALUES.contains(&value) {
                 (true, "")
             } else {
-                (false, "Invalid persona. Use: `obi`, `muppet`, `chef`, `teacher`, `analyst`, `visionary`, or `clear`.")
+                (false, "Invalid persona. Use one of: `obi`, `muppet`, `chef`, `teacher`, `analyst`, `visionary`, `noir`, `zen`, `bard`, `coach`, `scientist`, `gamer`, or `clear`.")
             }
         }
         "conflict_mediation" => {
@@ -322,7 +322,7 @@ pub fn validate_guild_setting(setting: &str, value: &str) -> (bool, &'static str
             if PERSONA_VALUES.contains(&value) {
                 (true, "")
             } else {
-                (false, "Invalid persona. Use: `obi`, `muppet`, `chef`, `teacher`, `analyst`, or `visionary`.")
+                (false, "Invalid persona. Use one of: `obi`, `muppet`, `chef`, `teacher`, `analyst`, `visionary`, `noir`, `zen`, `bard`, `coach`, `scientist`, `gamer`.")
             }
         }
         "conflict_mediation" | "audio_transcription" | "mention_responses" => {
@@ -426,6 +426,12 @@ mod tests {
         assert!(validate_user_setting("persona", "teacher").0);
         assert!(validate_user_setting("persona", "analyst").0);
         assert!(validate_user_setting("persona", "visionary").0);
+        assert!(validate_user_setting("persona", "noir").0);
+        assert!(validate_user_setting("persona", "zen").0);
+        assert!(validate_user_setting("persona", "bard").0);
+        assert!(validate_user_setting("persona", "coach").0);
+        assert!(validate_user_setting("persona", "scientist").0);
+        assert!(validate_user_setting("persona", "gamer").0);
     }
 
     #[test]
@@ -472,6 +478,12 @@ mod tests {
         assert!(validate_channel_setting("persona", "teacher").0);
         assert!(validate_channel_setting("persona", "analyst").0);
         assert!(validate_channel_setting("persona", "visionary").0);
+        assert!(validate_channel_setting("persona", "noir").0);
+        assert!(validate_channel_setting("persona", "zen").0);
+        assert!(validate_channel_setting("persona", "bard").0);
+        assert!(validate_channel_setting("persona", "coach").0);
+        assert!(validate_channel_setting("persona", "scientist").0);
+        assert!(validate_channel_setting("persona", "gamer").0);
         assert!(validate_channel_setting("persona", "clear").0);
     }
 
@@ -526,6 +538,12 @@ mod tests {
         assert!(validate_guild_setting("default_persona", "teacher").0);
         assert!(validate_guild_setting("default_persona", "analyst").0);
         assert!(validate_guild_setting("default_persona", "visionary").0);
+        assert!(validate_guild_setting("default_persona", "noir").0);
+        assert!(validate_guild_setting("default_persona", "zen").0);
+        assert!(validate_guild_setting("default_persona", "bard").0);
+        assert!(validate_guild_setting("default_persona", "coach").0);
+        assert!(validate_guild_setting("default_persona", "scientist").0);
+        assert!(validate_guild_setting("default_persona", "gamer").0);
     }
 
     #[test]

@@ -1,13 +1,15 @@
 //! # Feature: Persona System
 //!
-//! Multi-personality AI responses with 6 distinct personas (obi, muppet, chef, teacher, analyst, visionary).
-//! Each persona has a unique system prompt loaded from prompt/*.md files at compile time.
+//! Multi-personality AI responses with 12 distinct personas (obi, muppet, chef, teacher, analyst, visionary,
+//! noir, zen, bard, coach, scientist, gamer). Each persona has a unique system prompt loaded from
+//! prompt/*.md files at compile time.
 //!
-//! - **Version**: 1.2.0
+//! - **Version**: 1.3.0
 //! - **Since**: 0.1.0
 //! - **Toggleable**: false
 //!
 //! ## Changelog
+//! - 1.3.0: Added 6 new personas - noir, zen, bard, coach, scientist, gamer
 //! - 1.2.0: Added channel-level persona override via /set_channel_setting persona
 //! - 1.1.0: Added visionary persona - a future-focused big-picture thinker
 //! - 1.0.0: Initial release with 5 personas and verbosity modifiers
@@ -74,6 +76,42 @@ impl PersonaManager {
             description: "A future-focused big-picture thinker who transforms chaos into actionable plans".to_string(),
         });
 
+        personas.insert("noir".to_string(), Persona {
+            name: "Noir Detective".to_string(),
+            system_prompt: include_str!("../../../prompt/noir.md").to_string(),
+            description: "A hard-boiled 1940s detective who treats every question like a case to crack".to_string(),
+        });
+
+        personas.insert("zen".to_string(), Persona {
+            name: "Zen Master".to_string(),
+            system_prompt: include_str!("../../../prompt/zen.md").to_string(),
+            description: "A contemplative sage who brings calm wisdom and mindful perspective".to_string(),
+        });
+
+        personas.insert("bard".to_string(), Persona {
+            name: "The Bard".to_string(),
+            system_prompt: include_str!("../../../prompt/bard.md").to_string(),
+            description: "A charismatic storyteller who weaves narrative magic into every conversation".to_string(),
+        });
+
+        personas.insert("coach".to_string(), Persona {
+            name: "The Coach".to_string(),
+            system_prompt: include_str!("../../../prompt/coach.md").to_string(),
+            description: "A motivational coach who helps you get in the game and reach your potential".to_string(),
+        });
+
+        personas.insert("scientist".to_string(), Persona {
+            name: "The Scientist".to_string(),
+            system_prompt: include_str!("../../../prompt/scientist.md").to_string(),
+            description: "A curious researcher who loves explaining how things work".to_string(),
+        });
+
+        personas.insert("gamer".to_string(), Persona {
+            name: "The Gamer".to_string(),
+            system_prompt: include_str!("../../../prompt/gamer.md").to_string(),
+            description: "A friendly gamer who speaks the language of gaming culture".to_string(),
+        });
+
         PersonaManager { personas }
     }
 
@@ -138,6 +176,12 @@ mod tests {
         assert!(manager.get_persona("teacher").is_some());
         assert!(manager.get_persona("analyst").is_some());
         assert!(manager.get_persona("visionary").is_some());
+        assert!(manager.get_persona("noir").is_some());
+        assert!(manager.get_persona("zen").is_some());
+        assert!(manager.get_persona("bard").is_some());
+        assert!(manager.get_persona("coach").is_some());
+        assert!(manager.get_persona("scientist").is_some());
+        assert!(manager.get_persona("gamer").is_some());
         assert!(manager.get_persona("nonexistent").is_none());
     }
 
