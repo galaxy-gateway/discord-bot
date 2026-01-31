@@ -20,6 +20,7 @@ use persona::features::personas::PersonaManager;
 use persona::features::plugins::{Plugin, PluginConfig, PluginManager, JobManager, PluginExecutor, OutputHandler};
 use persona::features::reminders::ReminderScheduler;
 use persona::features::startup::StartupNotifier;
+use persona::ipc::{IpcServer, BotEvent, DisplayMessage, GuildInfo, AttachmentInfo};
 use persona::message_components::MessageComponentHandler;
 use serenity::model::id::GuildId;
 
@@ -29,6 +30,8 @@ struct Handler {
     guild_id: Option<GuildId>,
     startup_notifier: StartupNotifier,
     plugins: Vec<Plugin>,
+    ipc_server: Option<Arc<IpcServer>>,
+    start_time: std::time::Instant,
 }
 
 impl Handler {
@@ -38,6 +41,7 @@ impl Handler {
         guild_id: Option<GuildId>,
         startup_notifier: StartupNotifier,
         plugins: Vec<Plugin>,
+        ipc_server: Option<Arc<IpcServer>>,
     ) -> Self {
         Handler {
             command_handler: Arc::new(command_handler),
@@ -45,6 +49,33 @@ impl Handler {
             guild_id,
             startup_notifier,
             plugins,
+            ipc_server,
+            start_time: std::time::Instant::now(),
+        }
+    }
+
+    /// Convert a Serenity message to a DisplayMessage for IPC
+    fn to_display_message(msg: &Message) -> DisplayMessage {
+        // Convert serenity timestamp to chrono DateTime
+        let timestamp = chrono::DateTime::from_timestamp(
+            msg.timestamp.unix_timestamp(),
+            0
+        ).unwrap_or_else(chrono::Utc::now);
+
+        DisplayMessage {
+            id: msg.id.0,
+            author_id: msg.author.id.0,
+            author_name: msg.author.name.clone(),
+            author_discriminator: msg.author.discriminator.to_string(),
+            content: msg.content.clone(),
+            timestamp,
+            is_bot: msg.author.bot,
+            attachments: msg.attachments.iter().map(|a| AttachmentInfo {
+                filename: a.filename.clone(),
+                size: a.size as u64,
+                url: a.url.clone(),
+            }).collect(),
+            embeds_count: msg.embeds.len(),
         }
     }
 }
@@ -54,6 +85,19 @@ impl EventHandler for Handler {
     async fn message(&self, ctx: Context, msg: Message) {
         if msg.author.bot {
             return;
+        }
+
+        // Forward message to IPC clients if channel is being watched
+        if let Some(ipc) = &self.ipc_server {
+            let channel_id = msg.channel_id.0;
+            if ipc.is_channel_watched(channel_id).await {
+                let display_msg = Self::to_display_message(&msg);
+                ipc.broadcast(BotEvent::MessageCreate {
+                    channel_id,
+                    guild_id: msg.guild_id.map(|g| g.0),
+                    message: display_msg,
+                });
+            }
         }
 
         if let Err(e) = self.command_handler.handle_message(&ctx, &msg).await {
@@ -89,6 +133,27 @@ impl EventHandler for Handler {
             }
         }
 
+        // Forward Ready event to IPC clients
+        if let Some(ipc) = &self.ipc_server {
+            // Build guild info list (simplified - would need cache access for full info)
+            let guilds: Vec<GuildInfo> = ready.guilds.iter().map(|g| {
+                GuildInfo {
+                    id: g.id.0,
+                    name: format!("Guild {}", g.id.0), // Would need cache for actual name
+                    channels: Vec::new(), // Would need cache for channels
+                    member_count: None,
+                }
+            }).collect();
+
+            ipc.broadcast(BotEvent::Ready {
+                guilds,
+                bot_user_id: ready.user.id.0,
+                bot_username: ready.user.name.clone(),
+            });
+
+            info!("📡 IPC: Sent Ready event to TUI clients");
+        }
+
         // Register slash commands - use guild commands for development (instant), global for production
         if let Some(guild_id) = self.guild_id {
             info!("🔧 Development mode: Registering commands for guild {guild_id}");
@@ -115,14 +180,14 @@ impl EventHandler for Handler {
             Interaction::ApplicationCommand(command) => {
                 if let Err(e) = self.command_handler.handle_slash_command(&ctx, &command).await {
                     error!("Error handling slash command '{}': {}", command.data.name, e);
-                    
+
                     // Try to edit the deferred response with error message
                     let error_message = if e.to_string().contains("timeout") || e.to_string().contains("OpenAI") {
                         "⏱️ Sorry, the AI service is taking longer than expected. Please try again in a moment."
                     } else {
                         "❌ Sorry, I encountered an error processing your command. Please try again."
                     };
-                    
+
                     // Try to edit the deferred response, fallback to new response if that fails
                     #[allow(clippy::redundant_pattern_matching)]
                     if let Err(_) = command.edit_original_interaction_response(&ctx.http, |response| {
@@ -141,9 +206,9 @@ impl EventHandler for Handler {
             Interaction::MessageComponent(component) => {
                 if let Err(e) = self.component_handler.handle_component_interaction(&ctx, &component).await {
                     error!("Error handling component interaction '{}': {}", component.data.custom_id, e);
-                    
+
                     let error_message = "❌ Sorry, I encountered an error processing your interaction. Please try again.";
-                    
+
                     // Try to update the message, fallback to new response if that fails
                     #[allow(clippy::redundant_pattern_matching)]
                     if let Err(_) = component.create_interaction_response(&ctx.http, |response| {
@@ -166,13 +231,13 @@ impl EventHandler for Handler {
             Interaction::ModalSubmit(modal) => {
                 if let Err(e) = self.component_handler.handle_modal_submit(&ctx, &modal).await {
                     error!("Error handling modal submit '{}': {}", modal.data.custom_id, e);
-                    
+
                     let error_message = if e.to_string().contains("timeout") || e.to_string().contains("OpenAI") {
                         "⏱️ Sorry, the AI service is taking longer than expected. Please try again in a moment."
                     } else {
                         "❌ Sorry, I encountered an error processing your submission. Please try again."
                     };
-                    
+
                     // Try to edit the deferred response, fallback to new response if that fails
                     #[allow(clippy::redundant_pattern_matching)]
                     if let Err(_) = modal.edit_original_interaction_response(&ctx.http, |response| {
@@ -347,6 +412,11 @@ impl EventHandler for Handler {
                                             .add_string_choice("enabled - Respond when @mentioned", "enabled")
                                             .add_string_choice("disabled - Ignore mentions", "disabled")
                                     }
+                                    "response_embeds" => {
+                                        response
+                                            .add_string_choice("enabled - Responses in embed boxes (default)", "enabled")
+                                            .add_string_choice("disabled - Plain text responses", "disabled")
+                                    }
                                     // Startup notification settings (global)
                                     "startup_notification" => {
                                         response
@@ -397,11 +467,29 @@ async fn main() -> Result<()> {
     // Set both OPENAI_API_KEY and OPENAI_KEY for compatibility
     std::env::set_var("OPENAI_API_KEY", &config.openai_api_key);
     std::env::set_var("OPENAI_KEY", &config.openai_api_key);
-    
+
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(&config.log_level))
         .init();
 
     info!("Starting Persona Discord Bot...");
+
+    // Start IPC server for TUI communication
+    let ipc_server = Arc::new(IpcServer::new());
+    if let Err(e) = ipc_server.clone().start().await {
+        error!("Failed to start IPC server: {}. TUI control will be unavailable.", e);
+    } else {
+        info!("📡 IPC server started for TUI communication");
+    }
+
+    // Spawn IPC heartbeat task
+    let heartbeat_ipc = ipc_server.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+        loop {
+            interval.tick().await;
+            heartbeat_ipc.send_heartbeat();
+        }
+    });
 
     let database = Database::new(&config.database_path).await?;
     let usage_tracker = UsageTracker::new(database.clone());
@@ -468,7 +556,14 @@ async fn main() -> Result<()> {
     // Create startup notifier (reads config from database)
     let startup_notifier = StartupNotifier::new(Arc::new(database.clone()));
 
-    let handler = Handler::new(command_handler, component_handler, guild_id, startup_notifier, plugins);
+    let handler = Handler::new(
+        command_handler,
+        component_handler,
+        guild_id,
+        startup_notifier,
+        plugins,
+        Some(ipc_server),
+    );
 
     let intents = GatewayIntents::GUILD_MESSAGES
         | GatewayIntents::DIRECT_MESSAGES
@@ -519,4 +614,3 @@ async fn main() -> Result<()> {
 
     Ok(())
 }
-

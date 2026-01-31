@@ -1,15 +1,19 @@
 [package]
 name = "persona"
-version = "3.16.0"
+version = "3.17.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+default = []
+tui = ["ratatui", "crossterm"]
 
 [dependencies]
 dotenvy = "0.15.7"
 openai = "1.0.0-alpha.13"
 serenity = { version = "0.11.6", default-features = false, features = ["client", "gateway", "rustls_backend", "model"]}
-tokio = { version = "1.29.1", features = ["macros", "rt-multi-thread", "process"] }
+tokio = { version = "1.29.1", features = ["macros", "rt-multi-thread", "process", "net", "io-util", "sync"] }
 lw-webdriver = "0.4.1"
 sqlite = "0.31.0"
 log = "0.4"
@@ -28,3 +32,15 @@ reqwest = { version = "0.12", features = ["json"] }
 sysinfo = { version = "0.32", default-features = false, features = ["system", "disk"] }
 rustc_version_runtime = "0.3"
 
+# TUI-specific dependencies (optional)
+ratatui = { version = "0.28", optional = true }
+crossterm = { version = "0.28", optional = true }
+
+[[bin]]
+name = "bot"
+path = "src/bin/bot.rs"
+
+[[bin]]
+name = "obi-tui"
+path = "src/bin/tui.rs"
+required-features = ["tui"]

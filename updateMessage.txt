@@ -1,29 +1,75 @@
-Okay but picture this - we just DOUBLED the personality roster!
+Hold onto your neural interfaces - your bot just got a CONTROL CENTER.
 
-Here's what I'm seeing: this bot went from 6 personas to 12, and each one brings something totally unique to the table. Let me break it down for you:
+Picture this: you're running your Discord bot in production, and suddenly you want to watch a channel in real-time, check your API costs, or toggle features on the fly. Previously? SSH in, run commands, check logs. NOW? Fire up `obi-tui` and you have EVERYTHING at your fingertips.
 
-## The New Crew (v3.17.0)
+## The Vision Realized (v3.18.0)
 
-**Noir Detective** - Every question is a case to crack. Hard-boiled wisdom with dramatic flair.
+**A Full Terminal Control Interface:**
+- Real-time Dashboard showing connection status, system metrics, and live activity
+- Channel Watcher for monitoring Discord conversations as they happen
+- Stats View tracking your API usage, costs, and token consumption
+- Settings Panel to toggle features and manage personas without touching Discord
 
-**Zen Master** - Tranquil presence, profound simplicity. When you need calm in the chaos.
+## The Architecture
 
-**The Bard** - Charismatic storyteller who weaves narrative magic into everything. Life is an epic, and you're the hero.
+This is IPC-powered. The bot runs a Unix socket server, the TUI connects as a client. They talk in real-time JSON messages. No duplicate Discord connections, no extra API calls - just pure efficiency.
 
-**The Coach** - Motivational energy that gets you off the bench and into the game. No excuses, just execution.
+```
+Bot (Serenity) <-- Unix Socket --> TUI (Ratatui)
+        |                               |
+        +--------> SQLite <-------------+
+```
 
-**The Scientist** - Curious, enthusiastic, methodical. Gets genuinely excited about explaining how things work.
+## What You Get
 
-**The Gamer** - Speaks the language of gaming culture. Community-focused, high energy, zero gatekeeping.
+- **Dashboard [1]** - Connection status, CPU/RAM, uptime, guilds, active sessions
+- **Channels [2]** - Watch any channel, see messages stream in, POST messages directly
+- **Stats [3]** - Cost breakdown, daily charts, top users, token counts
+- **Settings [4]** - Toggle all 15 features, manage personas, configure guilds
+- **Help [?]** - Full keybinding reference
 
-## The Bigger Picture
+## The Commands
 
-This isn't just about having more options - it's about having the RIGHT voice for every conversation. Need calm wisdom? Zen's got you. Need to pump yourself up? Coach is in your corner. Want to treat your problem like a mystery? Noir will crack the case.
+```bash
+# Run the bot (now with IPC server)
+cargo run --bin bot
 
-Plus we fixed those autocomplete handlers that were looking for the old command names. Everything's wired up, validated, and ready to roll.
+# In another terminal, launch the TUI
+cargo run --features tui --bin obi-tui
+```
 
-## What's Next
+## New Files
 
-Build it. Deploy it. Let these personas do their thing. Trust the process - but also, the process just leveled up significantly.
+```
+src/ipc/           # Inter-process communication
+  mod.rs           # Module exports
+  protocol.rs      # BotEvent, TuiCommand types
+  server.rs        # Unix socket server (bot side)
+  client.rs        # Unix socket client (TUI side)
+
+src/tui/           # Terminal UI
+  mod.rs           # Module exports
+  app.rs           # App state and screen navigation
+  event.rs         # Keyboard/tick event handling
+  state/           # State management
+    channels.rs    # Watched channels, message buffers
+    stats_cache.rs # Cached usage statistics
+  ui/              # Screen renderers
+    dashboard.rs   # Main dashboard
+    channel_watcher.rs
+    stats.rs
+    settings.rs
+    help.rs
+
+src/bin/tui.rs     # TUI entry point
+```
+
+## The Future Is Now
+
+The infrastructure is laid. The socket is open. The channels are flowing.
+
+This is just the beginning. Remote monitoring. Multiple bot instances. Centralized control rooms. The pieces are in place.
+
+Welcome to the command center.
 
 *- The Visionary*

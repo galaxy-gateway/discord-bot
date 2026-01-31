@@ -3,7 +3,7 @@ use crate::features::conflict::{ConflictDetector, ConflictMediator};
 use crate::features::image_gen::generator::{ImageGenerator, ImageSize, ImageStyle};
 use crate::features::analytics::InteractionTracker;
 use crate::features::introspection::get_component_snippet;
-use crate::features::personas::PersonaManager;
+use crate::features::personas::{PersonaManager, Persona};
 use crate::features::plugins::PluginManager;
 use crate::features::rate_limiting::RateLimiter;
 use crate::features::analytics::UsageTracker;
@@ -17,6 +17,7 @@ use uuid::Uuid;
 use std::sync::Arc;
 use std::collections::HashMap;
 use openai::chat::{ChatCompletion, ChatCompletionMessage, ChatCompletionMessageRole};
+use serenity::builder::CreateEmbed;
 use serenity::model::application::interaction::application_command::ApplicationCommandInteraction;
 use serenity::model::channel::Message;
 use serenity::prelude::Context;
@@ -88,6 +89,42 @@ impl CommandHandler {
             .as_ref()
             .map(|pm| pm.config.plugins.clone())
             .unwrap_or_default()
+    }
+
+    /// Build an embed for a persona response
+    /// Used for both DM and guild responses when response_embeds is enabled
+    fn build_persona_embed(persona: &Persona, response_text: &str) -> CreateEmbed {
+        let mut embed = CreateEmbed::default();
+
+        // Set author with persona name and optional portrait
+        embed.author(|a| {
+            a.name(&persona.name);
+            if let Some(url) = &persona.portrait_url {
+                a.icon_url(url);
+            }
+            a
+        });
+
+        // Set accent color
+        embed.color(persona.color);
+
+        // Response text (max 4096 chars for embed description)
+        let text = if response_text.len() > 4096 {
+            &response_text[..4096]
+        } else {
+            response_text
+        };
+        embed.description(text);
+
+        embed
+    }
+
+    /// Build a continuation embed for long responses (no author, just content)
+    fn build_continuation_embed(persona: &Persona, response_text: &str) -> CreateEmbed {
+        let mut embed = CreateEmbed::default();
+        embed.color(persona.color);
+        embed.description(response_text);
+        embed
     }
 
     pub async fn handle_message(&self, ctx: &Context, msg: &Message) -> Result<()> {
@@ -334,29 +371,50 @@ impl CommandHandler {
                 typing.stop();
                 debug!("[{request_id}] ⌨️ Stopped typing indicator");
 
-                // Send response (handle long messages)
-                if ai_response.len() > 2000 {
-                    debug!("[{request_id}] 📄 Response too long, splitting into chunks");
+                // Get persona for embed styling
+                let persona = self.persona_manager.get_persona(&user_persona);
+
+                // Send response as embed (handle long messages - embed description limit is 4096)
+                if ai_response.len() > 4096 {
+                    debug!("[{request_id}] 📄 Response too long for single embed, splitting into chunks");
                     let chunks: Vec<&str> = ai_response.as_bytes()
-                        .chunks(2000)
+                        .chunks(4096)
                         .map(|chunk| std::str::from_utf8(chunk).unwrap_or(""))
                         .collect();
 
-                    debug!("[{}] 📄 Split response into {} chunks", request_id, chunks.len());
+                    debug!("[{}] 📄 Split response into {} embed chunks", request_id, chunks.len());
 
                     for (i, chunk) in chunks.iter().enumerate() {
                         if !chunk.trim().is_empty() {
-                            debug!("[{}] 📤 Sending chunk {} of {} ({} chars)",
+                            debug!("[{}] 📤 Sending embed chunk {} of {} ({} chars)",
                                    request_id, i + 1, chunks.len(), chunk.len());
-                            msg.channel_id.say(&ctx.http, chunk).await?;
-                            debug!("[{}] ✅ Chunk {} sent successfully", request_id, i + 1);
+
+                            if let Some(p) = persona {
+                                // First chunk gets full embed with author, rest are continuation
+                                let embed = if i == 0 {
+                                    Self::build_persona_embed(p, chunk)
+                                } else {
+                                    Self::build_continuation_embed(p, chunk)
+                                };
+                                msg.channel_id.send_message(&ctx.http, |m| m.set_embed(embed)).await?;
+                            } else {
+                                // Fallback to plain text if persona not found
+                                msg.channel_id.say(&ctx.http, chunk).await?;
+                            }
+                            debug!("[{}] ✅ Embed chunk {} sent successfully", request_id, i + 1);
                         }
                     }
-                    info!("[{request_id}] ✅ All DM response chunks sent successfully");
+                    info!("[{request_id}] ✅ All DM embed response chunks sent successfully");
                 } else {
-                    debug!("[{}] 📤 Sending DM response ({} chars)", request_id, ai_response.len());
-                    msg.channel_id.say(&ctx.http, &ai_response).await?;
-                    info!("[{request_id}] ✅ DM response sent successfully");
+                    debug!("[{}] 📤 Sending DM embed response ({} chars)", request_id, ai_response.len());
+                    if let Some(p) = persona {
+                        let embed = Self::build_persona_embed(p, &ai_response);
+                        msg.channel_id.send_message(&ctx.http, |m| m.set_embed(embed)).await?;
+                    } else {
+                        // Fallback to plain text if persona not found
+                        msg.channel_id.say(&ctx.http, &ai_response).await?;
+                    }
+                    info!("[{request_id}] ✅ DM embed response sent successfully");
                 }
 
                 // Store assistant response in conversation history
@@ -501,39 +559,90 @@ impl CommandHandler {
                 typing.stop();
                 debug!("[{request_id}] ⌨️ Stopped typing indicator");
 
-                // Send response as threaded reply (handle long messages)
-                if ai_response.len() > 2000 {
-                    debug!("[{request_id}] 📄 Response too long, splitting into chunks");
-                    let chunks: Vec<&str> = ai_response.as_bytes()
-                        .chunks(2000)
-                        .map(|chunk| std::str::from_utf8(chunk).unwrap_or(""))
-                        .collect();
-
-                    debug!("[{}] 📄 Split response into {} chunks", request_id, chunks.len());
-
-                    // First chunk as threaded reply
-                    if let Some(first_chunk) = chunks.first() {
-                        if !first_chunk.trim().is_empty() {
-                            debug!("[{}] 📤 Sending first chunk as reply ({} chars)", request_id, first_chunk.len());
-                            msg.reply(&ctx.http, first_chunk).await?;
-                            debug!("[{request_id}] ✅ First chunk sent as reply");
-                        }
-                    }
-
-                    // Remaining chunks as regular messages in the thread
-                    for (i, chunk) in chunks.iter().skip(1).enumerate() {
-                        if !chunk.trim().is_empty() {
-                            debug!("[{}] 📤 Sending chunk {} of {} ({} chars)",
-                                   request_id, i + 2, chunks.len(), chunk.len());
-                            msg.channel_id.say(&ctx.http, chunk).await?;
-                            debug!("[{}] ✅ Chunk {} sent successfully", request_id, i + 2);
-                        }
-                    }
-                    info!("[{request_id}] ✅ All mention response chunks sent successfully");
+                // Check if embeds are enabled for this guild
+                let use_embeds = if let Some(gid) = guild_id_opt {
+                    self.database.get_guild_setting(gid, "response_embeds").await
+                        .unwrap_or(None)
+                        .map(|v| v != "disabled")
+                        .unwrap_or(true) // Default to enabled
                 } else {
-                    debug!("[{}] 📤 Sending mention response as reply ({} chars)", request_id, ai_response.len());
-                    msg.reply(&ctx.http, &ai_response).await?;
-                    info!("[{request_id}] ✅ Mention response sent successfully");
+                    true // DMs always use embeds
+                };
+
+                // Get persona for embed styling
+                let persona = self.persona_manager.get_persona(&user_persona);
+
+                // Send response as embed or plain text depending on setting
+                if use_embeds && persona.is_some() {
+                    let p = persona.unwrap();
+
+                    // Embed description limit is 4096
+                    if ai_response.len() > 4096 {
+                        debug!("[{request_id}] 📄 Response too long for single embed, splitting into chunks");
+                        let chunks: Vec<&str> = ai_response.as_bytes()
+                            .chunks(4096)
+                            .map(|chunk| std::str::from_utf8(chunk).unwrap_or(""))
+                            .collect();
+
+                        debug!("[{}] 📄 Split response into {} embed chunks", request_id, chunks.len());
+
+                        for (i, chunk) in chunks.iter().enumerate() {
+                            if !chunk.trim().is_empty() {
+                                debug!("[{}] 📤 Sending embed chunk {} of {} ({} chars)",
+                                       request_id, i + 1, chunks.len(), chunk.len());
+
+                                // First chunk gets full embed with author, rest are continuation
+                                let embed = if i == 0 {
+                                    Self::build_persona_embed(p, chunk)
+                                } else {
+                                    Self::build_continuation_embed(p, chunk)
+                                };
+                                msg.channel_id.send_message(&ctx.http, |m| m.set_embed(embed)).await?;
+                                debug!("[{}] ✅ Embed chunk {} sent successfully", request_id, i + 1);
+                            }
+                        }
+                        info!("[{request_id}] ✅ All mention embed response chunks sent successfully");
+                    } else {
+                        debug!("[{}] 📤 Sending mention embed response ({} chars)", request_id, ai_response.len());
+                        let embed = Self::build_persona_embed(p, &ai_response);
+                        msg.channel_id.send_message(&ctx.http, |m| m.set_embed(embed)).await?;
+                        info!("[{request_id}] ✅ Mention embed response sent successfully");
+                    }
+                } else {
+                    // Plain text fallback (legacy behavior or embeds disabled)
+                    if ai_response.len() > 2000 {
+                        debug!("[{request_id}] 📄 Response too long, splitting into chunks");
+                        let chunks: Vec<&str> = ai_response.as_bytes()
+                            .chunks(2000)
+                            .map(|chunk| std::str::from_utf8(chunk).unwrap_or(""))
+                            .collect();
+
+                        debug!("[{}] 📄 Split response into {} chunks", request_id, chunks.len());
+
+                        // First chunk as threaded reply
+                        if let Some(first_chunk) = chunks.first() {
+                            if !first_chunk.trim().is_empty() {
+                                debug!("[{}] 📤 Sending first chunk as reply ({} chars)", request_id, first_chunk.len());
+                                msg.reply(&ctx.http, first_chunk).await?;
+                                debug!("[{request_id}] ✅ First chunk sent as reply");
+                            }
+                        }
+
+                        // Remaining chunks as regular messages in the thread
+                        for (i, chunk) in chunks.iter().skip(1).enumerate() {
+                            if !chunk.trim().is_empty() {
+                                debug!("[{}] 📤 Sending chunk {} of {} ({} chars)",
+                                       request_id, i + 2, chunks.len(), chunk.len());
+                                msg.channel_id.say(&ctx.http, chunk).await?;
+                                debug!("[{}] ✅ Chunk {} sent successfully", request_id, i + 2);
+                            }
+                        }
+                        info!("[{request_id}] ✅ All mention response chunks sent successfully");
+                    } else {
+                        debug!("[{}] 📤 Sending mention response as reply ({} chars)", request_id, ai_response.len());
+                        msg.reply(&ctx.http, &ai_response).await?;
+                        info!("[{request_id}] ✅ Mention response sent successfully");
+                    }
                 }
 
                 // Store assistant response in conversation history (only for channels, not threads)
@@ -1522,25 +1631,135 @@ Use the buttons below for more help or to try custom prompts!"#;
         match self.get_ai_response_with_context(&system_prompt, &user_message, Vec::new(), request_id, Some(&user_id), guild_id_str.as_deref(), Some(&channel_id_str)).await {
             Ok(ai_response) => {
                 let processing_time = start_time.elapsed();
-                info!("[{}] ✅ OpenAI response received | Processing time: {:?} | Response length: {}", 
+                info!("[{}] ✅ OpenAI response received | Processing time: {:?} | Response length: {}",
                       request_id, processing_time, ai_response.len());
-                
-                if ai_response.len() > 2000 {
-                    debug!("[{request_id}] 📄 Response too long, splitting into chunks");
-                    // For long responses, edit with the first part and send follow-ups
-                    let chunks: Vec<&str> = ai_response.as_bytes()
-                        .chunks(2000)
-                        .map(|chunk| std::str::from_utf8(chunk).unwrap_or(""))
-                        .collect();
-                    
-                    debug!("[{}] 📄 Split response into {} chunks", request_id, chunks.len());
-                    
-                    if let Some(first_chunk) = chunks.first() {
-                        debug!("[{}] 📤 Editing original interaction response with first chunk ({} chars)", 
-                               request_id, first_chunk.len());
+
+                // Check if embeds are enabled for this guild
+                let use_embeds = if let Some(gid) = guild_id_str.as_deref() {
+                    self.database.get_guild_setting(gid, "response_embeds").await
+                        .unwrap_or(None)
+                        .map(|v| v != "disabled")
+                        .unwrap_or(true) // Default to enabled
+                } else {
+                    true // DMs always use embeds
+                };
+
+                // Get persona for embed styling
+                let persona = self.persona_manager.get_persona(&user_persona);
+
+                if use_embeds && persona.is_some() {
+                    let p = persona.unwrap();
+
+                    // Embed description limit is 4096
+                    if ai_response.len() > 4096 {
+                        debug!("[{request_id}] 📄 Response too long for single embed, splitting into chunks");
+                        let chunks: Vec<&str> = ai_response.as_bytes()
+                            .chunks(4096)
+                            .map(|chunk| std::str::from_utf8(chunk).unwrap_or(""))
+                            .collect();
+
+                        debug!("[{}] 📄 Split response into {} embed chunks", request_id, chunks.len());
+
+                        if let Some(first_chunk) = chunks.first() {
+                            debug!("[{}] 📤 Editing original interaction response with first embed chunk ({} chars)",
+                                   request_id, first_chunk.len());
+                            let embed = Self::build_persona_embed(p, first_chunk);
+                            command
+                                .edit_original_interaction_response(&ctx.http, |response| {
+                                    response.set_embed(embed)
+                                })
+                                .await
+                                .map_err(|e| {
+                                    error!("[{request_id}] ❌ Failed to edit original interaction response: {e}");
+                                    anyhow::anyhow!("Failed to edit original response: {}", e)
+                                })?;
+                            info!("[{request_id}] ✅ Original embed response edited successfully");
+                        }
+
+                        // Send remaining chunks as follow-up embeds
+                        for (i, chunk) in chunks.iter().skip(1).enumerate() {
+                            if !chunk.trim().is_empty() {
+                                debug!("[{}] 📤 Sending follow-up embed {} of {} ({} chars)",
+                                       request_id, i + 2, chunks.len(), chunk.len());
+                                let embed = Self::build_continuation_embed(p, chunk);
+                                command
+                                    .create_followup_message(&ctx.http, |message| {
+                                        message.set_embed(embed)
+                                    })
+                                    .await
+                                    .map_err(|e| {
+                                        error!("[{}] ❌ Failed to send follow-up embed {}: {}", request_id, i + 2, e);
+                                        anyhow::anyhow!("Failed to send follow-up message: {}", e)
+                                    })?;
+                                debug!("[{}] ✅ Follow-up embed {} sent successfully", request_id, i + 2);
+                            }
+                        }
+                        info!("[{request_id}] ✅ All embed response chunks sent successfully");
+                    } else {
+                        debug!("[{}] 📤 Editing original interaction response with embed ({} chars)",
+                               request_id, ai_response.len());
+                        let embed = Self::build_persona_embed(p, &ai_response);
                         command
                             .edit_original_interaction_response(&ctx.http, |response| {
-                                response.content(first_chunk)
+                                response.set_embed(embed)
+                            })
+                            .await
+                            .map_err(|e| {
+                                error!("[{request_id}] ❌ Failed to edit original interaction response: {e}");
+                                anyhow::anyhow!("Failed to edit original response: {}", e)
+                            })?;
+                        info!("[{request_id}] ✅ Embed response edited successfully");
+                    }
+                } else {
+                    // Plain text fallback (legacy behavior or embeds disabled)
+                    if ai_response.len() > 2000 {
+                        debug!("[{request_id}] 📄 Response too long, splitting into chunks");
+                        let chunks: Vec<&str> = ai_response.as_bytes()
+                            .chunks(2000)
+                            .map(|chunk| std::str::from_utf8(chunk).unwrap_or(""))
+                            .collect();
+
+                        debug!("[{}] 📄 Split response into {} chunks", request_id, chunks.len());
+
+                        if let Some(first_chunk) = chunks.first() {
+                            debug!("[{}] 📤 Editing original interaction response with first chunk ({} chars)",
+                                   request_id, first_chunk.len());
+                            command
+                                .edit_original_interaction_response(&ctx.http, |response| {
+                                    response.content(first_chunk)
+                                })
+                                .await
+                                .map_err(|e| {
+                                    error!("[{request_id}] ❌ Failed to edit original interaction response: {e}");
+                                    anyhow::anyhow!("Failed to edit original response: {}", e)
+                                })?;
+                            info!("[{request_id}] ✅ Original interaction response edited successfully");
+                        }
+
+                        // Send remaining chunks as follow-up messages
+                        for (i, chunk) in chunks.iter().skip(1).enumerate() {
+                            if !chunk.trim().is_empty() {
+                                debug!("[{}] 📤 Sending follow-up message {} of {} ({} chars)",
+                                       request_id, i + 2, chunks.len(), chunk.len());
+                                command
+                                    .create_followup_message(&ctx.http, |message| {
+                                        message.content(chunk)
+                                    })
+                                    .await
+                                    .map_err(|e| {
+                                        error!("[{}] ❌ Failed to send follow-up message {}: {}", request_id, i + 2, e);
+                                        anyhow::anyhow!("Failed to send follow-up message: {}", e)
+                                    })?;
+                                debug!("[{}] ✅ Follow-up message {} sent successfully", request_id, i + 2);
+                            }
+                        }
+                        info!("[{request_id}] ✅ All response chunks sent successfully");
+                    } else {
+                        debug!("[{}] 📤 Editing original interaction response with complete response ({} chars)",
+                               request_id, ai_response.len());
+                        command
+                            .edit_original_interaction_response(&ctx.http, |response| {
+                                response.content(&ai_response)
                             })
                             .await
                             .map_err(|e| {
@@ -1549,40 +1768,8 @@ Use the buttons below for more help or to try custom prompts!"#;
                             })?;
                         info!("[{request_id}] ✅ Original interaction response edited successfully");
                     }
-
-                    // Send remaining chunks as follow-up messages
-                    for (i, chunk) in chunks.iter().skip(1).enumerate() {
-                        if !chunk.trim().is_empty() {
-                            debug!("[{}] 📤 Sending follow-up message {} of {} ({} chars)", 
-                                   request_id, i + 2, chunks.len(), chunk.len());
-                            command
-                                .create_followup_message(&ctx.http, |message| {
-                                    message.content(chunk)
-                                })
-                                .await
-                                .map_err(|e| {
-                                    error!("[{}] ❌ Failed to send follow-up message {}: {}", request_id, i + 2, e);
-                                    anyhow::anyhow!("Failed to send follow-up message: {}", e)
-                                })?;
-                            debug!("[{}] ✅ Follow-up message {} sent successfully", request_id, i + 2);
-                        }
-                    }
-                    info!("[{request_id}] ✅ All response chunks sent successfully");
-                } else {
-                    debug!("[{}] 📤 Editing original interaction response with complete response ({} chars)", 
-                           request_id, ai_response.len());
-                    command
-                        .edit_original_interaction_response(&ctx.http, |response| {
-                            response.content(&ai_response)
-                        })
-                        .await
-                        .map_err(|e| {
-                            error!("[{request_id}] ❌ Failed to edit original interaction response: {e}");
-                            anyhow::anyhow!("Failed to edit original response: {}", e)
-                        })?;
-                    info!("[{request_id}] ✅ Original interaction response edited successfully");
                 }
-                
+
                 let total_time = start_time.elapsed();
                 info!("[{request_id}] 🎉 AI command completed successfully | Total time: {total_time:?}");
             }

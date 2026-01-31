@@ -1,0 +1,68 @@
+PERSONA PORTRAIT IMAGE GENERATION PROMPTS
+==========================================
+
+Style Prefix (use for all):
+Digital portrait icon, stylized character bust, clean lines, vibrant colors, subtle gradient background matching character theme, professional illustration style, centered composition, 456x456, no text
+
+
+INDIVIDUAL PROMPTS
+==================
+
+OBI-WAN (obi.png)
+-----------------
+Digital portrait icon, stylized character bust, clean lines, vibrant colors, subtle gradient background matching character theme, professional illustration style, centered composition, 456x456, no text. Wise bearded man in hooded robes, serene expression, warm knowing eyes, soft blue glow, Jedi master aesthetic, dignified and calm demeanor, blue-toned background
+
+
+MUPPET FRIEND (muppet.png)
+--------------------------
+Digital portrait icon, stylized character bust, clean lines, vibrant colors, subtle gradient background matching character theme, professional illustration style, centered composition, 456x456, no text. Friendly fuzzy puppet character, big expressive eyes, wide warm smile, felt texture, bright cheerful colors, orange and yellow tones, welcoming and enthusiastic expression
+
+
+CHEF (chef.png)
+---------------
+Digital portrait icon, stylized character bust, clean lines, vibrant colors, subtle gradient background matching character theme, professional illustration style, centered composition, 456x456, no text. Professional chef portrait, white chef hat and coat, confident smile, holding wooden spoon, warm kitchen lighting, red and cream background, passionate culinary expert
+
+
+TEACHER (teacher.png)
+---------------------
+Digital portrait icon, stylized character bust, clean lines, vibrant colors, subtle gradient background matching character theme, professional illustration style, centered composition, 456x456, no text. Friendly educator portrait, glasses, warm approachable smile, holding a book, chalkboard elements in background, green academic tones, patient and encouraging expression
+
+
+ANALYST (analyst.png)
+---------------------
+Digital portrait icon, stylized character bust, clean lines, vibrant colors, subtle gradient background matching character theme, professional illustration style, centered composition, 456x456, no text. Professional analyst portrait, modern business attire, thoughtful focused expression, geometric patterns in background, blue corporate tones, glasses optional, analytical and precise demeanor
+
+
+VISIONARY (visionary.png)
+-------------------------
+Digital portrait icon, stylized character bust, clean lines, vibrant colors, subtle gradient background matching character theme, professional illustration style, centered composition, 456x456, no text. Dynamic forward-thinking person, eyes looking toward horizon, confident determined expression, abstract futuristic elements, purple and electric blue tones, inspiring leader aesthetic
+
+
+NOIR DETECTIVE (noir.png)
+-------------------------
+Digital portrait icon, stylized character bust, clean lines, vibrant colors, subtle gradient background matching character theme, professional illustration style, centered composition, 456x456, no text. 1940s noir detective portrait, fedora hat, dramatic shadows, trench coat collar up, cigarette smoke wisps, black and white with subtle sepia, mysterious hard-boiled expression
+
+
+ZEN MASTER (zen.png)
+--------------------
+Digital portrait icon, stylized character bust, clean lines, vibrant colors, subtle gradient background matching character theme, professional illustration style, centered composition, 456x456, no text. Peaceful meditation master portrait, bald or simple hair, serene closed or half-lidded eyes, gentle smile, lotus or bamboo elements, teal and soft green tones, tranquil enlightened presence
+
+
+BARD (bard.png)
+---------------
+Digital portrait icon, stylized character bust, clean lines, vibrant colors, subtle gradient background matching character theme, professional illustration style, centered composition, 456x456, no text. Fantasy bard portrait, medieval minstrel aesthetic, feathered cap, lute or harp visible, charming theatrical smile, gold and burgundy tones, charismatic storyteller energy
+
+
+COACH (coach.png)
+-----------------
+Digital portrait icon, stylized character bust, clean lines, vibrant colors, subtle gradient background matching character theme, professional illustration style, centered composition, 456x456, no text. Motivational sports coach portrait, athletic wear, whistle around neck, intense encouraging expression, dynamic pose, orange and red energy tones, confident team leader
+
+
+SCIENTIST (scientist.png)
+-------------------------
+Digital portrait icon, stylized character bust, clean lines, vibrant colors, subtle gradient background matching character theme, professional illustration style, centered composition, 456x456, no text. Enthusiastic scientist portrait, lab coat, safety goggles on forehead, excited curious expression, beakers or molecules in background, cyan and white laboratory tones, nerdy passion
+
+
+GAMER (gamer.png)
+-----------------
+Digital portrait icon, stylized character bust, clean lines, vibrant colors, subtle gradient background matching character theme, professional illustration style, centered composition, 456x456, no text. Friendly gamer portrait, headset with microphone, RGB lighting glow, excited engaged expression, gaming setup hints in background, purple and neon accents, welcoming streamer vibe

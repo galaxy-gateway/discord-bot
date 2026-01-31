@@ -4,11 +4,12 @@
 //! noir, zen, bard, coach, scientist, gamer). Each persona has a unique system prompt loaded from
 //! prompt/*.md files at compile time.
 //!
-//! - **Version**: 1.3.0
+//! - **Version**: 1.4.0
 //! - **Since**: 0.1.0
 //! - **Toggleable**: false
 //!
 //! ## Changelog
+//! - 1.4.0: Added embed responses with persona colors and optional portrait support
 //! - 1.3.0: Added 6 new personas - noir, zen, bard, coach, scientist, gamer
 //! - 1.2.0: Added channel-level persona override via /set_channel_setting persona
 //! - 1.1.0: Added visionary persona - a future-focused big-picture thinker
@@ -22,6 +23,10 @@ pub struct Persona {
     pub name: String,
     pub system_prompt: String,
     pub description: String,
+    /// Optional portrait URL for embed author icon
+    pub portrait_url: Option<String>,
+    /// Embed accent color (Discord color format)
+    pub color: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -40,76 +45,101 @@ impl PersonaManager {
         let mut personas = HashMap::new();
 
         // Load all personas with prompts embedded at compile time
+        // Colors chosen to reflect each persona's personality/theme
         personas.insert("obi".to_string(), Persona {
             name: "Obi-Wan".to_string(),
             system_prompt: include_str!("../../../prompt/obi.md").to_string(),
             description: "A wise Jedi Master who speaks with patience, diplomacy, and philosophical insight".to_string(),
+            portrait_url: None,
+            color: 0x4A90D9, // Calm blue - Jedi wisdom
         });
 
         personas.insert("muppet".to_string(), Persona {
             name: "Muppet Friend".to_string(),
             system_prompt: include_str!("../../../prompt/muppet.md").to_string(),
             description: "A warm, enthusiastic friend who brings Muppet-style joy, humor, and heart to every conversation!".to_string(),
+            portrait_url: None,
+            color: 0xFF6B35, // Warm orange - Muppet energy
         });
 
         personas.insert("chef".to_string(), Persona {
             name: "Chef".to_string(),
             system_prompt: include_str!("../../../prompt/chef.md").to_string(),
             description: "A passionate chef who shares recipes and cooking wisdom".to_string(),
+            portrait_url: None,
+            color: 0xE74C3C, // Culinary red
         });
 
         personas.insert("teacher".to_string(), Persona {
             name: "Teacher".to_string(),
             system_prompt: include_str!("../../../prompt/teacher.md").to_string(),
             description: "A patient teacher who explains things clearly".to_string(),
+            portrait_url: None,
+            color: 0x27AE60, // Educational green
         });
 
         personas.insert("analyst".to_string(), Persona {
             name: "Step-by-Step Analyst".to_string(),
             system_prompt: include_str!("../../../prompt/analyst.md").to_string(),
             description: "An analyst who breaks things down into clear steps".to_string(),
+            portrait_url: None,
+            color: 0x3498DB, // Professional blue
         });
 
         personas.insert("visionary".to_string(), Persona {
             name: "The Visionary".to_string(),
             system_prompt: include_str!("../../../prompt/visionary.md").to_string(),
             description: "A future-focused big-picture thinker who transforms chaos into actionable plans".to_string(),
+            portrait_url: None,
+            color: 0x9B59B6, // Futuristic purple
         });
 
         personas.insert("noir".to_string(), Persona {
             name: "Noir Detective".to_string(),
             system_prompt: include_str!("../../../prompt/noir.md").to_string(),
             description: "A hard-boiled 1940s detective who treats every question like a case to crack".to_string(),
+            portrait_url: None,
+            color: 0x2C3E50, // Dark noir gray
         });
 
         personas.insert("zen".to_string(), Persona {
             name: "Zen Master".to_string(),
             system_prompt: include_str!("../../../prompt/zen.md").to_string(),
             description: "A contemplative sage who brings calm wisdom and mindful perspective".to_string(),
+            portrait_url: None,
+            color: 0x1ABC9C, // Peaceful teal
         });
 
         personas.insert("bard".to_string(), Persona {
             name: "The Bard".to_string(),
             system_prompt: include_str!("../../../prompt/bard.md").to_string(),
             description: "A charismatic storyteller who weaves narrative magic into every conversation".to_string(),
+            portrait_url: None,
+            color: 0xF39C12, // Fantasy gold
         });
 
         personas.insert("coach".to_string(), Persona {
             name: "The Coach".to_string(),
             system_prompt: include_str!("../../../prompt/coach.md").to_string(),
             description: "A motivational coach who helps you get in the game and reach your potential".to_string(),
+            portrait_url: None,
+            color: 0xE67E22, // Energetic orange
         });
 
         personas.insert("scientist".to_string(), Persona {
             name: "The Scientist".to_string(),
             system_prompt: include_str!("../../../prompt/scientist.md").to_string(),
             description: "A curious researcher who loves explaining how things work".to_string(),
+            portrait_url: None,
+            color: 0x00CED1, // Scientific cyan
         });
 
         personas.insert("gamer".to_string(), Persona {
             name: "The Gamer".to_string(),
             system_prompt: include_str!("../../../prompt/gamer.md").to_string(),
             description: "A friendly gamer who speaks the language of gaming culture".to_string(),
+            portrait_url: None,
+            color: 0x9146FF, // Twitch purple
         });
 
         PersonaManager { personas }
@@ -215,7 +245,23 @@ mod tests {
             assert!(!persona.name.is_empty());
             assert!(!persona.description.is_empty());
             assert!(!persona.system_prompt.is_empty());
+            assert!(persona.color != 0, "Persona should have a color set");
         }
+    }
+
+    #[test]
+    fn test_persona_colors() {
+        let manager = PersonaManager::new();
+
+        // Verify each persona has a unique, non-zero color
+        let obi = manager.get_persona("obi").unwrap();
+        assert_eq!(obi.color, 0x4A90D9);
+
+        let visionary = manager.get_persona("visionary").unwrap();
+        assert_eq!(visionary.color, 0x9B59B6);
+
+        let gamer = manager.get_persona("gamer").unwrap();
+        assert_eq!(gamer.color, 0x9146FF);
     }
 
     #[test]

@@ -90,6 +90,7 @@ fn create_set_guild_command() -> CreateApplicationCommand {
                 // High priority settings
                 .add_string_choice("default_verbosity", "default_verbosity")
                 .add_string_choice("default_persona", "default_persona")
+                .add_string_choice("response_embeds", "response_embeds")
                 .add_string_choice("conflict_mediation", "conflict_mediation")
                 .add_string_choice("conflict_sensitivity", "conflict_sensitivity")
                 .add_string_choice("mediation_cooldown", "mediation_cooldown")
@@ -224,6 +225,7 @@ pub const CHANNEL_SETTINGS: &[&str] = &["verbosity", "persona", "conflict_mediat
 pub const GUILD_SETTINGS: &[&str] = &[
     "default_verbosity",
     "default_persona",
+    "response_embeds",
     "conflict_mediation",
     "conflict_sensitivity",
     "mediation_cooldown",
@@ -325,7 +327,7 @@ pub fn validate_guild_setting(setting: &str, value: &str) -> (bool, &'static str
                 (false, "Invalid persona. Use one of: `obi`, `muppet`, `chef`, `teacher`, `analyst`, `visionary`, `noir`, `zen`, `bard`, `coach`, `scientist`, `gamer`.")
             }
         }
-        "conflict_mediation" | "audio_transcription" | "mention_responses" => {
+        "conflict_mediation" | "audio_transcription" | "mention_responses" | "response_embeds" => {
             if ENABLED_DISABLED_VALUES.contains(&value) {
                 (true, "")
             } else {

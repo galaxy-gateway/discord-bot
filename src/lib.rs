@@ -4,6 +4,13 @@ pub mod core;
 // Features layer - all feature modules
 pub mod features;
 
+// IPC layer - communication between bot and TUI
+pub mod ipc;
+
+// TUI layer - terminal user interface (optional feature)
+#[cfg(feature = "tui")]
+pub mod tui;
+
 // UI components (to be moved to presentation/)
 pub mod message_components;
 
@@ -40,3 +47,6 @@ pub use features::{
     // Startup
     StartupNotifier,
 };
+
+// Re-export IPC items
+pub use ipc::{IpcServer, IpcClient, BotEvent, TuiCommand};
