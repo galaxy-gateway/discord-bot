@@ -192,6 +192,7 @@ impl EventHandler for Handler {
             // Store in IPC server for later queries
             ipc.set_guilds(guilds.clone()).await;
             ipc.set_bot_info(ready.user.id.0, ready.user.name.clone()).await;
+            ipc.set_http(ctx.http.clone()).await;
 
             ipc.broadcast(BotEvent::Ready {
                 guilds,

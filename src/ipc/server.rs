@@ -2,11 +2,12 @@
 //!
 //! Unix socket server for the bot to communicate with TUI clients.
 //!
-//! - **Version**: 1.2.0
+//! - **Version**: 1.3.0
 //! - **Since**: 3.17.0
 //! - **Toggleable**: false
 //!
 //! ## Changelog
+//! - 1.3.0: Added SendMessage implementation with Discord HTTP client support
 //! - 1.2.0: Added GetUsageStats and GetSystemMetrics commands with database integration
 //! - 1.1.0: Added command processing support and shared state for guilds/bot info
 //! - 1.0.0: Initial IPC implementation with Unix socket protocol
@@ -20,6 +21,8 @@ use crate::ipc::get_socket_path;
 use chrono::{DateTime, Utc, NaiveDateTime};
 use anyhow::Result;
 use log::{debug, error, info, warn};
+use serenity::http::Http;
+use serenity::model::id::ChannelId;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -62,6 +65,8 @@ pub struct IpcServer {
     database: Option<Database>,
     /// Database file path for size queries
     db_path: Option<String>,
+    /// Discord HTTP client for sending messages
+    http: Arc<RwLock<Option<Arc<Http>>>>,
 }
 
 impl IpcServer {
@@ -83,6 +88,7 @@ impl IpcServer {
             active_sessions: Arc::new(RwLock::new(0)),
             database: None,
             db_path: None,
+            http: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -91,6 +97,13 @@ impl IpcServer {
         self.database = Some(database);
         self.db_path = Some(db_path);
         self
+    }
+
+    /// Set the Discord HTTP client for sending messages
+    pub async fn set_http(&self, http: Arc<Http>) {
+        let mut http_lock = self.http.write().await;
+        *http_lock = Some(http);
+        info!("IPC server HTTP client configured");
     }
 
     /// Start the IPC server in a background task
@@ -367,16 +380,41 @@ impl IpcServer {
                 debug!("Received Pong with timestamp {}", timestamp);
             }
             TuiCommand::SendMessage { request_id, channel_id, content } => {
-                // This would need HTTP client access to actually send
-                // For now, just acknowledge receipt
-                warn!("SendMessage command received but not implemented (channel: {}, content length: {})",
-                      channel_id, content.len());
-                self.broadcast(BotEvent::CommandResponse {
-                    request_id,
-                    success: false,
-                    message: Some("SendMessage not yet implemented in IPC".to_string()),
-                    data: None,
-                });
+                let http_guard = self.http.read().await;
+                if let Some(http) = http_guard.as_ref() {
+                    let http = http.clone();
+                    drop(http_guard); // Release the lock before async operation
+
+                    let channel = ChannelId(channel_id);
+                    match channel.say(&http, &content).await {
+                        Ok(msg) => {
+                            info!("Message sent to channel {} (msg id: {})", channel_id, msg.id);
+                            self.broadcast(BotEvent::CommandResponse {
+                                request_id,
+                                success: true,
+                                message: Some(format!("Message sent (id: {})", msg.id)),
+                                data: None,
+                            });
+                        }
+                        Err(e) => {
+                            error!("Failed to send message to channel {}: {}", channel_id, e);
+                            self.broadcast(BotEvent::CommandResponse {
+                                request_id,
+                                success: false,
+                                message: Some(format!("Failed to send message: {}", e)),
+                                data: None,
+                            });
+                        }
+                    }
+                } else {
+                    warn!("SendMessage command received but HTTP client not configured");
+                    self.broadcast(BotEvent::CommandResponse {
+                        request_id,
+                        success: false,
+                        message: Some("HTTP client not configured - bot may not be ready".to_string()),
+                        data: None,
+                    });
+                }
             }
             TuiCommand::SetFeature { request_id, feature, enabled, guild_id } => {
                 // This would need database access to actually set

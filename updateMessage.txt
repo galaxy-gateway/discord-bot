@@ -54,6 +54,14 @@ This separation ensures:
 - 'm' means "send a message" (only active when viewing a channel)
 - The UI clearly indicates which mode you're in via colors and labels
 
+## Discord Integration
+
+The IPC server now holds a reference to Serenity's HTTP client, allowing it to send messages directly to Discord channels. When the bot is ready, it passes its HTTP client to the IPC server via `set_http()`.
+
+**Additional files modified:**
+- `src/ipc/server.rs` - Added HTTP client storage and SendMessage implementation (v1.3.0)
+- `src/bin/bot.rs` - Passes HTTP client to IPC server on ready
+
 May your messages flow freely across the digital ether.
 
 With cosmic clarity,
