@@ -20,7 +20,7 @@ use persona::features::personas::PersonaManager;
 use persona::features::plugins::{Plugin, PluginConfig, PluginManager, JobManager, PluginExecutor, OutputHandler};
 use persona::features::reminders::ReminderScheduler;
 use persona::features::startup::StartupNotifier;
-use persona::ipc::{IpcServer, BotEvent, DisplayMessage, GuildInfo, AttachmentInfo};
+use persona::ipc::{IpcServer, BotEvent, DisplayMessage, GuildInfo, ChannelInfo, ChannelType, AttachmentInfo};
 use persona::message_components::MessageComponentHandler;
 use serenity::model::id::GuildId;
 
@@ -135,15 +135,63 @@ impl EventHandler for Handler {
 
         // Forward Ready event to IPC clients
         if let Some(ipc) = &self.ipc_server {
-            // Build guild info list (simplified - would need cache access for full info)
-            let guilds: Vec<GuildInfo> = ready.guilds.iter().map(|g| {
-                GuildInfo {
-                    id: g.id.0,
-                    name: format!("Guild {}", g.id.0), // Would need cache for actual name
-                    channels: Vec::new(), // Would need cache for channels
-                    member_count: None,
+            // Build guild info list using cache for actual names and channels
+            let mut guilds: Vec<GuildInfo> = Vec::new();
+
+            for unavailable_guild in &ready.guilds {
+                let guild_id = unavailable_guild.id;
+
+                // Try to get guild info from cache
+                if let Some(guild) = ctx.cache.guild(guild_id) {
+                    use serenity::model::channel::Channel as SerenityChannel;
+                    use serenity::model::channel::ChannelType as SerenityChannelType;
+
+                    let channels: Vec<ChannelInfo> = guild.channels.iter()
+                        .filter_map(|(channel_id, channel)| {
+                            // Extract GuildChannel from Channel enum
+                            if let SerenityChannel::Guild(gc) = channel {
+                                let channel_type = match gc.kind {
+                                    SerenityChannelType::Text => ChannelType::Text,
+                                    SerenityChannelType::Voice => ChannelType::Voice,
+                                    SerenityChannelType::Category => ChannelType::Category,
+                                    SerenityChannelType::News => ChannelType::News,
+                                    SerenityChannelType::NewsThread
+                                    | SerenityChannelType::PublicThread
+                                    | SerenityChannelType::PrivateThread => ChannelType::Thread,
+                                    _ => ChannelType::Other,
+                                };
+
+                                Some(ChannelInfo {
+                                    id: channel_id.0,
+                                    name: gc.name.clone(),
+                                    channel_type,
+                                })
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+
+                    guilds.push(GuildInfo {
+                        id: guild_id.0,
+                        name: guild.name.clone(),
+                        channels,
+                        member_count: Some(guild.member_count),
+                    });
+                } else {
+                    // Guild not in cache yet, use placeholder
+                    guilds.push(GuildInfo {
+                        id: guild_id.0,
+                        name: format!("Guild {}", guild_id.0),
+                        channels: Vec::new(),
+                        member_count: None,
+                    });
                 }
-            }).collect();
+            }
+
+            // Store in IPC server for later queries
+            ipc.set_guilds(guilds.clone()).await;
+            ipc.set_bot_info(ready.user.id.0, ready.user.name.clone()).await;
 
             ipc.broadcast(BotEvent::Ready {
                 guilds,
@@ -151,7 +199,7 @@ impl EventHandler for Handler {
                 bot_username: ready.user.name.clone(),
             });
 
-            info!("📡 IPC: Sent Ready event to TUI clients");
+            info!("📡 IPC: Sent Ready event to TUI clients with {} guilds", ready.guilds.len());
         }
 
         // Register slash commands - use guild commands for development (instant), global for production
@@ -490,6 +538,9 @@ async fn main() -> Result<()> {
             heartbeat_ipc.send_heartbeat();
         }
     });
+
+    // Start IPC command processor
+    ipc_server.clone().start_command_processor();
 
     let database = Database::new(&config.database_path).await?;
     let usage_tracker = UsageTracker::new(database.clone());

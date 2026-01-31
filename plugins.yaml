@@ -136,11 +136,8 @@ plugins:
         download_args:
           - "-c"
           - |
-            docker run --rm -v "${output_dir}:/data/output" --entrypoint yt-dlp whisper-transcribe:latest \
-              -x --audio-format mp3 --audio-quality 5 \
-              -o "/data/output/audio.%(ext)s" \
-              --no-playlist --no-warnings \
-              "${url}"
+            docker run --rm -v "${output_dir}:/data/output" --entrypoint sh whisper-transcribe:latest -c \
+              "pip install -q --upgrade yt-dlp 2>/dev/null; yt-dlp -x --audio-format mp3 --audio-quality 5 -o '/data/output/audio.%(ext)s' --no-playlist --no-warnings '${url}'"
 
         # Command for transcribing local audio files (chunks)
         # ${file} is replaced with the input file path

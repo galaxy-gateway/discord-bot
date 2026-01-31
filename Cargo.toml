@@ -12,7 +12,7 @@ tui = ["ratatui", "crossterm"]
 [dependencies]
 dotenvy = "0.15.7"
 openai = "1.0.0-alpha.13"
-serenity = { version = "0.11.6", default-features = false, features = ["client", "gateway", "rustls_backend", "model"]}
+serenity = { version = "0.11.6", default-features = false, features = ["client", "gateway", "rustls_backend", "model", "cache"]}
 tokio = { version = "1.29.1", features = ["macros", "rt-multi-thread", "process", "net", "io-util", "sync"] }
 lw-webdriver = "0.4.1"
 sqlite = "0.31.0"
