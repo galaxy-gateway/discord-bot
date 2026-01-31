@@ -13,12 +13,16 @@ pub fn render_stats(frame: &mut Frame, app: &App, area: Rect) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),   // Time period selector
+            Constraint::Length(8),   // System metrics sparklines
             Constraint::Min(0),      // Main content
         ])
         .split(area);
 
     // Time period selector
     render_time_selector(frame, app, chunks[0]);
+
+    // System metrics sparklines
+    render_system_sparklines(frame, app, chunks[1]);
 
     // Main content
     let main_chunks = Layout::default()
@@ -27,7 +31,7 @@ pub fn render_stats(frame: &mut Frame, app: &App, area: Rect) {
             Constraint::Percentage(50),
             Constraint::Percentage(50),
         ])
-        .split(chunks[1]);
+        .split(chunks[2]);
 
     let left_chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -40,7 +44,7 @@ pub fn render_stats(frame: &mut Frame, app: &App, area: Rect) {
     let right_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(12),  // Daily chart
+            Constraint::Length(10),  // Daily chart
             Constraint::Min(0),      // Top users
         ])
         .split(main_chunks[1]);
@@ -54,7 +58,7 @@ pub fn render_stats(frame: &mut Frame, app: &App, area: Rect) {
 fn render_time_selector(frame: &mut Frame, app: &App, area: Rect) {
     let period = app.stats_cache.time_period;
     let text = format!(
-        "Time Period: {} (press 't' to cycle)",
+        "Time Period: {} (press 't' to cycle, 'r' to refresh)",
         period.label()
     );
 
@@ -70,6 +74,46 @@ fn render_time_selector(frame: &mut Frame, app: &App, area: Rect) {
         .alignment(Alignment::Center);
 
     frame.render_widget(paragraph, area);
+}
+
+fn render_system_sparklines(frame: &mut Frame, app: &App, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(50),
+            Constraint::Percentage(50),
+        ])
+        .split(area);
+
+    // CPU sparkline
+    let cpu_data = app.stats_cache.cpu_sparkline_data();
+    let cpu_title = if cpu_data.is_empty() {
+        format!("CPU (current: {:.1}%)", app.stats_cache.system.cpu_percent)
+    } else {
+        format!("CPU 24h (current: {:.1}%)", app.stats_cache.system.cpu_percent)
+    };
+    let cpu_sparkline = Sparkline::default()
+        .block(titled_block(&cpu_title))
+        .data(&cpu_data)
+        .style(Style::default().fg(Color::Cyan));
+    frame.render_widget(cpu_sparkline, chunks[0]);
+
+    // Memory sparkline
+    let memory_data = app.stats_cache.memory_sparkline_data();
+    let mem_percent = app.stats_cache.memory_percent();
+    let mem_used = format_bytes(app.stats_cache.system.memory_bytes);
+    let mem_total = format_bytes(app.stats_cache.system.memory_total);
+
+    let memory_title = if memory_data.is_empty() {
+        format!("Memory ({:.1}% - {}/{})", mem_percent, mem_used, mem_total)
+    } else {
+        format!("Memory 24h ({:.1}% - {}/{})", mem_percent, mem_used, mem_total)
+    };
+    let memory_sparkline = Sparkline::default()
+        .block(titled_block(&memory_title))
+        .data(&memory_data)
+        .style(Style::default().fg(Color::Magenta));
+    frame.render_widget(memory_sparkline, chunks[1]);
 }
 
 fn render_cost_summary(frame: &mut Frame, app: &App, area: Rect) {

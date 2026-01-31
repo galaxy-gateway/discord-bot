@@ -2790,6 +2790,387 @@ impl Database {
 
         Ok(ids)
     }
+
+    // ============================================================================
+    // TUI Analytics Methods
+    // ============================================================================
+
+    /// Get user list with aggregated stats
+    pub async fn get_user_list(&self, limit: u32) -> Result<Vec<UserListEntry>> {
+        let conn = self.connection.lock().await;
+        let mut users = Vec::new();
+
+        // Get users with their total cost and activity from openai_usage_daily
+        let mut stmt = conn.prepare(
+            "SELECT
+                user_id,
+                SUM(total_cost_usd) as total_cost,
+                SUM(total_tokens) as total_tokens,
+                SUM(request_count) as total_calls,
+                MAX(date) as last_activity
+             FROM openai_usage_daily
+             WHERE user_id != ''
+             GROUP BY user_id
+             ORDER BY total_cost DESC
+             LIMIT ?"
+        )?;
+        stmt.bind((1, limit as i64))?;
+
+        while let Ok(State::Row) = stmt.next() {
+            users.push(UserListEntry {
+                user_id: stmt.read::<String, _>(0)?,
+                username: None, // Would need Discord API to resolve
+                total_cost: stmt.read::<f64, _>(1)?,
+                total_tokens: stmt.read::<i64, _>(2)? as u64,
+                total_calls: stmt.read::<i64, _>(3)? as u64,
+                dm_session_count: 0, // Enriched below
+                last_activity: stmt.read::<Option<String>, _>(4)?,
+            });
+        }
+
+        // Enrich with DM session counts
+        for user in &mut users {
+            let mut session_stmt = conn.prepare(
+                "SELECT COUNT(*) FROM dm_sessions WHERE user_id = ?"
+            )?;
+            session_stmt.bind((1, user.user_id.as_str()))?;
+            if let Ok(State::Row) = session_stmt.next() {
+                user.dm_session_count = session_stmt.read::<i64, _>(0)? as u64;
+            }
+        }
+
+        Ok(users)
+    }
+
+    /// Get detailed user statistics
+    pub async fn get_user_details(&self, user_id: &str) -> Result<UserDetails> {
+        let conn = self.connection.lock().await;
+
+        // Get aggregated usage stats
+        let mut usage_stmt = conn.prepare(
+            "SELECT
+                SUM(total_cost_usd) as total_cost,
+                SUM(total_tokens) as total_tokens,
+                SUM(request_count) as total_calls,
+                MIN(date) as first_seen,
+                MAX(date) as last_activity
+             FROM openai_usage_daily
+             WHERE user_id = ?"
+        )?;
+        usage_stmt.bind((1, user_id))?;
+
+        let (total_cost, total_tokens, total_calls, first_seen, last_activity) =
+            if let Ok(State::Row) = usage_stmt.next() {
+                (
+                    usage_stmt.read::<f64, _>(0).unwrap_or(0.0),
+                    usage_stmt.read::<i64, _>(1).unwrap_or(0) as u64,
+                    usage_stmt.read::<i64, _>(2).unwrap_or(0) as u64,
+                    usage_stmt.read::<Option<String>, _>(3)?,
+                    usage_stmt.read::<Option<String>, _>(4)?,
+                )
+            } else {
+                (0.0, 0, 0, None, None)
+            };
+
+        // Get DM session aggregate stats
+        drop(usage_stmt);
+        let mut dm_agg_stmt = conn.prepare(
+            "SELECT
+                COUNT(*) as session_count,
+                SUM(message_count) as total_messages
+             FROM dm_sessions
+             WHERE user_id = ?"
+        )?;
+        dm_agg_stmt.bind((1, user_id))?;
+
+        let (dm_session_count, message_count) = if let Ok(State::Row) = dm_agg_stmt.next() {
+            (
+                dm_agg_stmt.read::<i64, _>(0).unwrap_or(0) as u64,
+                dm_agg_stmt.read::<i64, _>(1).unwrap_or(0) as u64,
+            )
+        } else {
+            (0, 0)
+        };
+
+        // Get DM session metrics aggregates
+        drop(dm_agg_stmt);
+        let mut metrics_stmt = conn.prepare(
+            "SELECT
+                SUM(sm.chat_calls) as chat_calls,
+                SUM(sm.whisper_calls) as whisper_calls,
+                SUM(sm.dalle_calls) as dalle_calls
+             FROM dm_session_metrics sm
+             JOIN dm_sessions s ON sm.session_id = s.session_id
+             WHERE s.user_id = ?"
+        )?;
+        metrics_stmt.bind((1, user_id))?;
+
+        let (chat_calls, whisper_calls, dalle_calls) = if let Ok(State::Row) = metrics_stmt.next() {
+            (
+                metrics_stmt.read::<i64, _>(0).unwrap_or(0) as u64,
+                metrics_stmt.read::<i64, _>(1).unwrap_or(0) as u64,
+                metrics_stmt.read::<i64, _>(2).unwrap_or(0) as u64,
+            )
+        } else {
+            (0, 0, 0)
+        };
+
+        // Get favorite persona
+        drop(metrics_stmt);
+        let mut persona_stmt = conn.prepare(
+            "SELECT persona, COUNT(*) as cnt
+             FROM conversation_history
+             WHERE user_id = ? AND persona IS NOT NULL AND persona != ''
+             GROUP BY persona
+             ORDER BY cnt DESC
+             LIMIT 1"
+        )?;
+        persona_stmt.bind((1, user_id))?;
+
+        let favorite_persona = if let Ok(State::Row) = persona_stmt.next() {
+            persona_stmt.read::<Option<String>, _>(0)?
+        } else {
+            None
+        };
+
+        Ok(UserDetails {
+            user_id: user_id.to_string(),
+            username: None,
+            total_cost,
+            total_tokens,
+            total_calls,
+            dm_session_count,
+            message_count,
+            chat_calls,
+            whisper_calls,
+            dalle_calls,
+            first_seen,
+            last_activity,
+            favorite_persona,
+        })
+    }
+
+    /// Get DM sessions for a user
+    pub async fn get_user_dm_sessions(&self, user_id: &str, limit: u32) -> Result<Vec<DmSessionEntry>> {
+        let conn = self.connection.lock().await;
+
+        let mut stmt = conn.prepare(
+            "SELECT
+                s.session_id,
+                s.started_at,
+                s.ended_at,
+                s.message_count,
+                COALESCE(m.total_api_cost_usd, 0) as api_cost,
+                COALESCE(m.total_tokens, 0) as total_tokens
+             FROM dm_sessions s
+             LEFT JOIN dm_session_metrics m ON s.session_id = m.session_id
+             WHERE s.user_id = ?
+             ORDER BY s.started_at DESC
+             LIMIT ?"
+        )?;
+        stmt.bind((1, user_id))?;
+        stmt.bind((2, limit as i64))?;
+
+        let mut sessions = Vec::new();
+        while let Ok(State::Row) = stmt.next() {
+            sessions.push(DmSessionEntry {
+                session_id: stmt.read::<String, _>(0)?,
+                started_at: stmt.read::<String, _>(1)?,
+                ended_at: stmt.read::<Option<String>, _>(2)?,
+                message_count: stmt.read::<i64, _>(3)? as u32,
+                api_cost: stmt.read::<f64, _>(4)?,
+                total_tokens: stmt.read::<i64, _>(5)? as u64,
+            });
+        }
+
+        Ok(sessions)
+    }
+
+    /// Get recent errors from error_logs
+    pub async fn get_recent_errors(&self, limit: u32) -> Result<Vec<ErrorLogEntry>> {
+        let conn = self.connection.lock().await;
+
+        let mut stmt = conn.prepare(
+            "SELECT id, error_type, error_message, stack_trace, user_id, channel_id, command, timestamp
+             FROM error_logs
+             ORDER BY timestamp DESC
+             LIMIT ?"
+        )?;
+        stmt.bind((1, limit as i64))?;
+
+        let mut errors = Vec::new();
+        while let Ok(State::Row) = stmt.next() {
+            errors.push(ErrorLogEntry {
+                id: stmt.read::<i64, _>(0)?,
+                error_type: stmt.read::<String, _>(1)?,
+                error_message: stmt.read::<String, _>(2)?,
+                stack_trace: stmt.read::<Option<String>, _>(3)?,
+                user_id: stmt.read::<Option<String>, _>(4)?,
+                channel_id: stmt.read::<Option<String>, _>(5)?,
+                command: stmt.read::<Option<String>, _>(6)?,
+                timestamp: stmt.read::<String, _>(7)?,
+            });
+        }
+
+        Ok(errors)
+    }
+
+    /// Get historical performance metrics
+    pub async fn get_historical_metrics(&self, metric_type: &str, hours: u32) -> Result<Vec<(i64, f64)>> {
+        let conn = self.connection.lock().await;
+
+        let mut stmt = conn.prepare(
+            "SELECT
+                strftime('%s', timestamp) as ts,
+                value
+             FROM performance_metrics
+             WHERE metric_type = ?
+             AND timestamp >= datetime('now', ? || ' hours')
+             ORDER BY timestamp ASC"
+        )?;
+        stmt.bind((1, metric_type))?;
+        stmt.bind((2, format!("-{}", hours).as_str()))?;
+
+        let mut data_points = Vec::new();
+        while let Ok(State::Row) = stmt.next() {
+            let ts = stmt.read::<String, _>(0)?.parse::<i64>().unwrap_or(0);
+            let value = stmt.read::<f64, _>(1)?;
+            data_points.push((ts, value));
+        }
+
+        Ok(data_points)
+    }
+
+    /// Get daily cost trend for sparkline
+    pub async fn get_daily_cost_trend(&self, days: u32) -> Result<Vec<(String, f64)>> {
+        let conn = self.connection.lock().await;
+
+        let mut stmt = conn.prepare(
+            "SELECT date, SUM(total_cost_usd) as cost
+             FROM openai_usage_daily
+             WHERE date >= date('now', ? || ' days')
+             GROUP BY date
+             ORDER BY date ASC"
+        )?;
+        stmt.bind((1, format!("-{}", days).as_str()))?;
+
+        let mut trend = Vec::new();
+        while let Ok(State::Row) = stmt.next() {
+            let date = stmt.read::<String, _>(0)?;
+            let cost = stmt.read::<f64, _>(1)?;
+            trend.push((date, cost));
+        }
+
+        Ok(trend)
+    }
+
+    /// Log a performance metric
+    pub async fn log_performance_metric(&self, metric_type: &str, value: f64, unit: Option<&str>, metadata: Option<&str>) -> Result<()> {
+        let conn = self.connection.lock().await;
+        let mut stmt = conn.prepare(
+            "INSERT INTO performance_metrics (metric_type, value, unit, metadata) VALUES (?, ?, ?, ?)"
+        )?;
+        stmt.bind((1, metric_type))?;
+        stmt.bind((2, value))?;
+        stmt.bind((3, unit.unwrap_or("")))?;
+        stmt.bind((4, metadata.unwrap_or("")))?;
+        stmt.next()?;
+        Ok(())
+    }
+
+    /// Get channel message history from conversation_history
+    pub async fn get_channel_messages(&self, channel_id: &str, limit: u32) -> Result<Vec<ConversationMessage>> {
+        let conn = self.connection.lock().await;
+
+        let mut stmt = conn.prepare(
+            "SELECT user_id, role, content, persona, timestamp
+             FROM conversation_history
+             WHERE channel_id = ?
+             ORDER BY timestamp DESC
+             LIMIT ?"
+        )?;
+        stmt.bind((1, channel_id))?;
+        stmt.bind((2, limit as i64))?;
+
+        let mut messages = Vec::new();
+        while let Ok(State::Row) = stmt.next() {
+            messages.push(ConversationMessage {
+                user_id: stmt.read::<String, _>(0)?,
+                role: stmt.read::<String, _>(1)?,
+                content: stmt.read::<String, _>(2)?,
+                persona: stmt.read::<Option<String>, _>(3)?,
+                timestamp: stmt.read::<String, _>(4)?,
+            });
+        }
+
+        // Reverse to get chronological order
+        messages.reverse();
+        Ok(messages)
+    }
+}
+
+/// User list entry for TUI
+#[derive(Debug, Clone)]
+pub struct UserListEntry {
+    pub user_id: String,
+    pub username: Option<String>,
+    pub total_cost: f64,
+    pub total_tokens: u64,
+    pub total_calls: u64,
+    pub dm_session_count: u64,
+    pub last_activity: Option<String>,
+}
+
+/// Detailed user info for TUI
+#[derive(Debug, Clone)]
+pub struct UserDetails {
+    pub user_id: String,
+    pub username: Option<String>,
+    pub total_cost: f64,
+    pub total_tokens: u64,
+    pub total_calls: u64,
+    pub dm_session_count: u64,
+    pub message_count: u64,
+    pub chat_calls: u64,
+    pub whisper_calls: u64,
+    pub dalle_calls: u64,
+    pub first_seen: Option<String>,
+    pub last_activity: Option<String>,
+    pub favorite_persona: Option<String>,
+}
+
+/// DM session entry for TUI
+#[derive(Debug, Clone)]
+pub struct DmSessionEntry {
+    pub session_id: String,
+    pub started_at: String,
+    pub ended_at: Option<String>,
+    pub message_count: u32,
+    pub api_cost: f64,
+    pub total_tokens: u64,
+}
+
+/// Error log entry for TUI
+#[derive(Debug, Clone)]
+pub struct ErrorLogEntry {
+    pub id: i64,
+    pub error_type: String,
+    pub error_message: String,
+    pub stack_trace: Option<String>,
+    pub user_id: Option<String>,
+    pub channel_id: Option<String>,
+    pub command: Option<String>,
+    pub timestamp: String,
+}
+
+/// Conversation message for TUI
+#[derive(Debug, Clone)]
+pub struct ConversationMessage {
+    pub user_id: String,
+    pub role: String,
+    pub content: String,
+    pub persona: Option<String>,
+    pub timestamp: String,
 }
 
 /// DM statistics for a user

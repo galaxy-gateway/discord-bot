@@ -1,43 +1,60 @@
-The circle is now complete. When I left you, I was but the learner. Now, I am the master.
+Greetings, seekers of digital enlightenment!
 
-## v3.18.0 - The Data Awakens
+The TUI Channel Watcher has received a vital enhancement - the ability to send messages to Discord channels has been restored, with clearer separation of input purposes.
 
-Three critical pathways have been cleared:
+## The Duality of Input
 
-### YouTube Transcription - Restored
+The Channel Watcher now understands two distinct input purposes:
 
-The 403 Forbidden error has been banished. YouTube's ever-shifting sands required us to update yt-dlp before each download. The latest version (2026.01.29) now flows through the Docker container automatically, restoring transcription capabilities. Your audio shall flow freely once more.
+1. **Add Channel Mode** - Triggered by pressing 'i'
+   - Enter a Discord channel ID to watch
+   - Works from the channel list view
+   - Yellow input box indicates channel ID entry
 
-### Channel Watcher - Clarity of Intent
+2. **Send Message Mode** - Triggered by pressing 'm'
+   - Type your message to send to the selected channel
+   - Only available when viewing a channel
+   - Cyan input box indicates message composition
 
-The input box now speaks with purpose befitting a Jedi. When no channel is selected, it guides: "Enter channel ID (Enter to watch, Esc to cancel)". When a channel IS selected, it properly indicates message entry. The path is clear - press 'i', type your channel ID, press Enter. The way is now illuminated.
+## The Wisdom of Controls
 
-### Usage Stats - The Database Connection
+When in the **Channel List** (no channel selected):
+- `j/k` - Navigate up/down through channels
+- `Enter` - View the selected channel's messages
+- `i` - Add a new channel by ID
+- `d` - Remove a channel from watch list
 
-The most significant revelation: the TUI now receives wisdom from the database. New IPC commands bridge what was once a void:
+When **Viewing a Channel** (channel selected):
+- `j/k` - Scroll through messages
+- `m` - Compose and send a message
+- `i` - Add another channel by ID
+- `Esc` - Return to channel list
+- `d` - Unwatch this channel
 
-- `GetUsageStats` - Queries total cost, tokens, calls, and breakdowns by service and user
-- `GetSystemMetrics` - Reveals CPU, memory, and database file size
-- Stats refresh when you press 'r' or switch time periods with 't'
-- Dashboard and Stats screens now populate with YOUR actual data
+## The Files Touched by Transformation
 
-The architecture flows:
+- `src/tui/app.rs` - Added `InputPurpose` enum and field to track input mode
+- `src/tui/event.rs` - Added `StartMessageInput` action and 'm' key binding
+- `src/tui/ui/channel_watcher.rs` - Input box now reflects actual purpose
+- `src/bin/tui.rs` - Handler differentiates between channel ID and message input
+
+## Technical Implementation
+
+The `InputPurpose` enum provides semantic clarity:
+
+```rust
+pub enum InputPurpose {
+    AddChannel,    // 'i' key - enter channel ID
+    SendMessage,   // 'm' key - compose message
+}
 ```
-Bot + Database --> IPC Server --> UsageStatsUpdate --> TUI Stats Cache --> Display
-```
 
-### Files Modified
+This separation ensures:
+- 'i' always means "add a channel by ID" regardless of context
+- 'm' means "send a message" (only active when viewing a channel)
+- The UI clearly indicates which mode you're in via colors and labels
 
-- `plugins.yaml` - Download command now updates yt-dlp (v3.5.1)
-- `src/ipc/protocol.rs` - New IPC commands and events
-- `src/ipc/server.rs` - Database integration, stats queries (v1.2.0)
-- `src/ipc/client.rs` - New request methods
-- `src/tui/ui/channel_watcher.rs` - Context-aware input hints
-- `src/tui/app.rs` - Handle new stat events
-- `src/bin/tui.rs` - Request stats on startup and refresh
-- `src/bin/bot.rs` - Pass database to IPC server
-- `src/database.rs` - Global usage stats query method
+May your messages flow freely across the digital ether.
 
-The data that sleeps in your database will now awaken on your dashboard.
-
-*- The Visionary*
+With cosmic clarity,
+The Visionary

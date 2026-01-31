@@ -2,8 +2,11 @@
 //!
 //! Main application state and screen navigation.
 
-use crate::ipc::{IpcClient, BotEvent, TuiCommand, GuildInfo, DisplayMessage};
-use crate::tui::state::{ChannelState, StatsCache};
+use crate::ipc::{
+    BotEvent, GuildInfo, DisplayMessage,
+    UserSummary, UserStats, DmSessionInfo, ErrorInfo,
+};
+use crate::tui::state::{ChannelState, StatsCache, UsersState, ErrorsState};
 use anyhow::Result;
 use std::collections::HashMap;
 
@@ -13,7 +16,9 @@ pub enum Screen {
     Dashboard,
     Channels,
     Stats,
+    Users,
     Settings,
+    Errors,
     Help,
 }
 
@@ -23,7 +28,9 @@ impl Screen {
             Screen::Dashboard => "Dashboard",
             Screen::Channels => "Channel Watcher",
             Screen::Stats => "Usage Stats",
+            Screen::Users => "User Analytics",
             Screen::Settings => "Settings",
+            Screen::Errors => "Error Logs",
             Screen::Help => "Help",
         }
     }
@@ -33,7 +40,9 @@ impl Screen {
             Screen::Dashboard => '1',
             Screen::Channels => '2',
             Screen::Stats => '3',
-            Screen::Settings => '4',
+            Screen::Users => '4',
+            Screen::Settings => '5',
+            Screen::Errors => '6',
             Screen::Help => '?',
         }
     }
@@ -43,7 +52,9 @@ impl Screen {
             Screen::Dashboard,
             Screen::Channels,
             Screen::Stats,
+            Screen::Users,
             Screen::Settings,
+            Screen::Errors,
             Screen::Help,
         ]
     }
@@ -54,6 +65,16 @@ impl Screen {
 pub enum InputMode {
     Normal,
     Editing,
+}
+
+/// Purpose of the current input
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum InputPurpose {
+    /// Adding a channel ID to watch
+    #[default]
+    AddChannel,
+    /// Sending a message to a channel
+    SendMessage,
 }
 
 /// Main application state
@@ -80,8 +101,14 @@ pub struct App {
     pub channel_state: ChannelState,
     /// Stats cache
     pub stats_cache: StatsCache,
+    /// Users state (user analytics)
+    pub users_state: UsersState,
+    /// Errors state (error logs)
+    pub errors_state: ErrorsState,
     /// Current input mode
     pub input_mode: InputMode,
+    /// Purpose of the current input
+    pub input_purpose: InputPurpose,
     /// Input buffer for text entry
     pub input_buffer: String,
     /// Selected index for lists
@@ -110,7 +137,10 @@ impl App {
             active_sessions: 0,
             channel_state: ChannelState::new(),
             stats_cache: StatsCache::new(),
+            users_state: UsersState::new(),
+            errors_state: ErrorsState::new(),
             input_mode: InputMode::Normal,
+            input_purpose: InputPurpose::default(),
             input_buffer: String::new(),
             selected_index: 0,
             error_message: None,
@@ -205,6 +235,42 @@ impl App {
                 self.stats_cache.system.db_size = db_size;
                 self.stats_cache.system.uptime_seconds = uptime_seconds;
             }
+            BotEvent::ChannelInfoResponse {
+                channel_id,
+                name,
+                guild_name,
+                message_count,
+                last_activity,
+            } => {
+                self.channel_state.set_channel_info(channel_id, name, guild_name, message_count);
+            }
+            BotEvent::ChannelHistoryResponse {
+                channel_id,
+                messages,
+            } => {
+                let msg_count = messages.len();
+                self.channel_state.set_history(channel_id, messages);
+                self.add_activity(format!("Loaded {} messages for channel", msg_count));
+            }
+            BotEvent::HistoricalMetricsResponse {
+                metric_type,
+                data_points,
+            } => {
+                self.stats_cache.set_historical_data(&metric_type, data_points);
+            }
+            BotEvent::UserListResponse { users } => {
+                self.users_state.set_users(users);
+            }
+            BotEvent::UserDetailsResponse {
+                user_id,
+                stats,
+                dm_sessions,
+            } => {
+                self.users_state.set_user_details(user_id, stats, dm_sessions);
+            }
+            BotEvent::RecentErrorsResponse { errors } => {
+                self.errors_state.set_errors(errors);
+            }
         }
     }
 
@@ -259,6 +325,13 @@ impl App {
     /// Enter editing mode
     pub fn start_editing(&mut self) {
         self.input_mode = InputMode::Editing;
+        self.input_purpose = InputPurpose::AddChannel;
+    }
+
+    /// Enter editing mode for sending a message
+    pub fn start_message_input(&mut self) {
+        self.input_mode = InputMode::Editing;
+        self.input_purpose = InputPurpose::SendMessage;
     }
 
     /// Exit editing mode

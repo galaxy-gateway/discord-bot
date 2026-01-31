@@ -13,7 +13,10 @@ pub mod protocol;
 pub mod server;
 pub mod client;
 
-pub use protocol::{BotEvent, TuiCommand, DisplayMessage, GuildInfo, ChannelInfo, ChannelType, AttachmentInfo};
+pub use protocol::{
+    BotEvent, TuiCommand, DisplayMessage, GuildInfo, ChannelInfo, ChannelType, AttachmentInfo,
+    UserSummary, UserStats, DmSessionInfo, ErrorInfo,
+};
 pub use server::IpcServer;
 pub use client::{IpcClient, connect_with_retry};
 

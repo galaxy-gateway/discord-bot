@@ -12,8 +12,12 @@
 //! - 1.0.0: Initial IPC implementation with Unix socket protocol
 
 use crate::database::Database;
-use crate::ipc::protocol::{BotEvent, TuiCommand, encode_message, GuildInfo};
+use crate::ipc::protocol::{
+    BotEvent, TuiCommand, encode_message, GuildInfo, DisplayMessage,
+    UserSummary, UserStats, DmSessionInfo, ErrorInfo,
+};
 use crate::ipc::get_socket_path;
+use chrono::{DateTime, Utc, NaiveDateTime};
 use anyhow::Result;
 use log::{debug, error, info, warn};
 use std::sync::Arc;
@@ -406,9 +410,40 @@ impl IpcServer {
                 });
             }
             TuiCommand::GetChannelHistory { channel_id, limit } => {
-                warn!("GetChannelHistory command received but not implemented (channel: {}, limit: {})",
-                      channel_id, limit);
-                // Would need Discord API access to fetch history
+                // Fetch from database conversation_history
+                if let Some(ref db) = self.database {
+                    match db.get_channel_messages(&channel_id.to_string(), limit).await {
+                        Ok(messages) => {
+                            let msg_count = messages.len();
+                            let display_messages: Vec<DisplayMessage> = messages.into_iter().map(|m| {
+                                let timestamp = NaiveDateTime::parse_from_str(&m.timestamp, "%Y-%m-%d %H:%M:%S")
+                                    .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc))
+                                    .unwrap_or_else(|_| Utc::now());
+                                DisplayMessage {
+                                    id: 0,
+                                    author_id: m.user_id.parse().unwrap_or(0),
+                                    author_name: m.user_id.clone(),
+                                    author_discriminator: "0000".to_string(),
+                                    content: m.content,
+                                    timestamp,
+                                    is_bot: m.role == "assistant",
+                                    attachments: vec![],
+                                    embeds_count: 0,
+                                }
+                            }).collect();
+                            self.broadcast(BotEvent::ChannelHistoryResponse {
+                                channel_id,
+                                messages: display_messages,
+                            });
+                            debug!("Sent ChannelHistoryResponse with {} messages", msg_count);
+                        }
+                        Err(e) => {
+                            warn!("Failed to get channel history: {}", e);
+                        }
+                    }
+                } else {
+                    warn!("GetChannelHistory command received but no database configured");
+                }
             }
             TuiCommand::GetUsageStats { period_days } => {
                 if let Some(ref db) = self.database {
@@ -462,6 +497,257 @@ impl IpcServer {
                     uptime_seconds: self.get_uptime_seconds(),
                 });
                 debug!("Sent SystemMetricsUpdate response");
+
+                // Also log performance metrics to database for historical tracking
+                if let Some(ref db) = self.database {
+                    let _ = db.log_performance_metric("cpu", cpu_percent as f64, Some("%"), None).await;
+                    let _ = db.log_performance_metric("memory", memory_bytes as f64, Some("bytes"), None).await;
+                }
+            }
+            TuiCommand::GetChannelInfo { channel_id } => {
+                // Look up channel in cached guilds
+                let guilds = self.get_guilds().await;
+                let channel_info = guilds.iter()
+                    .flat_map(|g| g.channels.iter().map(move |c| (c, &g.name)))
+                    .find(|(c, _)| c.id == channel_id);
+
+                if let Some((channel, guild_name)) = channel_info {
+                    self.broadcast(BotEvent::ChannelInfoResponse {
+                        channel_id,
+                        name: channel.name.clone(),
+                        guild_name: Some(guild_name.clone()),
+                        message_count: 0, // Would need to query Discord
+                        last_activity: None,
+                    });
+                    debug!("Sent ChannelInfoResponse for channel {}", channel_id);
+                } else {
+                    // Send minimal response for unknown channel
+                    self.broadcast(BotEvent::ChannelInfoResponse {
+                        channel_id,
+                        name: format!("{}", channel_id),
+                        guild_name: None,
+                        message_count: 0,
+                        last_activity: None,
+                    });
+                }
+            }
+            TuiCommand::GetHistoricalMetrics { metric_type, hours } => {
+                if let Some(ref db) = self.database {
+                    match db.get_historical_metrics(&metric_type, hours).await {
+                        Ok(data_points) => {
+                            self.broadcast(BotEvent::HistoricalMetricsResponse {
+                                metric_type,
+                                data_points,
+                            });
+                            debug!("Sent HistoricalMetricsResponse");
+                        }
+                        Err(e) => {
+                            warn!("Failed to get historical metrics: {}", e);
+                        }
+                    }
+                }
+            }
+            TuiCommand::GetUserList { limit } => {
+                if let Some(ref db) = self.database {
+                    match db.get_user_list(limit).await {
+                        Ok(entries) => {
+                            let users: Vec<UserSummary> = entries.into_iter().map(|e| {
+                                let last_activity = e.last_activity.and_then(|s| {
+                                    NaiveDateTime::parse_from_str(&format!("{} 00:00:00", s), "%Y-%m-%d %H:%M:%S")
+                                        .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc))
+                                        .ok()
+                                });
+                                UserSummary {
+                                    user_id: e.user_id,
+                                    username: e.username,
+                                    message_count: 0, // Could add if needed
+                                    total_cost: e.total_cost,
+                                    total_tokens: e.total_tokens,
+                                    session_count: e.dm_session_count,
+                                    last_activity,
+                                }
+                            }).collect();
+                            self.broadcast(BotEvent::UserListResponse { users });
+                            debug!("Sent UserListResponse");
+                        }
+                        Err(e) => {
+                            warn!("Failed to get user list: {}", e);
+                        }
+                    }
+                }
+            }
+            TuiCommand::GetUserDetails { user_id } => {
+                if let Some(ref db) = self.database {
+                    match db.get_user_details(&user_id).await {
+                        Ok(details) => {
+                            let first_seen = details.first_seen.and_then(|s| {
+                                NaiveDateTime::parse_from_str(&format!("{} 00:00:00", s), "%Y-%m-%d %H:%M:%S")
+                                    .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc))
+                                    .ok()
+                            });
+                            let last_activity = details.last_activity.and_then(|s| {
+                                NaiveDateTime::parse_from_str(&format!("{} 00:00:00", s), "%Y-%m-%d %H:%M:%S")
+                                    .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc))
+                                    .ok()
+                            });
+
+                            let stats = UserStats {
+                                user_id: details.user_id.clone(),
+                                username: details.username,
+                                message_count: details.message_count,
+                                total_cost: details.total_cost,
+                                total_tokens: details.total_tokens,
+                                total_api_calls: details.total_calls,
+                                dm_session_count: details.dm_session_count,
+                                chat_calls: details.chat_calls,
+                                whisper_calls: details.whisper_calls,
+                                dalle_calls: details.dalle_calls,
+                                first_seen,
+                                last_activity,
+                                favorite_persona: details.favorite_persona,
+                            };
+
+                            // Also get DM sessions
+                            let dm_sessions = match db.get_user_dm_sessions(&user_id, 20).await {
+                                Ok(sessions) => sessions.into_iter().map(|s| {
+                                    let started_at = NaiveDateTime::parse_from_str(&s.started_at, "%Y-%m-%d %H:%M:%S")
+                                        .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc))
+                                        .unwrap_or_else(|_| Utc::now());
+                                    let ended_at = s.ended_at.and_then(|e| {
+                                        NaiveDateTime::parse_from_str(&e, "%Y-%m-%d %H:%M:%S")
+                                            .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc))
+                                            .ok()
+                                    });
+                                    DmSessionInfo {
+                                        session_id: s.session_id,
+                                        started_at,
+                                        ended_at,
+                                        message_count: s.message_count,
+                                        api_cost: s.api_cost,
+                                        total_tokens: s.total_tokens,
+                                    }
+                                }).collect(),
+                                Err(_) => vec![],
+                            };
+
+                            self.broadcast(BotEvent::UserDetailsResponse {
+                                user_id,
+                                stats,
+                                dm_sessions,
+                            });
+                            debug!("Sent UserDetailsResponse");
+                        }
+                        Err(e) => {
+                            warn!("Failed to get user details: {}", e);
+                        }
+                    }
+                }
+            }
+            TuiCommand::GetRecentErrors { limit } => {
+                if let Some(ref db) = self.database {
+                    match db.get_recent_errors(limit).await {
+                        Ok(entries) => {
+                            let errors: Vec<ErrorInfo> = entries.into_iter().map(|e| {
+                                let timestamp = NaiveDateTime::parse_from_str(&e.timestamp, "%Y-%m-%d %H:%M:%S")
+                                    .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc))
+                                    .unwrap_or_else(|_| Utc::now());
+                                ErrorInfo {
+                                    id: e.id,
+                                    error_type: e.error_type,
+                                    error_message: e.error_message,
+                                    stack_trace: e.stack_trace,
+                                    user_id: e.user_id,
+                                    channel_id: e.channel_id,
+                                    command: e.command,
+                                    timestamp,
+                                }
+                            }).collect();
+                            self.broadcast(BotEvent::RecentErrorsResponse { errors });
+                            debug!("Sent RecentErrorsResponse");
+                        }
+                        Err(e) => {
+                            warn!("Failed to get recent errors: {}", e);
+                        }
+                    }
+                }
+            }
+            TuiCommand::GetDmSessions { user_id, limit } => {
+                if let Some(ref db) = self.database {
+                    match db.get_user_dm_sessions(&user_id, limit).await {
+                        Ok(sessions) => {
+                            let dm_sessions: Vec<DmSessionInfo> = sessions.into_iter().map(|s| {
+                                let started_at = NaiveDateTime::parse_from_str(&s.started_at, "%Y-%m-%d %H:%M:%S")
+                                    .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc))
+                                    .unwrap_or_else(|_| Utc::now());
+                                let ended_at = s.ended_at.and_then(|e| {
+                                    NaiveDateTime::parse_from_str(&e, "%Y-%m-%d %H:%M:%S")
+                                        .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc))
+                                        .ok()
+                                });
+                                DmSessionInfo {
+                                    session_id: s.session_id,
+                                    started_at,
+                                    ended_at,
+                                    message_count: s.message_count,
+                                    api_cost: s.api_cost,
+                                    total_tokens: s.total_tokens,
+                                }
+                            }).collect();
+
+                            // Get user stats for the response
+                            match db.get_user_details(&user_id).await {
+                                Ok(details) => {
+                                    let stats = UserStats {
+                                        user_id: details.user_id.clone(),
+                                        username: details.username,
+                                        message_count: details.message_count,
+                                        total_cost: details.total_cost,
+                                        total_tokens: details.total_tokens,
+                                        total_api_calls: details.total_calls,
+                                        dm_session_count: details.dm_session_count,
+                                        chat_calls: details.chat_calls,
+                                        whisper_calls: details.whisper_calls,
+                                        dalle_calls: details.dalle_calls,
+                                        first_seen: None,
+                                        last_activity: None,
+                                        favorite_persona: details.favorite_persona,
+                                    };
+                                    self.broadcast(BotEvent::UserDetailsResponse {
+                                        user_id,
+                                        stats,
+                                        dm_sessions,
+                                    });
+                                }
+                                Err(_) => {
+                                    // Send minimal response
+                                    self.broadcast(BotEvent::UserDetailsResponse {
+                                        user_id: user_id.clone(),
+                                        stats: UserStats {
+                                            user_id: user_id.clone(),
+                                            username: None,
+                                            message_count: 0,
+                                            total_cost: 0.0,
+                                            total_tokens: 0,
+                                            total_api_calls: 0,
+                                            dm_session_count: dm_sessions.len() as u64,
+                                            chat_calls: 0,
+                                            whisper_calls: 0,
+                                            dalle_calls: 0,
+                                            first_seen: None,
+                                            last_activity: None,
+                                            favorite_persona: None,
+                                        },
+                                        dm_sessions,
+                                    });
+                                }
+                            }
+                            debug!("Sent UserDetailsResponse for DM sessions");
+                        }
+                        Err(e) => {
+                            warn!("Failed to get DM sessions: {}", e);
+                        }
+                    }
+                }
             }
         }
     }

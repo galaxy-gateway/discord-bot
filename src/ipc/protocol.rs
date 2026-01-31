@@ -82,6 +82,38 @@ pub enum BotEvent {
         db_size: u64,
         uptime_seconds: u64,
     },
+    /// Channel information response
+    ChannelInfoResponse {
+        channel_id: u64,
+        name: String,
+        guild_name: Option<String>,
+        message_count: u64,
+        last_activity: Option<DateTime<Utc>>,
+    },
+    /// Channel history response (messages from database)
+    ChannelHistoryResponse {
+        channel_id: u64,
+        messages: Vec<DisplayMessage>,
+    },
+    /// Historical metrics response (time-series data)
+    HistoricalMetricsResponse {
+        metric_type: String,
+        data_points: Vec<(i64, f64)>,
+    },
+    /// User list response
+    UserListResponse {
+        users: Vec<UserSummary>,
+    },
+    /// User details response
+    UserDetailsResponse {
+        user_id: String,
+        stats: UserStats,
+        dm_sessions: Vec<DmSessionInfo>,
+    },
+    /// Recent errors response
+    RecentErrorsResponse {
+        errors: Vec<ErrorInfo>,
+    },
 }
 
 /// Simplified message for display in TUI
@@ -133,6 +165,60 @@ pub enum ChannelType {
     Thread,
     Forum,
     Other,
+}
+
+/// User summary for list display
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserSummary {
+    pub user_id: String,
+    pub username: Option<String>,
+    pub message_count: u64,
+    pub total_cost: f64,
+    pub total_tokens: u64,
+    pub session_count: u64,
+    pub last_activity: Option<DateTime<Utc>>,
+}
+
+/// Detailed user statistics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserStats {
+    pub user_id: String,
+    pub username: Option<String>,
+    pub message_count: u64,
+    pub total_cost: f64,
+    pub total_tokens: u64,
+    pub total_api_calls: u64,
+    pub dm_session_count: u64,
+    pub chat_calls: u64,
+    pub whisper_calls: u64,
+    pub dalle_calls: u64,
+    pub first_seen: Option<DateTime<Utc>>,
+    pub last_activity: Option<DateTime<Utc>>,
+    pub favorite_persona: Option<String>,
+}
+
+/// DM session information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DmSessionInfo {
+    pub session_id: String,
+    pub started_at: DateTime<Utc>,
+    pub ended_at: Option<DateTime<Utc>>,
+    pub message_count: u32,
+    pub api_cost: f64,
+    pub total_tokens: u64,
+}
+
+/// Error log entry
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ErrorInfo {
+    pub id: i64,
+    pub error_type: String,
+    pub error_message: String,
+    pub stack_trace: Option<String>,
+    pub user_id: Option<String>,
+    pub channel_id: Option<String>,
+    pub command: Option<String>,
+    pub timestamp: DateTime<Utc>,
 }
 
 // ============================================================================
@@ -196,6 +282,32 @@ pub enum TuiCommand {
     /// Heartbeat response
     Pong {
         timestamp: i64,
+    },
+    /// Request channel information
+    GetChannelInfo {
+        channel_id: u64,
+    },
+    /// Request historical metrics (time-series data)
+    GetHistoricalMetrics {
+        metric_type: String,
+        hours: u32,
+    },
+    /// Request user list with stats
+    GetUserList {
+        limit: u32,
+    },
+    /// Request detailed user statistics
+    GetUserDetails {
+        user_id: String,
+    },
+    /// Request recent errors
+    GetRecentErrors {
+        limit: u32,
+    },
+    /// Request DM sessions for a user
+    GetDmSessions {
+        user_id: String,
+        limit: u32,
     },
 }
 

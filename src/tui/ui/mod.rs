@@ -5,13 +5,17 @@
 mod dashboard;
 mod channel_watcher;
 mod stats;
+mod users;
 mod settings;
+mod errors;
 mod help;
 
 pub use dashboard::render_dashboard;
 pub use channel_watcher::render_channels;
 pub use stats::render_stats;
+pub use users::render_users;
 pub use settings::render_settings;
+pub use errors::render_errors;
 pub use help::render_help;
 
 use crate::tui::{App, Screen};
@@ -37,7 +41,9 @@ pub fn render(frame: &mut Frame, app: &App) {
         Screen::Dashboard => render_dashboard(frame, app, chunks[1]),
         Screen::Channels => render_channels(frame, app, chunks[1]),
         Screen::Stats => render_stats(frame, app, chunks[1]),
+        Screen::Users => render_users(frame, app, chunks[1]),
         Screen::Settings => render_settings(frame, app, chunks[1]),
+        Screen::Errors => render_errors(frame, app, chunks[1]),
         Screen::Help => render_help(frame, app, chunks[1]),
     }
 

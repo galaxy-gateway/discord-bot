@@ -3,6 +3,7 @@
 //! Cached statistics from the database.
 
 use std::time::Instant;
+use std::collections::HashMap;
 
 /// Cached usage statistics
 #[derive(Debug, Clone, Default)]
@@ -38,12 +39,25 @@ pub struct SystemMetrics {
     pub uptime_seconds: u64,
 }
 
+/// Historical metrics for sparklines
+#[derive(Debug, Clone, Default)]
+pub struct HistoricalMetrics {
+    /// CPU history (timestamp, value)
+    pub cpu_history: Vec<(i64, f64)>,
+    /// Memory history (timestamp, value)
+    pub memory_history: Vec<(i64, f64)>,
+    /// Cost history by date (date string, cost)
+    pub cost_history: Vec<(String, f64)>,
+}
+
 /// Stats cache with refresh tracking
 pub struct StatsCache {
     /// Usage statistics
     pub usage: UsageStats,
     /// System metrics
     pub system: SystemMetrics,
+    /// Historical metrics for charts
+    pub historical: HistoricalMetrics,
     /// Last refresh time
     pub last_refresh: Option<Instant>,
     /// Refresh interval in seconds
@@ -97,6 +111,7 @@ impl StatsCache {
         StatsCache {
             usage: UsageStats::default(),
             system: SystemMetrics::default(),
+            historical: HistoricalMetrics::default(),
             last_refresh: None,
             refresh_interval: 30, // Default 30 seconds
             refreshing: false,
@@ -162,6 +177,44 @@ impl StatsCache {
         } else {
             format!("{}m", mins)
         }
+    }
+
+    /// Set historical data from IPC response
+    pub fn set_historical_data(&mut self, metric_type: &str, data_points: Vec<(i64, f64)>) {
+        match metric_type {
+            "cpu" => self.historical.cpu_history = data_points,
+            "memory" => self.historical.memory_history = data_points,
+            _ => {}
+        }
+    }
+
+    /// Get CPU history as sparkline data (values only)
+    pub fn cpu_sparkline_data(&self) -> Vec<u64> {
+        self.historical.cpu_history.iter()
+            .map(|(_, v)| *v as u64)
+            .collect()
+    }
+
+    /// Get memory history as sparkline data (percentage)
+    pub fn memory_sparkline_data(&self) -> Vec<u64> {
+        let total = self.system.memory_total as f64;
+        if total > 0.0 {
+            self.historical.memory_history.iter()
+                .map(|(_, v)| ((v / total) * 100.0) as u64)
+                .collect()
+        } else {
+            self.historical.memory_history.iter()
+                .map(|(_, v)| *v as u64)
+                .collect()
+        }
+    }
+
+    /// Get cost history as sparkline data
+    pub fn cost_sparkline_data(&self) -> Vec<u64> {
+        // Scale costs to visible range (multiply by 10000 for small values)
+        self.usage.daily_breakdown.iter()
+            .map(|(_, cost)| (cost * 10000.0) as u64)
+            .collect()
     }
 }
 

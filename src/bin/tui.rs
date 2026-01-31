@@ -18,7 +18,7 @@ use std::time::Duration;
 use persona::ipc::{IpcClient, BotEvent, TuiCommand, connect_with_retry};
 use persona::tui::{App, Screen, Event, EventHandler};
 use persona::tui::event::{map_key_event, KeyAction};
-use persona::tui::app::InputMode;
+use persona::tui::app::{InputMode, InputPurpose};
 
 /// TUI refresh rate
 const TICK_RATE: Duration = Duration::from_millis(250);
@@ -169,6 +169,40 @@ async fn handle_action(
             app.switch_screen(screen);
             app.clear_error();
             app.clear_status();
+
+            // Request data for the new screen
+            if let Some(client) = ipc_client {
+                match screen {
+                    Screen::Users => {
+                        if app.users_state.needs_refresh() {
+                            app.users_state.start_refresh();
+                            let _ = client.request_user_list(50).await;
+                        }
+                    }
+                    Screen::Errors => {
+                        if app.errors_state.needs_refresh() {
+                            app.errors_state.start_refresh();
+                            let _ = client.request_recent_errors(100).await;
+                        }
+                    }
+                    Screen::Stats => {
+                        // Request historical metrics for charts
+                        let _ = client.request_historical_metrics("cpu".to_string(), 24).await;
+                        let _ = client.request_historical_metrics("memory".to_string(), 24).await;
+                    }
+                    Screen::Channels => {
+                        // If a channel is selected and needs history, request it
+                        if let Some(channel_id) = app.channel_state.selected() {
+                            if app.channel_state.needs_history(channel_id) {
+                                app.channel_state.start_fetching_history();
+                                let _ = client.get_channel_history(channel_id, 50).await;
+                                let _ = client.request_channel_info(channel_id).await;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
         }
         KeyAction::Up => {
             match app.current_screen {
@@ -178,6 +212,16 @@ async fn handle_action(
                     } else {
                         app.select_previous();
                     }
+                }
+                Screen::Users => {
+                    if app.users_state.viewing_details {
+                        // Scroll DM sessions
+                    } else {
+                        app.users_state.select_previous();
+                    }
+                }
+                Screen::Errors => {
+                    app.errors_state.select_previous();
                 }
                 _ => app.select_previous(),
             }
@@ -198,6 +242,16 @@ async fn handle_action(
                 Screen::Dashboard => {
                     app.select_next(app.guilds.len());
                 }
+                Screen::Users => {
+                    if app.users_state.viewing_details {
+                        // Scroll DM sessions
+                    } else {
+                        app.users_state.select_next();
+                    }
+                }
+                Screen::Errors => {
+                    app.errors_state.select_next();
+                }
                 _ => {}
             }
         }
@@ -207,6 +261,35 @@ async fn handle_action(
                     let watched = app.channel_state.watched_channels();
                     if let Some(&channel_id) = watched.get(app.selected_index) {
                         app.channel_state.select(channel_id);
+                        // Request channel info and history
+                        if let Some(client) = ipc_client {
+                            if app.channel_state.needs_history(channel_id) {
+                                app.channel_state.start_fetching_history();
+                                let _ = client.get_channel_history(channel_id, 50).await;
+                            }
+                            let _ = client.request_channel_info(channel_id).await;
+                        }
+                    }
+                }
+                Screen::Users => {
+                    if app.users_state.viewing_details {
+                        // Already in details, do nothing
+                    } else {
+                        // Enter details view and request user details
+                        if let Some(user) = app.users_state.selected_user() {
+                            let user_id = user.user_id.clone();
+                            app.users_state.enter_details();
+                            if let Some(client) = ipc_client {
+                                let _ = client.request_user_details(user_id).await;
+                            }
+                        }
+                    }
+                }
+                Screen::Errors => {
+                    if app.errors_state.viewing_details {
+                        // Already in details
+                    } else {
+                        app.errors_state.enter_details();
                     }
                 }
                 _ => {}
@@ -221,6 +304,20 @@ async fn handle_action(
                         app.switch_screen(Screen::Dashboard);
                     }
                 }
+                Screen::Users => {
+                    if app.users_state.viewing_details {
+                        app.users_state.exit_details();
+                    } else {
+                        app.switch_screen(Screen::Dashboard);
+                    }
+                }
+                Screen::Errors => {
+                    if app.errors_state.viewing_details {
+                        app.errors_state.exit_details();
+                    } else {
+                        app.switch_screen(Screen::Dashboard);
+                    }
+                }
                 Screen::Help => {
                     app.switch_screen(Screen::Dashboard);
                 }
@@ -230,35 +327,43 @@ async fn handle_action(
         KeyAction::StartInput => {
             app.start_editing();
         }
+        KeyAction::StartMessageInput => {
+            // Only allow message input when a channel is selected
+            if app.current_screen == Screen::Channels && app.channel_state.selected().is_some() {
+                app.start_message_input();
+            }
+        }
         KeyAction::SubmitInput => {
             let input = app.take_input();
+            let purpose = app.input_purpose;
             app.stop_editing();
 
             if !input.is_empty() {
                 match app.current_screen {
                     Screen::Channels => {
-                        if let Some(channel_id) = app.channel_state.selected() {
-                            // Send message
-                            if let Some(client) = ipc_client {
-                                match client.send_message(channel_id, input.clone()).await {
-                                    Ok(_) => {
-                                        app.status_message = Some("Message sent".to_string());
+                        match purpose {
+                            InputPurpose::SendMessage => {
+                                // Send message to selected channel
+                                if let Some(channel_id) = app.channel_state.selected() {
+                                    if let Some(client) = ipc_client {
+                                        let _ = client.send_message(channel_id, input.clone()).await;
                                     }
-                                    Err(e) => {
-                                        app.error_message = Some(format!("Failed: {}", e));
-                                    }
+                                    app.status_message = Some("Message sent".to_string());
                                 }
                             }
-                        } else {
-                            // Try to parse as channel ID to watch
-                            if let Ok(channel_id) = input.parse::<u64>() {
-                                app.channel_state.watch(channel_id);
-                                if let Some(client) = ipc_client {
-                                    let _ = client.watch_channel(channel_id).await;
+                            InputPurpose::AddChannel => {
+                                // Parse input as channel ID to watch
+                                if let Ok(channel_id) = input.parse::<u64>() {
+                                    app.channel_state.watch(channel_id);
+                                    if let Some(client) = ipc_client {
+                                        let _ = client.watch_channel(channel_id).await;
+                                        // Also request channel info
+                                        let _ = client.request_channel_info(channel_id).await;
+                                    }
+                                    app.status_message = Some(format!("Now watching channel {}", channel_id));
+                                } else {
+                                    app.error_message = Some("Invalid channel ID - must be a number".to_string());
                                 }
-                                app.status_message = Some(format!("Watching channel {}", channel_id));
-                            } else {
-                                app.error_message = Some("Invalid channel ID".to_string());
                             }
                         }
                     }
@@ -278,11 +383,27 @@ async fn handle_action(
         }
         KeyAction::Refresh => {
             if let Some(client) = ipc_client {
-                let _ = client.request_status().await;
-                let _ = client.request_usage_stats(app.stats_cache.time_period.days()).await;
-                let _ = client.request_system_metrics().await;
-                app.stats_cache.start_refresh();
-                app.status_message = Some("Refreshing...".to_string());
+                match app.current_screen {
+                    Screen::Users => {
+                        app.users_state.start_refresh();
+                        let _ = client.request_user_list(50).await;
+                        app.status_message = Some("Refreshing users...".to_string());
+                    }
+                    Screen::Errors => {
+                        app.errors_state.start_refresh();
+                        let _ = client.request_recent_errors(100).await;
+                        app.status_message = Some("Refreshing errors...".to_string());
+                    }
+                    _ => {
+                        let _ = client.request_status().await;
+                        let _ = client.request_usage_stats(app.stats_cache.time_period.days()).await;
+                        let _ = client.request_system_metrics().await;
+                        let _ = client.request_historical_metrics("cpu".to_string(), 24).await;
+                        let _ = client.request_historical_metrics("memory".to_string(), 24).await;
+                        app.stats_cache.start_refresh();
+                        app.status_message = Some("Refreshing...".to_string());
+                    }
+                }
             }
         }
         KeyAction::Toggle => {

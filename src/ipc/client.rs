@@ -257,6 +257,36 @@ impl IpcClient {
         self.send(TuiCommand::GetSystemMetrics).await
     }
 
+    /// Request channel information
+    pub async fn request_channel_info(&self, channel_id: u64) -> Result<()> {
+        self.send(TuiCommand::GetChannelInfo { channel_id }).await
+    }
+
+    /// Request historical metrics
+    pub async fn request_historical_metrics(&self, metric_type: String, hours: u32) -> Result<()> {
+        self.send(TuiCommand::GetHistoricalMetrics { metric_type, hours }).await
+    }
+
+    /// Request user list with stats
+    pub async fn request_user_list(&self, limit: u32) -> Result<()> {
+        self.send(TuiCommand::GetUserList { limit }).await
+    }
+
+    /// Request detailed user statistics
+    pub async fn request_user_details(&self, user_id: String) -> Result<()> {
+        self.send(TuiCommand::GetUserDetails { user_id }).await
+    }
+
+    /// Request recent errors
+    pub async fn request_recent_errors(&self, limit: u32) -> Result<()> {
+        self.send(TuiCommand::GetRecentErrors { limit }).await
+    }
+
+    /// Request DM sessions for a user
+    pub async fn request_dm_sessions(&self, user_id: String, limit: u32) -> Result<()> {
+        self.send(TuiCommand::GetDmSessions { user_id, limit }).await
+    }
+
     /// Disable auto-reconnect (for clean shutdown)
     pub async fn disable_reconnect(&self) {
         *self.should_reconnect.write().await = false;

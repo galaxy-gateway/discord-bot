@@ -8,16 +8,28 @@ use std::collections::{HashMap, VecDeque};
 /// Maximum messages to keep per channel
 const MAX_MESSAGES_PER_CHANNEL: usize = 200;
 
+/// Channel metadata
+#[derive(Debug, Clone, Default)]
+pub struct ChannelMetadata {
+    pub name: String,
+    pub guild_name: Option<String>,
+    pub message_count: u64,
+}
+
 /// Channel state management
 pub struct ChannelState {
     /// Set of watched channel IDs
     watched: std::collections::HashSet<u64>,
     /// Message buffers per channel
     messages: HashMap<u64, VecDeque<DisplayMessage>>,
+    /// Channel metadata
+    metadata: HashMap<u64, ChannelMetadata>,
     /// Currently selected channel
     selected_channel: Option<u64>,
     /// Scroll position in message list
     scroll_offset: usize,
+    /// Whether we're fetching history
+    fetching_history: bool,
 }
 
 impl ChannelState {
@@ -25,8 +37,10 @@ impl ChannelState {
         ChannelState {
             watched: std::collections::HashSet::new(),
             messages: HashMap::new(),
+            metadata: HashMap::new(),
             selected_channel: None,
             scroll_offset: 0,
+            fetching_history: false,
         }
     }
 
@@ -40,6 +54,7 @@ impl ChannelState {
     pub fn unwatch(&mut self, channel_id: u64) {
         self.watched.remove(&channel_id);
         self.messages.remove(&channel_id);
+        self.metadata.remove(&channel_id);
         if self.selected_channel == Some(channel_id) {
             self.selected_channel = None;
         }
@@ -133,6 +148,57 @@ impl ChannelState {
     /// Get message count for a channel
     pub fn message_count(&self, channel_id: u64) -> usize {
         self.messages.get(&channel_id).map(|m| m.len()).unwrap_or(0)
+    }
+
+    /// Set channel metadata (from ChannelInfoResponse)
+    pub fn set_channel_info(&mut self, channel_id: u64, name: String, guild_name: Option<String>, message_count: u64) {
+        self.metadata.insert(channel_id, ChannelMetadata {
+            name,
+            guild_name,
+            message_count,
+        });
+    }
+
+    /// Get channel metadata
+    pub fn get_metadata(&self, channel_id: u64) -> Option<&ChannelMetadata> {
+        self.metadata.get(&channel_id)
+    }
+
+    /// Get selected channel metadata
+    pub fn get_selected_metadata(&self) -> Option<&ChannelMetadata> {
+        self.selected_channel.and_then(|id| self.metadata.get(&id))
+    }
+
+    /// Set history messages (from ChannelHistoryResponse)
+    pub fn set_history(&mut self, channel_id: u64, messages: Vec<DisplayMessage>) {
+        let buffer = self.messages.entry(channel_id).or_insert_with(VecDeque::new);
+
+        // Prepend history messages (they come first chronologically)
+        for msg in messages.into_iter().rev() {
+            buffer.push_front(msg);
+        }
+
+        // Trim to max
+        while buffer.len() > MAX_MESSAGES_PER_CHANNEL {
+            buffer.pop_front();
+        }
+
+        self.fetching_history = false;
+    }
+
+    /// Check if fetching history
+    pub fn is_fetching_history(&self) -> bool {
+        self.fetching_history
+    }
+
+    /// Mark as fetching history
+    pub fn start_fetching_history(&mut self) {
+        self.fetching_history = true;
+    }
+
+    /// Check if channel needs history fetch (empty buffer)
+    pub fn needs_history(&self, channel_id: u64) -> bool {
+        self.messages.get(&channel_id).map(|m| m.is_empty()).unwrap_or(true)
     }
 }
 

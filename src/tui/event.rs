@@ -87,8 +87,10 @@ pub enum KeyAction {
     Select,
     /// Go back / Cancel
     Back,
-    /// Start text input
+    /// Start text input (add channel)
     StartInput,
+    /// Start message input (send message)
+    StartMessageInput,
     /// Submit text input
     SubmitInput,
     /// Cancel text input
@@ -142,7 +144,13 @@ pub fn map_key_event(key: KeyEvent, in_edit_mode: bool) -> KeyAction {
                 KeyAction::SwitchScreen(crate::tui::Screen::Stats)
             }
             (KeyCode::Char('4'), KeyModifiers::NONE) => {
+                KeyAction::SwitchScreen(crate::tui::Screen::Users)
+            }
+            (KeyCode::Char('5'), KeyModifiers::NONE) => {
                 KeyAction::SwitchScreen(crate::tui::Screen::Settings)
+            }
+            (KeyCode::Char('6'), KeyModifiers::NONE) => {
+                KeyAction::SwitchScreen(crate::tui::Screen::Errors)
             }
             (KeyCode::Char('?'), KeyModifiers::NONE) => {
                 KeyAction::SwitchScreen(crate::tui::Screen::Help)
@@ -157,6 +165,7 @@ pub fn map_key_event(key: KeyEvent, in_edit_mode: bool) -> KeyAction {
             // Text input
             (KeyCode::Char('i'), KeyModifiers::NONE) => KeyAction::StartInput,
             (KeyCode::Char('/'), KeyModifiers::NONE) => KeyAction::StartInput,
+            (KeyCode::Char('m'), KeyModifiers::NONE) => KeyAction::StartMessageInput,
 
             // Actions
             (KeyCode::Char('r'), KeyModifiers::NONE) => KeyAction::Refresh,
