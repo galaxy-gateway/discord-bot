@@ -62,10 +62,12 @@ async fn main() -> Result<()> {
         }
     };
 
-    // Request initial status if connected
+    // Request initial data if connected
     if let Some(client) = &ipc_client {
         let _ = client.request_status().await;
         let _ = client.request_guilds().await;
+        let _ = client.request_usage_stats(Some(7)).await; // Default to week
+        let _ = client.request_system_metrics().await;
     }
 
     // Create event handler
@@ -277,6 +279,9 @@ async fn handle_action(
         KeyAction::Refresh => {
             if let Some(client) = ipc_client {
                 let _ = client.request_status().await;
+                let _ = client.request_usage_stats(app.stats_cache.time_period.days()).await;
+                let _ = client.request_system_metrics().await;
+                app.stats_cache.start_refresh();
                 app.status_message = Some("Refreshing...".to_string());
             }
         }
@@ -301,6 +306,10 @@ async fn handle_action(
                 }
                 Screen::Stats => {
                     app.stats_cache.cycle_time_period();
+                    // Request stats with new time period
+                    if let Some(client) = ipc_client {
+                        let _ = client.request_usage_stats(app.stats_cache.time_period.days()).await;
+                    }
                 }
                 _ => {}
             }

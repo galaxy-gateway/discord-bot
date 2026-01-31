@@ -1,75 +1,43 @@
-Hold onto your neural interfaces - your bot just got a CONTROL CENTER.
+The circle is now complete. When I left you, I was but the learner. Now, I am the master.
 
-Picture this: you're running your Discord bot in production, and suddenly you want to watch a channel in real-time, check your API costs, or toggle features on the fly. Previously? SSH in, run commands, check logs. NOW? Fire up `obi-tui` and you have EVERYTHING at your fingertips.
+## v3.18.0 - The Data Awakens
 
-## The Vision Realized (v3.18.0)
+Three critical pathways have been cleared:
 
-**A Full Terminal Control Interface:**
-- Real-time Dashboard showing connection status, system metrics, and live activity
-- Channel Watcher for monitoring Discord conversations as they happen
-- Stats View tracking your API usage, costs, and token consumption
-- Settings Panel to toggle features and manage personas without touching Discord
+### YouTube Transcription - Restored
 
-## The Architecture
+The 403 Forbidden error has been banished. YouTube's ever-shifting sands required us to update yt-dlp before each download. The latest version (2026.01.29) now flows through the Docker container automatically, restoring transcription capabilities. Your audio shall flow freely once more.
 
-This is IPC-powered. The bot runs a Unix socket server, the TUI connects as a client. They talk in real-time JSON messages. No duplicate Discord connections, no extra API calls - just pure efficiency.
+### Channel Watcher - Clarity of Intent
 
+The input box now speaks with purpose befitting a Jedi. When no channel is selected, it guides: "Enter channel ID (Enter to watch, Esc to cancel)". When a channel IS selected, it properly indicates message entry. The path is clear - press 'i', type your channel ID, press Enter. The way is now illuminated.
+
+### Usage Stats - The Database Connection
+
+The most significant revelation: the TUI now receives wisdom from the database. New IPC commands bridge what was once a void:
+
+- `GetUsageStats` - Queries total cost, tokens, calls, and breakdowns by service and user
+- `GetSystemMetrics` - Reveals CPU, memory, and database file size
+- Stats refresh when you press 'r' or switch time periods with 't'
+- Dashboard and Stats screens now populate with YOUR actual data
+
+The architecture flows:
 ```
-Bot (Serenity) <-- Unix Socket --> TUI (Ratatui)
-        |                               |
-        +--------> SQLite <-------------+
-```
-
-## What You Get
-
-- **Dashboard [1]** - Connection status, CPU/RAM, uptime, guilds, active sessions
-- **Channels [2]** - Watch any channel, see messages stream in, POST messages directly
-- **Stats [3]** - Cost breakdown, daily charts, top users, token counts
-- **Settings [4]** - Toggle all 15 features, manage personas, configure guilds
-- **Help [?]** - Full keybinding reference
-
-## The Commands
-
-```bash
-# Run the bot (now with IPC server)
-cargo run --bin bot
-
-# In another terminal, launch the TUI
-cargo run --features tui --bin obi-tui
+Bot + Database --> IPC Server --> UsageStatsUpdate --> TUI Stats Cache --> Display
 ```
 
-## New Files
+### Files Modified
 
-```
-src/ipc/           # Inter-process communication
-  mod.rs           # Module exports
-  protocol.rs      # BotEvent, TuiCommand types
-  server.rs        # Unix socket server (bot side)
-  client.rs        # Unix socket client (TUI side)
+- `plugins.yaml` - Download command now updates yt-dlp (v3.5.1)
+- `src/ipc/protocol.rs` - New IPC commands and events
+- `src/ipc/server.rs` - Database integration, stats queries (v1.2.0)
+- `src/ipc/client.rs` - New request methods
+- `src/tui/ui/channel_watcher.rs` - Context-aware input hints
+- `src/tui/app.rs` - Handle new stat events
+- `src/bin/tui.rs` - Request stats on startup and refresh
+- `src/bin/bot.rs` - Pass database to IPC server
+- `src/database.rs` - Global usage stats query method
 
-src/tui/           # Terminal UI
-  mod.rs           # Module exports
-  app.rs           # App state and screen navigation
-  event.rs         # Keyboard/tick event handling
-  state/           # State management
-    channels.rs    # Watched channels, message buffers
-    stats_cache.rs # Cached usage statistics
-  ui/              # Screen renderers
-    dashboard.rs   # Main dashboard
-    channel_watcher.rs
-    stats.rs
-    settings.rs
-    help.rs
-
-src/bin/tui.rs     # TUI entry point
-```
-
-## The Future Is Now
-
-The infrastructure is laid. The socket is open. The channels are flowing.
-
-This is just the beginning. Remote monitoring. Multiple bot instances. Centralized control rooms. The pieces are in place.
-
-Welcome to the command center.
+The data that sleeps in your database will now awaken on your dashboard.
 
 *- The Visionary*

@@ -63,6 +63,25 @@ pub enum BotEvent {
     Heartbeat {
         timestamp: i64,
     },
+    /// Usage stats update
+    UsageStatsUpdate {
+        total_cost: f64,
+        period_cost: f64,
+        total_tokens: u64,
+        total_calls: u64,
+        cost_by_service: Vec<(String, f64)>,
+        daily_breakdown: Vec<(String, f64)>,
+        top_users: Vec<(String, f64)>,
+        period_days: Option<u32>,
+    },
+    /// System metrics update
+    SystemMetricsUpdate {
+        cpu_percent: f32,
+        memory_bytes: u64,
+        memory_total: u64,
+        db_size: u64,
+        uptime_seconds: u64,
+    },
 }
 
 /// Simplified message for display in TUI
@@ -167,6 +186,13 @@ pub enum TuiCommand {
         channel_id: u64,
         limit: u32,
     },
+    /// Request usage statistics
+    GetUsageStats {
+        /// Number of days to query (None = all time)
+        period_days: Option<u32>,
+    },
+    /// Request system metrics
+    GetSystemMetrics,
     /// Heartbeat response
     Pong {
         timestamp: i64,

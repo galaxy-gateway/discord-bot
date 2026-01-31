@@ -521,8 +521,13 @@ async fn main() -> Result<()> {
 
     info!("Starting Persona Discord Bot...");
 
-    // Start IPC server for TUI communication
-    let ipc_server = Arc::new(IpcServer::new());
+    // Create database first so IPC server can use it for stats queries
+    let database = Database::new(&config.database_path).await?;
+
+    // Start IPC server for TUI communication with database access
+    let ipc_server = Arc::new(
+        IpcServer::new().with_database(database.clone(), config.database_path.clone())
+    );
     if let Err(e) = ipc_server.clone().start().await {
         error!("Failed to start IPC server: {}. TUI control will be unavailable.", e);
     } else {
@@ -541,8 +546,6 @@ async fn main() -> Result<()> {
 
     // Start IPC command processor
     ipc_server.clone().start_command_processor();
-
-    let database = Database::new(&config.database_path).await?;
     let usage_tracker = UsageTracker::new(database.clone());
     let interaction_tracker = InteractionTracker::new(database.clone());
     let persona_manager = PersonaManager::new();

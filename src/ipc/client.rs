@@ -247,6 +247,16 @@ impl IpcClient {
         self.send(TuiCommand::GetChannelHistory { channel_id, limit }).await
     }
 
+    /// Request usage statistics
+    pub async fn request_usage_stats(&self, period_days: Option<u32>) -> Result<()> {
+        self.send(TuiCommand::GetUsageStats { period_days }).await
+    }
+
+    /// Request system metrics
+    pub async fn request_system_metrics(&self) -> Result<()> {
+        self.send(TuiCommand::GetSystemMetrics).await
+    }
+
     /// Disable auto-reconnect (for clean shutdown)
     pub async fn disable_reconnect(&self) {
         *self.should_reconnect.write().await = false;

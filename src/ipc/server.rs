@@ -2,14 +2,16 @@
 //!
 //! Unix socket server for the bot to communicate with TUI clients.
 //!
-//! - **Version**: 1.1.0
+//! - **Version**: 1.2.0
 //! - **Since**: 3.17.0
 //! - **Toggleable**: false
 //!
 //! ## Changelog
+//! - 1.2.0: Added GetUsageStats and GetSystemMetrics commands with database integration
 //! - 1.1.0: Added command processing support and shared state for guilds/bot info
 //! - 1.0.0: Initial IPC implementation with Unix socket protocol
 
+use crate::database::Database;
 use crate::ipc::protocol::{BotEvent, TuiCommand, encode_message, GuildInfo};
 use crate::ipc::get_socket_path;
 use anyhow::Result;
@@ -52,6 +54,10 @@ pub struct IpcServer {
     start_time: Instant,
     /// Active conversation sessions count
     active_sessions: Arc<RwLock<usize>>,
+    /// Database connection for stats queries
+    database: Option<Database>,
+    /// Database file path for size queries
+    db_path: Option<String>,
 }
 
 impl IpcServer {
@@ -71,7 +77,16 @@ impl IpcServer {
             bot_username: Arc::new(RwLock::new(None)),
             start_time: Instant::now(),
             active_sessions: Arc::new(RwLock::new(0)),
+            database: None,
+            db_path: None,
         }
+    }
+
+    /// Set the database connection for stats queries
+    pub fn with_database(mut self, database: Database, db_path: String) -> Self {
+        self.database = Some(database);
+        self.db_path = Some(db_path);
+        self
     }
 
     /// Start the IPC server in a background task
@@ -394,6 +409,59 @@ impl IpcServer {
                 warn!("GetChannelHistory command received but not implemented (channel: {}, limit: {})",
                       channel_id, limit);
                 // Would need Discord API access to fetch history
+            }
+            TuiCommand::GetUsageStats { period_days } => {
+                if let Some(ref db) = self.database {
+                    match db.get_global_usage_stats(period_days).await {
+                        Ok((total_cost, period_cost, total_tokens, total_calls, cost_by_service, daily_breakdown, top_users)) => {
+                            self.broadcast(BotEvent::UsageStatsUpdate {
+                                total_cost,
+                                period_cost,
+                                total_tokens,
+                                total_calls,
+                                cost_by_service,
+                                daily_breakdown,
+                                top_users,
+                                period_days,
+                            });
+                            debug!("Sent UsageStatsUpdate response");
+                        }
+                        Err(e) => {
+                            warn!("Failed to get usage stats: {}", e);
+                        }
+                    }
+                } else {
+                    warn!("GetUsageStats command received but no database configured");
+                }
+            }
+            TuiCommand::GetSystemMetrics => {
+                use sysinfo::System;
+                let mut sys = System::new();
+                // CPU needs two refreshes for accurate reading
+                sys.refresh_cpu_usage();
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                sys.refresh_cpu_usage();
+                sys.refresh_memory();
+
+                let cpu_percent = sys.global_cpu_usage();
+                let memory_bytes = sys.used_memory();
+                let memory_total = sys.total_memory();
+
+                // Get database file size
+                let db_size = if let Some(ref path) = self.db_path {
+                    std::fs::metadata(path).map(|m| m.len()).unwrap_or(0)
+                } else {
+                    0
+                };
+
+                self.broadcast(BotEvent::SystemMetricsUpdate {
+                    cpu_percent,
+                    memory_bytes,
+                    memory_total,
+                    db_size,
+                    uptime_seconds: self.get_uptime_seconds(),
+                });
+                debug!("Sent SystemMetricsUpdate response");
             }
         }
     }

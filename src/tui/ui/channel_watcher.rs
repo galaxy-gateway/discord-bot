@@ -140,9 +140,23 @@ fn render_messages(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_input(frame: &mut Frame, app: &App, area: Rect) {
+    let has_selected_channel = app.channel_state.selected().is_some();
+
     let (title, style) = match app.input_mode {
-        InputMode::Normal => ("Press 'i' to type", Style::default().fg(Color::DarkGray)),
-        InputMode::Editing => ("Type message (Enter to send, Esc to cancel)", Style::default().fg(Color::Cyan)),
+        InputMode::Normal => {
+            if has_selected_channel {
+                ("Press 'i' to type message", Style::default().fg(Color::DarkGray))
+            } else {
+                ("Press 'i' to add channel", Style::default().fg(Color::DarkGray))
+            }
+        }
+        InputMode::Editing => {
+            if has_selected_channel {
+                ("Type message (Enter to send, Esc to cancel)", Style::default().fg(Color::Cyan))
+            } else {
+                ("Enter channel ID (Enter to watch, Esc to cancel)", Style::default().fg(Color::Yellow))
+            }
+        }
     };
 
     let input = Paragraph::new(app.input_buffer.as_str())

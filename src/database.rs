@@ -2024,6 +2024,126 @@ impl Database {
         Ok(results)
     }
 
+    /// Get global usage statistics across all users and guilds
+    /// Returns (total_cost, period_cost, total_tokens, total_calls, cost_by_service, daily_breakdown, top_users)
+    pub async fn get_global_usage_stats(
+        &self,
+        period_days: Option<u32>,
+    ) -> Result<(f64, f64, u64, u64, Vec<(String, f64)>, Vec<(String, f64)>, Vec<(String, f64)>)> {
+        let conn = self.connection.lock().await;
+
+        // Total cost (all time)
+        let total_cost: f64 = {
+            let mut stmt = conn.prepare("SELECT COALESCE(SUM(total_cost_usd), 0) FROM openai_usage_daily")?;
+            if stmt.next()? == State::Row {
+                stmt.read::<f64, _>(0)?
+            } else {
+                0.0
+            }
+        };
+
+        // Period cost
+        let period_cost: f64 = if let Some(days) = period_days {
+            let days_str = format!("-{}", days);
+            let mut stmt = conn.prepare(
+                "SELECT COALESCE(SUM(total_cost_usd), 0) FROM openai_usage_daily WHERE date >= date('now', ? || ' days')"
+            )?;
+            stmt.bind((1, days_str.as_str()))?;
+            if stmt.next()? == State::Row {
+                stmt.read::<f64, _>(0)?
+            } else {
+                0.0
+            }
+        } else {
+            total_cost
+        };
+
+        // Total tokens (all time)
+        let total_tokens: u64 = {
+            let mut stmt = conn.prepare("SELECT COALESCE(SUM(total_tokens), 0) FROM openai_usage_daily")?;
+            if stmt.next()? == State::Row {
+                stmt.read::<i64, _>(0)? as u64
+            } else {
+                0
+            }
+        };
+
+        // Total calls (all time)
+        let total_calls: u64 = {
+            let mut stmt = conn.prepare("SELECT COALESCE(SUM(request_count), 0) FROM openai_usage_daily")?;
+            if stmt.next()? == State::Row {
+                stmt.read::<i64, _>(0)? as u64
+            } else {
+                0
+            }
+        };
+
+        // Cost by service (for period or all time)
+        let cost_by_service: Vec<(String, f64)> = {
+            let mut results = Vec::new();
+            let query = if let Some(days) = period_days {
+                format!(
+                    "SELECT service_type, SUM(total_cost_usd) as cost FROM openai_usage_daily \
+                     WHERE date >= date('now', '-{} days') GROUP BY service_type ORDER BY cost DESC",
+                    days
+                )
+            } else {
+                "SELECT service_type, SUM(total_cost_usd) as cost FROM openai_usage_daily \
+                 GROUP BY service_type ORDER BY cost DESC".to_string()
+            };
+            let mut stmt = conn.prepare(&query)?;
+            while let Ok(State::Row) = stmt.next() {
+                let service = stmt.read::<String, _>(0)?;
+                let cost = stmt.read::<f64, _>(1)?;
+                results.push((service, cost));
+            }
+            results
+        };
+
+        // Daily breakdown (last 14 days or period)
+        let daily_breakdown: Vec<(String, f64)> = {
+            let mut results = Vec::new();
+            let days = period_days.unwrap_or(14);
+            let mut stmt = conn.prepare(
+                "SELECT date, SUM(total_cost_usd) as cost FROM openai_usage_daily \
+                 WHERE date >= date('now', ? || ' days') GROUP BY date ORDER BY date ASC"
+            )?;
+            let days_str = format!("-{}", days);
+            stmt.bind((1, days_str.as_str()))?;
+            while let Ok(State::Row) = stmt.next() {
+                let date = stmt.read::<String, _>(0)?;
+                let cost = stmt.read::<f64, _>(1)?;
+                results.push((date, cost));
+            }
+            results
+        };
+
+        // Top users by cost (for period or all time, limit 10)
+        let top_users: Vec<(String, f64)> = {
+            let mut results = Vec::new();
+            let query = if let Some(days) = period_days {
+                format!(
+                    "SELECT user_id, SUM(total_cost_usd) as cost FROM openai_usage_daily \
+                     WHERE user_id != '' AND date >= date('now', '-{} days') \
+                     GROUP BY user_id ORDER BY cost DESC LIMIT 10",
+                    days
+                )
+            } else {
+                "SELECT user_id, SUM(total_cost_usd) as cost FROM openai_usage_daily \
+                 WHERE user_id != '' GROUP BY user_id ORDER BY cost DESC LIMIT 10".to_string()
+            };
+            let mut stmt = conn.prepare(&query)?;
+            while let Ok(State::Row) = stmt.next() {
+                let user_id = stmt.read::<String, _>(0)?;
+                let cost = stmt.read::<f64, _>(1)?;
+                results.push((user_id, cost));
+            }
+            results
+        };
+
+        Ok((total_cost, period_cost, total_tokens, total_calls, cost_by_service, daily_breakdown, top_users))
+    }
+
     /// Cleanup old raw usage data (keep last N days)
     pub async fn cleanup_old_openai_usage(&self, days: i64) -> Result<()> {
         let conn = self.connection.lock().await;

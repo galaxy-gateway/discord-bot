@@ -9,7 +9,7 @@ plugins:
   - name: transcribe
     description: "Transcribe YouTube videos or playlists to text using Whisper"
     enabled: true
-    version: "3.5.0"
+    version: "3.5.1"
 
     command:
       name: transcribe

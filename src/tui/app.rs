@@ -173,6 +173,38 @@ impl App {
             BotEvent::PresenceUpdate { .. } => {
                 // TODO: Track presence updates
             }
+            BotEvent::UsageStatsUpdate {
+                total_cost,
+                period_cost,
+                total_tokens,
+                total_calls,
+                cost_by_service,
+                daily_breakdown,
+                top_users,
+                period_days: _,
+            } => {
+                self.stats_cache.usage.total_cost = total_cost;
+                self.stats_cache.usage.today_cost = period_cost;
+                self.stats_cache.usage.total_tokens = total_tokens;
+                self.stats_cache.usage.total_calls = total_calls;
+                self.stats_cache.usage.cost_by_service = cost_by_service;
+                self.stats_cache.usage.daily_breakdown = daily_breakdown;
+                self.stats_cache.usage.top_users = top_users;
+                self.stats_cache.complete_refresh();
+            }
+            BotEvent::SystemMetricsUpdate {
+                cpu_percent,
+                memory_bytes,
+                memory_total,
+                db_size,
+                uptime_seconds,
+            } => {
+                self.stats_cache.system.cpu_percent = cpu_percent;
+                self.stats_cache.system.memory_bytes = memory_bytes;
+                self.stats_cache.system.memory_total = memory_total;
+                self.stats_cache.system.db_size = db_size;
+                self.stats_cache.system.uptime_seconds = uptime_seconds;
+            }
         }
     }
 
