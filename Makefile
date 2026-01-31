@@ -1,4 +1,4 @@
-.PHONY: help build build-release run clean test install-service start stop restart status logs logs-follow uninstall-service env-check scripts/% check-commands cleanup-commands test-env test-openai
+.PHONY: help build build-release run clean test install-service start stop restart status logs logs-follow uninstall-service env-check scripts/% check-commands cleanup-commands test-env test-openai build-tui build-tui-release tui tui-release
 
 # Self-documenting Makefile
 .DEFAULT_GOAL := help
@@ -30,6 +30,20 @@ run: ## Run the bot in development mode
 
 run-release: build-release ## Run the bot in release mode
 	$(RELEASE_BINARY)
+
+##@ TUI
+
+build-tui: ## Build the TUI in debug mode
+	cargo build --features tui --bin obi-tui
+
+build-tui-release: ## Build the TUI in release mode
+	cargo build --release --features tui --bin obi-tui
+
+tui: ## Run the TUI (connects to running bot)
+	cargo run --features tui --bin obi-tui
+
+tui-release: build-tui-release ## Run the TUI in release mode
+	./target/release/obi-tui
 
 test: ## Run tests
 	cargo test
