@@ -222,7 +222,7 @@ fn render_daily_chart(frame: &mut Frame, app: &App, area: Rect) {
 fn render_top_users(frame: &mut Frame, app: &App, area: Rect) {
     let stats = &app.stats_cache.usage;
 
-    let items: Vec<ListItem> = stats.top_users.iter().enumerate().map(|(i, (user, cost))| {
+    let items: Vec<ListItem> = stats.top_users.iter().enumerate().map(|(i, top_user)| {
         let rank_style = match i {
             0 => Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
             1 => Style::default().fg(Color::White),
@@ -230,10 +230,15 @@ fn render_top_users(frame: &mut Frame, app: &App, area: Rect) {
             _ => Style::default().fg(Color::DarkGray),
         };
 
+        // Display username if available, otherwise show truncated user_id
+        let display_name = top_user.username.as_ref()
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| truncate_id(&top_user.user_id, 18));
+
         ListItem::new(Line::from(vec![
             Span::styled(format!("{}. ", i + 1), rank_style),
-            Span::styled(format!("{:<20}", user), Style::default().fg(Color::White)),
-            Span::styled(format_currency(*cost), Style::default().fg(Color::Green)),
+            Span::styled(format!("{:<20}", display_name), Style::default().fg(Color::White)),
+            Span::styled(format_currency(top_user.cost), Style::default().fg(Color::Green)),
         ]))
     }).collect();
 
@@ -242,4 +247,13 @@ fn render_top_users(frame: &mut Frame, app: &App, area: Rect) {
         .style(Style::default().fg(Color::White));
 
     frame.render_widget(list, area);
+}
+
+/// Truncate an ID string for display
+fn truncate_id(id: &str, max_len: usize) -> String {
+    if id.len() > max_len {
+        format!("{}...", &id[..max_len.saturating_sub(3)])
+    } else {
+        id.to_string()
+    }
 }

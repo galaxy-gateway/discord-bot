@@ -71,7 +71,7 @@ pub enum BotEvent {
         total_calls: u64,
         cost_by_service: Vec<(String, f64)>,
         daily_breakdown: Vec<(String, f64)>,
-        top_users: Vec<(String, f64)>,
+        top_users: Vec<TopUser>,
         period_days: Option<u32>,
     },
     /// System metrics update
@@ -219,6 +219,14 @@ pub struct ErrorInfo {
     pub channel_id: Option<String>,
     pub command: Option<String>,
     pub timestamp: DateTime<Utc>,
+}
+
+/// Top user by cost with optional cached username
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TopUser {
+    pub user_id: String,
+    pub username: Option<String>,
+    pub cost: f64,
 }
 
 // ============================================================================

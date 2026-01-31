@@ -2,11 +2,12 @@
 //!
 //! Unix socket server for the bot to communicate with TUI clients.
 //!
-//! - **Version**: 1.3.0
+//! - **Version**: 1.4.0
 //! - **Since**: 3.17.0
 //! - **Toggleable**: false
 //!
 //! ## Changelog
+//! - 1.4.0: Added cache_user method and TopUser struct support for username resolution
 //! - 1.3.0: Added SendMessage implementation with Discord HTTP client support
 //! - 1.2.0: Added GetUsageStats and GetSystemMetrics commands with database integration
 //! - 1.1.0: Added command processing support and shared state for guilds/bot info
@@ -15,7 +16,7 @@
 use crate::database::Database;
 use crate::ipc::protocol::{
     BotEvent, TuiCommand, encode_message, GuildInfo, DisplayMessage,
-    UserSummary, UserStats, DmSessionInfo, ErrorInfo,
+    UserSummary, UserStats, DmSessionInfo, ErrorInfo, TopUser,
 };
 use crate::ipc::get_socket_path;
 use chrono::{DateTime, Utc, NaiveDateTime};
@@ -343,6 +344,15 @@ impl IpcServer {
         self.watched_channels.read().await.iter().copied().collect()
     }
 
+    /// Cache a Discord user's information for TUI display
+    pub async fn cache_user(&self, user_id: u64, username: &str, discriminator: u16, is_bot: bool) {
+        if let Some(ref db) = self.database {
+            if let Err(e) = db.cache_user(user_id, username, discriminator, is_bot).await {
+                warn!("Failed to cache user {}: {}", user_id, e);
+            }
+        }
+    }
+
     /// Process a single TUI command and generate appropriate response
     pub async fn process_command(&self, cmd: TuiCommand) {
         match cmd {
@@ -486,7 +496,11 @@ impl IpcServer {
             TuiCommand::GetUsageStats { period_days } => {
                 if let Some(ref db) = self.database {
                     match db.get_global_usage_stats(period_days).await {
-                        Ok((total_cost, period_cost, total_tokens, total_calls, cost_by_service, daily_breakdown, top_users)) => {
+                        Ok((total_cost, period_cost, total_tokens, total_calls, cost_by_service, daily_breakdown, top_users_raw)) => {
+                            // Convert (user_id, username, cost) tuples to TopUser structs
+                            let top_users: Vec<TopUser> = top_users_raw.into_iter()
+                                .map(|(user_id, username, cost)| TopUser { user_id, username, cost })
+                                .collect();
                             self.broadcast(BotEvent::UsageStatsUpdate {
                                 total_cost,
                                 period_cost,

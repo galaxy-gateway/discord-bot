@@ -2,11 +2,12 @@
 //!
 //! Inter-process communication between the bot and TUI.
 //!
-//! - **Version**: 1.0.0
+//! - **Version**: 1.1.0
 //! - **Since**: 3.17.0
 //! - **Toggleable**: false
 //!
 //! ## Changelog
+//! - 1.1.0: Added TopUser struct with username support for TUI display
 //! - 1.0.0: Initial IPC implementation with Unix socket protocol
 
 pub mod protocol;
@@ -15,7 +16,7 @@ pub mod client;
 
 pub use protocol::{
     BotEvent, TuiCommand, DisplayMessage, GuildInfo, ChannelInfo, ChannelType, AttachmentInfo,
-    UserSummary, UserStats, DmSessionInfo, ErrorInfo,
+    UserSummary, UserStats, DmSessionInfo, ErrorInfo, TopUser,
 };
 pub use server::IpcServer;
 pub use client::{IpcClient, connect_with_retry};

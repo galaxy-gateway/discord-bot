@@ -4,6 +4,7 @@
 
 use std::time::Instant;
 use std::collections::HashMap;
+use crate::ipc::TopUser;
 
 /// Cached usage statistics
 #[derive(Debug, Clone, Default)]
@@ -20,8 +21,8 @@ pub struct UsageStats {
     pub cost_by_service: Vec<(String, f64)>,
     /// Daily breakdown (date string, cost)
     pub daily_breakdown: Vec<(String, f64)>,
-    /// Top users by cost
-    pub top_users: Vec<(String, f64)>,
+    /// Top users by cost with optional username
+    pub top_users: Vec<TopUser>,
 }
 
 /// System metrics

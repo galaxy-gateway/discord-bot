@@ -53,7 +53,7 @@ fn render_user_list(frame: &mut Frame, app: &App, area: Rect) {
 
     let header_row = Row::new(vec![
         Cell::from(" "),
-        Cell::from("User ID").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("User").style(Style::default().add_modifier(Modifier::BOLD)),
         Cell::from("Cost").style(Style::default().add_modifier(Modifier::BOLD)),
         Cell::from("Tokens").style(Style::default().add_modifier(Modifier::BOLD)),
         Cell::from("Sessions").style(Style::default().add_modifier(Modifier::BOLD)),
@@ -73,9 +73,14 @@ fn render_user_list(frame: &mut Frame, app: &App, area: Rect) {
             .map(|dt| dt.format("%Y-%m-%d").to_string())
             .unwrap_or_else(|| "-".to_string());
 
+        // Display username if available, otherwise show truncated user_id
+        let display_name = user.username.as_ref()
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| truncate_user_id(&user.user_id));
+
         Row::new(vec![
             Cell::from(prefix),
-            Cell::from(truncate_user_id(&user.user_id)),
+            Cell::from(display_name),
             Cell::from(format_currency(user.total_cost)).style(Style::default().fg(Color::Green)),
             Cell::from(format_tokens(user.total_tokens)),
             Cell::from(user.session_count.to_string()),
@@ -129,6 +134,14 @@ fn render_user_stats(frame: &mut Frame, app: &App, area: Rect) {
     };
 
     let mut lines = vec![];
+
+    // Display username prominently if available
+    if let Some(username) = &stats.username {
+        lines.push(Line::from(vec![
+            Span::styled("Username: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(username, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        ]));
+    }
 
     lines.push(Line::from(vec![
         Span::styled("User ID: ", Style::default().fg(Color::DarkGray)),

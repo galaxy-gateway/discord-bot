@@ -87,6 +87,16 @@ impl EventHandler for Handler {
             return;
         }
 
+        // Cache user info for TUI display (always, regardless of watched status)
+        if let Some(ipc) = &self.ipc_server {
+            ipc.cache_user(
+                msg.author.id.0,
+                &msg.author.name,
+                msg.author.discriminator,
+                msg.author.bot,
+            ).await;
+        }
+
         // Forward message to IPC clients if channel is being watched
         if let Some(ipc) = &self.ipc_server {
             let channel_id = msg.channel_id.0;

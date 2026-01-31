@@ -622,6 +622,24 @@ impl Database {
              ON playlist_jobs(user_id, started_at)",
         )?;
 
+        // User Cache Table - caches Discord usernames for TUI display
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS user_cache (
+                user_id TEXT PRIMARY KEY,
+                username TEXT NOT NULL,
+                discriminator TEXT,
+                display_name TEXT,
+                is_bot INTEGER DEFAULT 0,
+                last_seen INTEGER,
+                updated_at INTEGER DEFAULT (strftime('%s', 'now'))
+            )",
+        )?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_user_cache_username
+             ON user_cache(username)",
+        )?;
+
         Ok(())
     }
 
@@ -765,6 +783,50 @@ impl Database {
         
         info!("Updated persona for user {user_id} to {persona}");
         Ok(())
+    }
+
+    // User Cache Methods - for TUI username display
+
+    /// Cache a Discord user's information for TUI display
+    pub async fn cache_user(
+        &self,
+        user_id: u64,
+        username: &str,
+        discriminator: u16,
+        is_bot: bool,
+    ) -> Result<()> {
+        let conn = self.connection.lock().await;
+        let mut statement = conn.prepare(
+            "INSERT INTO user_cache (user_id, username, discriminator, is_bot, last_seen, updated_at)
+             VALUES (?, ?, ?, ?, strftime('%s', 'now'), strftime('%s', 'now'))
+             ON CONFLICT(user_id) DO UPDATE SET
+             username = excluded.username,
+             discriminator = excluded.discriminator,
+             is_bot = excluded.is_bot,
+             last_seen = strftime('%s', 'now'),
+             updated_at = strftime('%s', 'now')"
+        )?;
+        statement.bind((1, user_id.to_string().as_str()))?;
+        statement.bind((2, username))?;
+        statement.bind((3, discriminator.to_string().as_str()))?;
+        statement.bind((4, if is_bot { 1i64 } else { 0i64 }))?;
+        statement.next()?;
+        Ok(())
+    }
+
+    /// Get a cached username by user ID
+    pub async fn get_cached_username(&self, user_id: &str) -> Result<Option<String>> {
+        let conn = self.connection.lock().await;
+        let mut statement = conn.prepare(
+            "SELECT username FROM user_cache WHERE user_id = ?"
+        )?;
+        statement.bind((1, user_id))?;
+
+        if let Ok(State::Row) = statement.next() {
+            Ok(Some(statement.read::<String, _>(0)?))
+        } else {
+            Ok(None)
+        }
     }
 
     pub async fn log_usage(&self, user_id: &str, command: &str, persona: Option<&str>) -> Result<()> {
@@ -2029,7 +2091,7 @@ impl Database {
     pub async fn get_global_usage_stats(
         &self,
         period_days: Option<u32>,
-    ) -> Result<(f64, f64, u64, u64, Vec<(String, f64)>, Vec<(String, f64)>, Vec<(String, f64)>)> {
+    ) -> Result<(f64, f64, u64, u64, Vec<(String, f64)>, Vec<(String, f64)>, Vec<(String, Option<String>, f64)>)> {
         let conn = self.connection.lock().await;
 
         // Total cost (all time)
@@ -2118,25 +2180,30 @@ impl Database {
             results
         };
 
-        // Top users by cost (for period or all time, limit 10)
-        let top_users: Vec<(String, f64)> = {
+        // Top users by cost (for period or all time, limit 10) with cached usernames
+        let top_users: Vec<(String, Option<String>, f64)> = {
             let mut results = Vec::new();
             let query = if let Some(days) = period_days {
                 format!(
-                    "SELECT user_id, SUM(total_cost_usd) as cost FROM openai_usage_daily \
-                     WHERE user_id != '' AND date >= date('now', '-{} days') \
-                     GROUP BY user_id ORDER BY cost DESC LIMIT 10",
+                    "SELECT u.user_id, uc.username, SUM(u.total_cost_usd) as cost \
+                     FROM openai_usage_daily u \
+                     LEFT JOIN user_cache uc ON u.user_id = uc.user_id \
+                     WHERE u.user_id != '' AND u.date >= date('now', '-{} days') \
+                     GROUP BY u.user_id ORDER BY cost DESC LIMIT 10",
                     days
                 )
             } else {
-                "SELECT user_id, SUM(total_cost_usd) as cost FROM openai_usage_daily \
-                 WHERE user_id != '' GROUP BY user_id ORDER BY cost DESC LIMIT 10".to_string()
+                "SELECT u.user_id, uc.username, SUM(u.total_cost_usd) as cost \
+                 FROM openai_usage_daily u \
+                 LEFT JOIN user_cache uc ON u.user_id = uc.user_id \
+                 WHERE u.user_id != '' GROUP BY u.user_id ORDER BY cost DESC LIMIT 10".to_string()
             };
             let mut stmt = conn.prepare(&query)?;
             while let Ok(State::Row) = stmt.next() {
                 let user_id = stmt.read::<String, _>(0)?;
-                let cost = stmt.read::<f64, _>(1)?;
-                results.push((user_id, cost));
+                let username = stmt.read::<Option<String>, _>(1)?;
+                let cost = stmt.read::<f64, _>(2)?;
+                results.push((user_id, username, cost));
             }
             results
         };
@@ -2800,17 +2867,19 @@ impl Database {
         let conn = self.connection.lock().await;
         let mut users = Vec::new();
 
-        // Get users with their total cost and activity from openai_usage_daily
+        // Get users with their total cost and activity from openai_usage_daily, with cached usernames
         let mut stmt = conn.prepare(
             "SELECT
-                user_id,
-                SUM(total_cost_usd) as total_cost,
-                SUM(total_tokens) as total_tokens,
-                SUM(request_count) as total_calls,
-                MAX(date) as last_activity
-             FROM openai_usage_daily
-             WHERE user_id != ''
-             GROUP BY user_id
+                u.user_id,
+                uc.username,
+                SUM(u.total_cost_usd) as total_cost,
+                SUM(u.total_tokens) as total_tokens,
+                SUM(u.request_count) as total_calls,
+                MAX(u.date) as last_activity
+             FROM openai_usage_daily u
+             LEFT JOIN user_cache uc ON u.user_id = uc.user_id
+             WHERE u.user_id != ''
+             GROUP BY u.user_id
              ORDER BY total_cost DESC
              LIMIT ?"
         )?;
@@ -2819,12 +2888,12 @@ impl Database {
         while let Ok(State::Row) = stmt.next() {
             users.push(UserListEntry {
                 user_id: stmt.read::<String, _>(0)?,
-                username: None, // Would need Discord API to resolve
-                total_cost: stmt.read::<f64, _>(1)?,
-                total_tokens: stmt.read::<i64, _>(2)? as u64,
-                total_calls: stmt.read::<i64, _>(3)? as u64,
+                username: stmt.read::<Option<String>, _>(1)?,
+                total_cost: stmt.read::<f64, _>(2)?,
+                total_tokens: stmt.read::<i64, _>(3)? as u64,
+                total_calls: stmt.read::<i64, _>(4)? as u64,
                 dm_session_count: 0, // Enriched below
-                last_activity: stmt.read::<Option<String>, _>(4)?,
+                last_activity: stmt.read::<Option<String>, _>(5)?,
             });
         }
 
@@ -2933,9 +3002,21 @@ impl Database {
             None
         };
 
+        // Get cached username
+        drop(persona_stmt);
+        let mut username_stmt = conn.prepare(
+            "SELECT username FROM user_cache WHERE user_id = ?"
+        )?;
+        username_stmt.bind((1, user_id))?;
+        let username = if let Ok(State::Row) = username_stmt.next() {
+            username_stmt.read::<Option<String>, _>(0)?
+        } else {
+            None
+        };
+
         Ok(UserDetails {
             user_id: user_id.to_string(),
-            username: None,
+            username,
             total_cost,
             total_tokens,
             total_calls,

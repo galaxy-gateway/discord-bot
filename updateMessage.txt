@@ -1,68 +1,30 @@
-Greetings, seekers of digital enlightenment!
+Greetings, fellow traveler of the digital realm!
 
-The TUI Channel Watcher has received a vital enhancement - the ability to send messages to Discord channels has been restored, with clearer separation of input purposes.
+I come bearing news of a significant enhancement to the TUI name resolution capabilities in version 3.20.0.
 
-## The Duality of Input
+## The Vision Realized
 
-The Channel Watcher now understands two distinct input purposes:
+Where once stood cold numerical identifiers - mere Discord snowflake IDs that meant nothing to the human eye - now flourish proper usernames, bringing clarity and understanding to your analytics screens.
 
-1. **Add Channel Mode** - Triggered by pressing 'i'
-   - Enter a Discord channel ID to watch
-   - Works from the channel list view
-   - Yellow input box indicates channel ID entry
+## What Has Been Wrought
 
-2. **Send Message Mode** - Triggered by pressing 'm'
-   - Type your message to send to the selected channel
-   - Only available when viewing a channel
-   - Cyan input box indicates message composition
+### User Cache System
+A new `user_cache` table has been woven into the database fabric, capturing Discord usernames as users interact with the bot. This cache updates silently with each message, building a repository of human-readable identities.
 
-## The Wisdom of Controls
+### Enhanced TUI Display
+- **Users Screen**: Now displays usernames instead of cryptic IDs in the user list and details view
+- **Stats Screen**: The Top Users by Cost list now shows proper usernames where available
+- **Graceful Fallback**: When a username has not been cached yet, the truncated user ID appears as before
 
-When in the **Channel List** (no channel selected):
-- `j/k` - Navigate up/down through channels
-- `Enter` - View the selected channel's messages
-- `i` - Add a new channel by ID
-- `d` - Remove a channel from watch list
+### Technical Improvements
+- Added `TopUser` struct to IPC protocol with optional username field
+- Database queries now JOIN with user_cache for automatic username resolution
+- Bot caches user info on every message for comprehensive coverage
 
-When **Viewing a Channel** (channel selected):
-- `j/k` - Scroll through messages
-- `m` - Compose and send a message
-- `i` - Add another channel by ID
-- `Esc` - Return to channel list
-- `d` - Unwatch this channel
+## The Path Forward
 
-## The Files Touched by Transformation
+As more users interact with the bot, the cache will grow richer, transforming your TUI experience from a sea of numbers into a landscape of familiar names.
 
-- `src/tui/app.rs` - Added `InputPurpose` enum and field to track input mode
-- `src/tui/event.rs` - Added `StartMessageInput` action and 'm' key binding
-- `src/tui/ui/channel_watcher.rs` - Input box now reflects actual purpose
-- `src/bin/tui.rs` - Handler differentiates between channel ID and message input
+May your monitoring be ever insightful!
 
-## Technical Implementation
-
-The `InputPurpose` enum provides semantic clarity:
-
-```rust
-pub enum InputPurpose {
-    AddChannel,    // 'i' key - enter channel ID
-    SendMessage,   // 'm' key - compose message
-}
-```
-
-This separation ensures:
-- 'i' always means "add a channel by ID" regardless of context
-- 'm' means "send a message" (only active when viewing a channel)
-- The UI clearly indicates which mode you're in via colors and labels
-
-## Discord Integration
-
-The IPC server now holds a reference to Serenity's HTTP client, allowing it to send messages directly to Discord channels. When the bot is ready, it passes its HTTP client to the IPC server via `set_http()`.
-
-**Additional files modified:**
-- `src/ipc/server.rs` - Added HTTP client storage and SendMessage implementation (v1.3.0)
-- `src/bin/bot.rs` - Passes HTTP client to IPC server on ready
-
-May your messages flow freely across the digital ether.
-
-With cosmic clarity,
-The Visionary
+*The Visionary*

@@ -4,7 +4,7 @@
 
 use crate::ipc::{
     BotEvent, GuildInfo, DisplayMessage,
-    UserSummary, UserStats, DmSessionInfo, ErrorInfo,
+    UserSummary, UserStats, DmSessionInfo, ErrorInfo, TopUser,
 };
 use crate::tui::state::{ChannelState, StatsCache, UsersState, ErrorsState};
 use anyhow::Result;
