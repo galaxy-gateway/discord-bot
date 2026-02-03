@@ -16,7 +16,7 @@ pub mod client;
 
 pub use protocol::{
     BotEvent, TuiCommand, DisplayMessage, GuildInfo, ChannelInfo, ChannelType, AttachmentInfo,
-    UserSummary, UserStats, DmSessionInfo, ErrorInfo, TopUser,
+    UserSummary, UserStats, DmSessionInfo, ErrorInfo, TopUser, ChannelHistorySummary,
 };
 pub use server::IpcServer;
 pub use client::{IpcClient, connect_with_retry};

@@ -2,7 +2,7 @@
 //!
 //! Main application state and screen navigation.
 
-use crate::ipc::{BotEvent, GuildInfo};
+use crate::ipc::{BotEvent, GuildInfo, ChannelHistorySummary};
 use crate::tui::state::{ChannelState, StatsCache, UsersState, ErrorsState};
 use crate::tui::ui::SettingsTab;
 use std::collections::HashMap;
@@ -136,6 +136,10 @@ pub struct App {
     pub browse_channel_index: usize,
     /// Whether channel pane is active in browse mode (false=guilds, true=channels)
     pub browse_channel_pane_active: bool,
+    /// Channels with conversation history from database (channel_id -> summary)
+    pub db_channel_history: HashMap<u64, ChannelHistorySummary>,
+    /// Channels pending IPC watch subscription (auto-watched from DB history)
+    pub pending_watches: Vec<u64>,
 }
 
 impl App {
@@ -171,6 +175,8 @@ impl App {
             browse_guild_index: 0,
             browse_channel_index: 0,
             browse_channel_pane_active: false,
+            db_channel_history: HashMap::new(),
+            pending_watches: Vec::new(),
         }
     }
 
@@ -298,6 +304,23 @@ impl App {
             BotEvent::FeatureStatesResponse { states, guild_id: _ } => {
                 self.feature_states = states;
                 self.add_activity(format!("Loaded {} feature states", self.feature_states.len()));
+            }
+            BotEvent::ChannelsWithHistoryResponse { channels } => {
+                let count = channels.len();
+                self.db_channel_history.clear();
+                self.pending_watches.clear();
+
+                for channel in channels {
+                    let channel_id = channel.channel_id;
+                    self.db_channel_history.insert(channel_id, channel);
+
+                    // Auto-watch if not already watching
+                    if !self.channel_state.is_watching(channel_id) {
+                        self.channel_state.watch(channel_id);
+                        self.pending_watches.push(channel_id);
+                    }
+                }
+                self.add_activity(format!("Auto-watching {} channels with history", count));
             }
         }
     }
@@ -463,7 +486,7 @@ impl App {
         self.guilds.get(self.browse_guild_index)
     }
 
-    /// Get available text channels for the selected guild in browse mode
+    /// Get available text channels for the selected guild in browse mode (Discord cache only)
     pub fn browse_available_channels(&self) -> Vec<&crate::ipc::ChannelInfo> {
         use crate::ipc::ChannelType;
         self.browse_selected_guild()
@@ -476,7 +499,79 @@ impl App {
             .unwrap_or_default()
     }
 
-    /// Get the currently selected channel in browse mode
+    /// Get merged channel count for browse mode (Discord cache + DB-only channels)
+    pub fn browse_merged_channel_count(&self) -> usize {
+        use std::collections::HashSet;
+
+        let discord_channels = self.browse_available_channels();
+        let discord_ids: HashSet<u64> = discord_channels.iter().map(|c| c.id).collect();
+        let guild_id = self.browse_selected_guild().map(|g| g.id);
+
+        let mut count = discord_channels.len();
+
+        // Count DB-only channels for this guild
+        if let Some(gid) = guild_id {
+            for (channel_id, summary) in &self.db_channel_history {
+                if summary.guild_id == Some(gid) && !discord_ids.contains(channel_id) {
+                    count += 1;
+                }
+            }
+        }
+
+        count
+    }
+
+    /// Get the currently selected channel ID and name in browse mode (from merged list)
+    /// Returns (channel_id, channel_name) if selected
+    pub fn browse_selected_channel_info(&self) -> Option<(u64, String)> {
+        use std::collections::HashSet;
+
+        let discord_channels = self.browse_available_channels();
+        let discord_ids: HashSet<u64> = discord_channels.iter().map(|c| c.id).collect();
+        let guild_id = self.browse_selected_guild().map(|g| g.id)?;
+
+        // Build merged list in same order as UI
+        struct MergedEntry {
+            id: u64,
+            name: String,
+            message_count: Option<u64>,
+        }
+
+        let mut merged: Vec<MergedEntry> = discord_channels.iter().map(|c| {
+            let msg_count = self.db_channel_history.get(&c.id).map(|s| s.message_count);
+            MergedEntry {
+                id: c.id,
+                name: c.name.clone(),
+                message_count: msg_count,
+            }
+        }).collect();
+
+        // Add DB-only channels
+        for (channel_id, summary) in &self.db_channel_history {
+            if summary.guild_id == Some(guild_id) && !discord_ids.contains(channel_id) {
+                let name = summary.channel_name.clone().unwrap_or_else(|| format!("{}", channel_id));
+                merged.push(MergedEntry {
+                    id: *channel_id,
+                    name,
+                    message_count: Some(summary.message_count),
+                });
+            }
+        }
+
+        // Sort same as UI
+        merged.sort_by(|a, b| {
+            match (a.message_count, b.message_count) {
+                (Some(ac), Some(bc)) => bc.cmp(&ac),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => a.name.cmp(&b.name),
+            }
+        });
+
+        merged.get(self.browse_channel_index).map(|e| (e.id, e.name.clone()))
+    }
+
+    /// Get the currently selected channel in browse mode (legacy - Discord cache only)
     pub fn browse_selected_channel(&self) -> Option<&crate::ipc::ChannelInfo> {
         let channels = self.browse_available_channels();
         channels.get(self.browse_channel_index).copied()
@@ -497,7 +592,7 @@ impl App {
     /// Navigate down in browse mode (in current pane)
     pub fn browse_down(&mut self) {
         if self.browse_channel_pane_active {
-            let max = self.browse_available_channels().len();
+            let max = self.browse_merged_channel_count();
             if self.browse_channel_index < max.saturating_sub(1) {
                 self.browse_channel_index += 1;
             }

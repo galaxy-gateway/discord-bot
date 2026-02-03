@@ -293,6 +293,11 @@ impl IpcClient {
         self.send(TuiCommand::GetFeatureStates { guild_id }).await
     }
 
+    /// Request channels with conversation history (for browse mode)
+    pub async fn request_channels_with_history(&self, guild_id: Option<u64>) -> Result<()> {
+        self.send(TuiCommand::GetChannelsWithHistory { guild_id }).await
+    }
+
     /// Disable auto-reconnect (for clean shutdown)
     pub async fn disable_reconnect(&self) {
         *self.should_reconnect.write().await = false;

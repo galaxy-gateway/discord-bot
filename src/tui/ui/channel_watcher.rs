@@ -2,11 +2,12 @@
 //!
 //! Real-time channel message viewing and posting.
 //!
-//! - **Version**: 1.1.0
+//! - **Version**: 1.2.0
 //! - **Since**: 3.18.0
 //! - **Toggleable**: false
 //!
 //! ## Changelog
+//! - 1.2.0: Show DB channels with message counts in browse mode, merged Discord+DB view
 //! - 1.1.0: Add guild names to watched channel list, add browse mode for guild/channel selection
 //! - 1.0.0: Initial release with channel watching and message display
 
@@ -88,7 +89,11 @@ fn render_channel_list(frame: &mut Frame, app: &App, area: Rect) {
     let viewing_channel = app.channel_state.selected();
 
     let items: Vec<ListItem> = watched.iter().enumerate().map(|(i, channel_id)| {
-        let msg_count = app.channel_state.message_count(*channel_id);
+        // Get message count from current buffer
+        let buffer_count = app.channel_state.message_count(*channel_id);
+        // Get DB history count if available
+        let db_count = app.db_channel_history.get(channel_id).map(|s| s.message_count as usize);
+
         let is_viewing = viewing_channel == Some(*channel_id);
         let is_cursor = i == app.selected_index && viewing_channel.is_none();
 
@@ -100,12 +105,19 @@ fn render_channel_list(frame: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(Color::White)
         };
 
-        // Try to find channel name and guild name from guilds
+        // Try to find channel name and guild name from guilds, or from DB cache
         let (channel_name, guild_name) = app.guilds.iter()
             .find_map(|g| {
                 g.channels.iter()
                     .find(|c| c.id == *channel_id)
                     .map(|c| (c.name.clone(), Some(g.name.clone())))
+            })
+            .or_else(|| {
+                // Fallback to DB cache for name
+                app.db_channel_history.get(channel_id).map(|s| {
+                    (s.channel_name.clone().unwrap_or_else(|| format!("{}", channel_id)),
+                     s.guild_name.clone())
+                })
             })
             .unwrap_or_else(|| (format!("{}", channel_id), None));
 
@@ -117,6 +129,9 @@ fn render_channel_list(frame: &mut Frame, app: &App, area: Rect) {
             "  "
         };
 
+        // Use buffer count for live view, but show DB count if larger (more history)
+        let display_count = db_count.map(|d| d.max(buffer_count)).unwrap_or(buffer_count);
+
         // Format: #channel [Guild] (count) or #channel (count) if no guild
         let display = if let Some(guild) = guild_name {
             // Truncate guild name if too long
@@ -125,9 +140,9 @@ fn render_channel_list(frame: &mut Frame, app: &App, area: Rect) {
             } else {
                 guild
             };
-            format!("{}#{} [{}] ({})", prefix, channel_name, guild_short, msg_count)
+            format!("{}#{} [{}] ({})", prefix, channel_name, guild_short, display_count)
         } else {
-            format!("{}#{} ({})", prefix, channel_name, msg_count)
+            format!("{}#{} ({})", prefix, channel_name, display_count)
         };
 
         let status = if is_viewing { " [viewing]" } else { "" };
@@ -302,8 +317,10 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 /// Render browse mode with two-pane guild/channel browser
+/// Shows merged view of Discord cache channels and DB channels with history
 fn render_browse_mode(frame: &mut Frame, app: &App, area: Rect) {
     use crate::ipc::ChannelType;
+    use std::collections::HashSet;
 
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
@@ -320,11 +337,21 @@ fn render_browse_mode(frame: &mut Frame, app: &App, area: Rect) {
         Style::default().fg(Color::White)
     };
 
+    // Count channels with history per guild
+    let mut history_count_by_guild: std::collections::HashMap<u64, usize> = std::collections::HashMap::new();
+    for summary in app.db_channel_history.values() {
+        if let Some(gid) = summary.guild_id {
+            *history_count_by_guild.entry(gid).or_default() += 1;
+        }
+    }
+
     let guild_items: Vec<ListItem> = app.guilds.iter().enumerate().map(|(i, guild)| {
         let is_selected = i == app.browse_guild_index;
         let channel_count = guild.channels.iter()
             .filter(|c| matches!(c.channel_type, ChannelType::Text | ChannelType::News | ChannelType::Thread | ChannelType::Forum))
             .count();
+
+        let history_count = history_count_by_guild.get(&guild.id).copied().unwrap_or(0);
 
         let style = if is_selected && !app.browse_channel_pane_active {
             Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
@@ -335,7 +362,13 @@ fn render_browse_mode(frame: &mut Frame, app: &App, area: Rect) {
         };
 
         let prefix = if is_selected { "> " } else { "  " };
-        ListItem::new(format!("{}{} ({} ch)", prefix, guild.name, channel_count)).style(style)
+        // Show channel count and history count if different
+        let display = if history_count > 0 {
+            format!("{}{} ({} ch, {} w/hist)", prefix, guild.name, channel_count, history_count)
+        } else {
+            format!("{}{} ({} ch)", prefix, guild.name, channel_count)
+        };
+        ListItem::new(display).style(style)
     }).collect();
 
     let guild_title = format!(" Guilds ({}) ", app.guilds.len());
@@ -347,29 +380,35 @@ fn render_browse_mode(frame: &mut Frame, app: &App, area: Rect) {
 
     frame.render_widget(guild_list, chunks[0]);
 
-    // Right pane: Channels
+    // Right pane: Channels - merge Discord cache + DB history
     let channel_border_style = if app.browse_channel_pane_active {
         Style::default().fg(Color::Cyan)
     } else {
         Style::default().fg(Color::White)
     };
 
-    let channels = app.browse_available_channels();
+    // Get Discord cache channels
+    let discord_channels = app.browse_available_channels();
     let watched = app.channel_state.watched_channels();
 
-    let channel_items: Vec<ListItem> = channels.iter().enumerate().map(|(i, channel)| {
-        let is_selected = i == app.browse_channel_index && app.browse_channel_pane_active;
-        let is_watched = watched.contains(&channel.id);
+    // Get the selected guild ID
+    let selected_guild_id = app.browse_selected_guild().map(|g| g.id);
 
-        let style = if is_selected {
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-        } else if is_watched {
-            Style::default().fg(Color::Green)
-        } else {
-            Style::default().fg(Color::White)
-        };
+    // Collect channel IDs we've already shown from Discord cache
+    let discord_channel_ids: HashSet<u64> = discord_channels.iter().map(|c| c.id).collect();
 
-        // Channel type icon
+    // Build merged channel list with DB history info
+    #[allow(dead_code)]
+    struct MergedChannel {
+        id: u64,
+        name: String,
+        channel_type_icon: &'static str,
+        message_count: Option<u64>,
+        is_watched: bool,
+    }
+
+    let mut merged_channels: Vec<MergedChannel> = discord_channels.iter().map(|channel| {
+        let msg_count = app.db_channel_history.get(&channel.id).map(|s| s.message_count);
         let icon = match channel.channel_type {
             ChannelType::Text => "#",
             ChannelType::News => "!",
@@ -377,16 +416,78 @@ fn render_browse_mode(frame: &mut Frame, app: &App, area: Rect) {
             ChannelType::Forum => "F",
             _ => "#",
         };
+        MergedChannel {
+            id: channel.id,
+            name: channel.name.clone(),
+            channel_type_icon: icon,
+            message_count: msg_count,
+            is_watched: watched.contains(&channel.id),
+        }
+    }).collect();
+
+    // Add DB-only channels (channels with history but not in Discord cache for this guild)
+    if let Some(guild_id) = selected_guild_id {
+        for (channel_id, summary) in &app.db_channel_history {
+            if summary.guild_id == Some(guild_id) && !discord_channel_ids.contains(channel_id) {
+                // Channel exists in DB but not in Discord cache (maybe deleted or hidden)
+                let name = summary.channel_name.clone().unwrap_or_else(|| format!("{}", channel_id));
+                merged_channels.push(MergedChannel {
+                    id: *channel_id,
+                    name,
+                    channel_type_icon: "#",
+                    message_count: Some(summary.message_count),
+                    is_watched: watched.contains(channel_id),
+                });
+            }
+        }
+    }
+
+    // Sort: channels with history first (by message count desc), then others alphabetically
+    merged_channels.sort_by(|a, b| {
+        match (a.message_count, b.message_count) {
+            (Some(ac), Some(bc)) => bc.cmp(&ac), // Higher count first
+            (Some(_), None) => std::cmp::Ordering::Less, // Has history comes first
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => a.name.cmp(&b.name), // Alphabetical
+        }
+    });
+
+    let channel_items: Vec<ListItem> = merged_channels.iter().enumerate().map(|(i, channel)| {
+        let is_selected = i == app.browse_channel_index && app.browse_channel_pane_active;
+
+        let style = if is_selected {
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        } else if channel.is_watched {
+            Style::default().fg(Color::Green)
+        } else if channel.message_count.is_some() {
+            Style::default().fg(Color::Cyan) // Has history
+        } else {
+            Style::default().fg(Color::White)
+        };
 
         let prefix = if is_selected { "> " } else { "  " };
-        let watched_marker = if is_watched { " [watching]" } else { "" };
-        ListItem::new(format!("{}{}{}{}", prefix, icon, channel.name, watched_marker)).style(style)
+        let watched_marker = if channel.is_watched { " [watching]" } else { "" };
+
+        // Show message count for channels with history
+        let count_str = match channel.message_count {
+            Some(count) if count > 0 => format!(" [{} msgs]", count),
+            Some(_) => String::new(), // 0 messages
+            None => " [new]".to_string(),
+        };
+
+        ListItem::new(format!("{}{}{}{}{}",
+            prefix,
+            channel.channel_type_icon,
+            channel.name,
+            count_str,
+            watched_marker
+        )).style(style)
     }).collect();
 
     let guild_name = app.browse_selected_guild()
         .map(|g| g.name.as_str())
         .unwrap_or("No guild");
-    let channel_title = format!(" {} - Channels ({}) ", guild_name, channels.len());
+    let channel_title = format!(" {} - Channels ({}) ", guild_name, merged_channels.len());
     let channel_list = List::new(channel_items)
         .block(Block::default()
             .borders(Borders::ALL)
@@ -413,7 +514,7 @@ fn render_browse_mode(frame: &mut Frame, app: &App, area: Rect) {
     }
 
     // Show hint if no channels in selected guild
-    if channels.is_empty() && !app.guilds.is_empty() {
+    if merged_channels.is_empty() && !app.guilds.is_empty() {
         let hint = Paragraph::new(vec![
             Line::from(""),
             Line::from("No text channels"),

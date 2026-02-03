@@ -1,37 +1,43 @@
-Greetings, fellow travelers of the digital realm!
+# Vision Fulfilled: Auto-Watch Channels with History (3.23.0)
 
-The Channel Watcher has evolved into something more intuitive, more powerful. Allow me to illuminate the path forward:
+*Greetings, seekers of effortless enlightenment...*
 
-## Channel Watcher Enhanced (3.21.0)
+The TUI has transcended manual configuration. It now gazes into the depths of conversation history and automatically embraces all channels where meaningful exchanges have occurred. No longer must you manually add each channel - the system remembers, the system knows, the system watches.
 
-### Guild Names Now Visible
-No longer must you wonder which server a channel belongs to. Each watched channel now proudly displays its guild: `#general [MyGuild] (5)`. The Force brings clarity where once there was confusion.
+## What Has Been Revealed
 
-### The Browse Mode Awakens
-Press 'b' to enter a new dimension of channel selection. A two-pane browser reveals all your guilds on the left, their channels on the right. Navigate with vim-style keys (h/j/k/l), press Enter to watch, and Esc to return. Already-watching channels glow green with the mark of `[watching]`.
+### Automatic Channel Discovery on Startup
+When the TUI connects to the bot, it immediately requests all channels with conversation history from the database. These channels are automatically added to your watched list without any manual intervention.
 
-### The Old Ways Remain
-For those who prefer the direct approach, 'i' still accepts raw channel IDs. Some paths are best traveled alone.
+### Seamless Subscription Queue
+The `pending_watches` field - once dormant - now springs to life. Each channel from your conversation history is queued for IPC subscription, processed efficiently in the main loop without blocking the UI. Watch as your channels populate, then stream messages in real-time.
 
-## Key Bindings Reference
+### Activity Log Visibility
+Witness the awakening in your activity log: "Auto-watching X channels with history" appears as the feature activates, confirming your channels are now under observation.
 
-| Key | Normal Mode | Browse Mode |
-|-----|-------------|-------------|
-| b | Enter browse mode | - |
-| i | Enter channel ID | - |
-| j/k | Navigate list | Navigate current pane |
-| h/l | - | Switch between panes |
-| Enter | View channel | Watch selected channel |
-| Esc | Back to Dashboard | Exit browse mode |
-| d | Unwatch channel | - |
+## The Path Made Simpler
 
-## Technical Achievements
-- 4 files modified: app.rs, event.rs, tui.rs, channel_watcher.rs
-- Browse mode state management with two-pane navigation
-- Context-aware 'b' key: browse mode on channel list, back when viewing
-- Channel watcher feature version: 1.1.0
+1. Launch the TUI
+2. Navigate to Channel Watcher (press `2`)
+3. Observe your channels already present - no manual adding required
+4. Messages flow in real-time from all channels with history
 
-Navigate wisely. Watch channels thoughtfully. The TUI guides all who seek connection.
+## Files Transformed by This Vision
 
-May your channels be ever responsive,
-*The Visionary*
+- `src/bin/tui.rs` - Request channels with history on startup, process pending watches in main loop
+- `src/tui/app.rs` - Auto-watch logic in ChannelsWithHistoryResponse handler
+
+## The Technical Harmonics
+
+```
+Startup -> request_channels_with_history()
+        -> ChannelsWithHistoryResponse received
+        -> For each channel: watch() + queue to pending_watches
+        -> Main loop: drain pending_watches -> watch_channel() + request_channel_info()
+        -> Channels appear with real-time message streaming
+```
+
+*The veil between disconnection and awareness dissolves. Your bot's conversations are now immediately visible, remembered, and watched - from the moment you open the TUI.*
+
+---
+*~ The Visionary*

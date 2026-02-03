@@ -2,11 +2,12 @@
 //!
 //! Unix socket server for the bot to communicate with TUI clients.
 //!
-//! - **Version**: 1.5.0
+//! - **Version**: 1.6.0
 //! - **Since**: 3.17.0
 //! - **Toggleable**: false
 //!
 //! ## Changelog
+//! - 1.6.0: Added GetChannelsWithHistory handler, fixed username lookup in GetChannelHistory
 //! - 1.5.0: Implemented SetFeature, SetGuildSetting, and SetChannelPersona handlers
 //! - 1.4.0: Added cache_user method and TopUser struct support for username resolution
 //! - 1.3.0: Added SendMessage implementation with Discord HTTP client support
@@ -17,7 +18,7 @@
 use crate::database::Database;
 use crate::ipc::protocol::{
     BotEvent, TuiCommand, encode_message, GuildInfo, DisplayMessage,
-    UserSummary, UserStats, DmSessionInfo, ErrorInfo, TopUser,
+    UserSummary, UserStats, DmSessionInfo, ErrorInfo, TopUser, ChannelHistorySummary,
 };
 use crate::ipc::get_socket_path;
 use chrono::{DateTime, Utc, NaiveDateTime};
@@ -547,22 +548,32 @@ impl IpcServer {
                     match db.get_channel_messages(&channel_id.to_string(), limit).await {
                         Ok(messages) => {
                             let msg_count = messages.len();
-                            let display_messages: Vec<DisplayMessage> = messages.into_iter().map(|m| {
+                            let mut display_messages: Vec<DisplayMessage> = Vec::with_capacity(msg_count);
+
+                            for m in messages {
                                 let timestamp = NaiveDateTime::parse_from_str(&m.timestamp, "%Y-%m-%d %H:%M:%S")
                                     .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc))
                                     .unwrap_or_else(|_| Utc::now());
-                                DisplayMessage {
+
+                                // Look up cached username, fallback to user_id
+                                let author_name = match db.get_cached_username(&m.user_id).await {
+                                    Ok(Some(name)) => name,
+                                    _ => m.user_id.clone(),
+                                };
+
+                                display_messages.push(DisplayMessage {
                                     id: 0,
                                     author_id: m.user_id.parse().unwrap_or(0),
-                                    author_name: m.user_id.clone(),
+                                    author_name,
                                     author_discriminator: "0000".to_string(),
                                     content: m.content,
                                     timestamp,
                                     is_bot: m.role == "assistant",
                                     attachments: vec![],
                                     embeds_count: 0,
-                                }
-                            }).collect();
+                                });
+                            }
+
                             self.broadcast(BotEvent::ChannelHistoryResponse {
                                 channel_id,
                                 messages: display_messages,
@@ -922,6 +933,59 @@ impl IpcServer {
                         }
                     }
                     self.broadcast(BotEvent::FeatureStatesResponse { states, guild_id });
+                }
+            }
+            TuiCommand::GetChannelsWithHistory { guild_id } => {
+                if let Some(ref db) = self.database {
+                    let guild_id_str = guild_id.map(|id| id.to_string());
+                    match db.get_channels_with_history(guild_id_str.as_deref()).await {
+                        Ok(entries) => {
+                            // Enrich with channel/guild names from cached guilds
+                            let guilds = self.get_guilds().await;
+
+                            let channels: Vec<ChannelHistorySummary> = entries.into_iter().map(|e| {
+                                let channel_id = e.channel_id.parse().unwrap_or(0);
+                                let db_guild_id = e.guild_id.as_ref().and_then(|g| g.parse::<u64>().ok());
+
+                                // Look up channel and guild names from cache
+                                let (channel_name, guild_name, found_guild_id) = guilds.iter()
+                                    .find_map(|g| {
+                                        g.channels.iter()
+                                            .find(|c| c.id == channel_id)
+                                            .map(|c| (Some(c.name.clone()), Some(g.name.clone()), Some(g.id)))
+                                    })
+                                    .unwrap_or((None, None, db_guild_id));
+
+                                // Parse last_activity to DateTime
+                                let last_activity = e.last_activity.and_then(|s| {
+                                    NaiveDateTime::parse_from_str(&s, "%Y-%m-%d %H:%M:%S")
+                                        .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc))
+                                        .ok()
+                                });
+
+                                ChannelHistorySummary {
+                                    channel_id,
+                                    channel_name,
+                                    guild_id: found_guild_id,
+                                    guild_name,
+                                    message_count: e.message_count as u64,
+                                    last_activity,
+                                }
+                            }).collect();
+
+                            let count = channels.len();
+                            self.broadcast(BotEvent::ChannelsWithHistoryResponse { channels });
+                            debug!("Sent ChannelsWithHistoryResponse with {} channels", count);
+                        }
+                        Err(e) => {
+                            warn!("Failed to get channels with history: {}", e);
+                            // Send empty response on error
+                            self.broadcast(BotEvent::ChannelsWithHistoryResponse { channels: vec![] });
+                        }
+                    }
+                } else {
+                    // No database - send empty response
+                    self.broadcast(BotEvent::ChannelsWithHistoryResponse { channels: vec![] });
                 }
             }
         }

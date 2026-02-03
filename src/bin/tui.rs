@@ -65,6 +65,7 @@ async fn main() -> Result<()> {
         let _ = client.request_guilds().await;
         let _ = client.request_usage_stats(Some(7)).await; // Default to week
         let _ = client.request_system_metrics().await;
+        let _ = client.request_channels_with_history(None).await; // Auto-watch channels
     }
 
     // Create event handler
@@ -111,6 +112,12 @@ async fn run_app(
         if let Some(client) = ipc_client {
             while let Some(event) = client.try_recv() {
                 app.handle_bot_event(event);
+            }
+
+            // Process any pending channel watches (auto-watch from DB history)
+            for channel_id in app.pending_watches.drain(..) {
+                let _ = client.watch_channel(channel_id).await;
+                let _ = client.request_channel_info(channel_id).await;
             }
 
             // Check connection status
@@ -272,10 +279,9 @@ async fn handle_action(
             match app.current_screen {
                 Screen::Channels => {
                     if app.browse_mode {
-                        // Watch the selected channel from browse mode
-                        // Extract values before mutable borrows
-                        let channel_info = app.browse_selected_channel()
-                            .map(|c| (c.id, c.name.clone()));
+                        // Watch the selected channel from browse mode (merged list)
+                        // Use browse_selected_channel_info for merged channel support
+                        let channel_info = app.browse_selected_channel_info();
 
                         if let Some((channel_id, channel_name)) = channel_info {
                             app.channel_state.watch(channel_id);
@@ -533,8 +539,11 @@ async fn handle_action(
                         // When viewing a channel, 'b' goes back to list
                         app.channel_state.clear_selection();
                     } else if !app.browse_mode {
-                        // Enter browse mode
+                        // Enter browse mode and request channels with history from DB
                         app.start_browse_mode();
+                        if let Some(client) = ipc_client {
+                            let _ = client.request_channels_with_history(None).await;
+                        }
                     }
                 }
                 _ => {

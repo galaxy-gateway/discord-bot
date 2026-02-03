@@ -121,6 +121,11 @@ pub enum BotEvent {
         /// Guild ID these states apply to (None = global)
         guild_id: Option<u64>,
     },
+    /// Channels with conversation history response
+    ChannelsWithHistoryResponse {
+        /// Channels with their history summaries
+        channels: Vec<ChannelHistorySummary>,
+    },
 }
 
 /// Simplified message for display in TUI
@@ -236,6 +241,17 @@ pub struct TopUser {
     pub cost: f64,
 }
 
+/// Channel with conversation history summary for browse mode
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChannelHistorySummary {
+    pub channel_id: u64,
+    pub channel_name: Option<String>,
+    pub guild_id: Option<u64>,
+    pub guild_name: Option<String>,
+    pub message_count: u64,
+    pub last_activity: Option<DateTime<Utc>>,
+}
+
 // ============================================================================
 // TUI -> Bot Commands
 // ============================================================================
@@ -327,6 +343,10 @@ pub enum TuiCommand {
     },
     /// Request feature states (enabled/disabled) for a guild
     GetFeatureStates {
+        guild_id: Option<u64>,
+    },
+    /// Request channels with conversation history (for browse mode)
+    GetChannelsWithHistory {
         guild_id: Option<u64>,
     },
 }

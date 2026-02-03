@@ -3188,6 +3188,59 @@ impl Database {
         messages.reverse();
         Ok(messages)
     }
+
+    /// Get channels with conversation history, optionally filtered by guild
+    /// Returns channels from channel_settings with message counts from conversation_history
+    pub async fn get_channels_with_history(&self, guild_id: Option<&str>) -> Result<Vec<ChannelHistoryEntry>> {
+        let conn = self.connection.lock().await;
+
+        // Query channels that have settings OR have conversation history
+        // The channel_settings table has guild_id, so we can filter by guild
+        let query = if guild_id.is_some() {
+            "SELECT
+                cs.channel_id,
+                cs.guild_id,
+                COUNT(ch.id) as message_count,
+                MAX(ch.timestamp) as last_activity
+             FROM channel_settings cs
+             LEFT JOIN conversation_history ch ON cs.channel_id = ch.channel_id
+             WHERE cs.guild_id = ?
+             GROUP BY cs.guild_id, cs.channel_id
+             ORDER BY last_activity DESC NULLS LAST"
+        } else {
+            // Get all channels with history (for browsing all)
+            "SELECT
+                COALESCE(cs.channel_id, ch.channel_id) as channel_id,
+                cs.guild_id,
+                COUNT(ch.id) as message_count,
+                MAX(ch.timestamp) as last_activity
+             FROM (
+                 SELECT DISTINCT channel_id FROM conversation_history
+             ) ch_ids
+             LEFT JOIN channel_settings cs ON ch_ids.channel_id = cs.channel_id
+             LEFT JOIN conversation_history ch ON ch_ids.channel_id = ch.channel_id
+             GROUP BY ch_ids.channel_id, cs.guild_id
+             ORDER BY last_activity DESC NULLS LAST"
+        };
+
+        let mut stmt = conn.prepare(query)?;
+
+        if let Some(gid) = guild_id {
+            stmt.bind((1, gid))?;
+        }
+
+        let mut entries = Vec::new();
+        while let Ok(State::Row) = stmt.next() {
+            entries.push(ChannelHistoryEntry {
+                channel_id: stmt.read::<String, _>(0)?,
+                guild_id: stmt.read::<Option<String>, _>(1)?,
+                message_count: stmt.read::<i64, _>(2)?,
+                last_activity: stmt.read::<Option<String>, _>(3)?,
+            });
+        }
+
+        Ok(entries)
+    }
 }
 
 /// User list entry for TUI
@@ -3252,6 +3305,15 @@ pub struct ConversationMessage {
     pub content: String,
     pub persona: Option<String>,
     pub timestamp: String,
+}
+
+/// Channel with conversation history entry for TUI
+#[derive(Debug, Clone)]
+pub struct ChannelHistoryEntry {
+    pub channel_id: String,
+    pub guild_id: Option<String>,
+    pub message_count: i64,
+    pub last_activity: Option<String>,
 }
 
 /// DM statistics for a user

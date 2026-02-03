@@ -23,6 +23,7 @@ use persona::features::startup::StartupNotifier;
 use persona::ipc::{IpcServer, BotEvent, DisplayMessage, GuildInfo, ChannelInfo, ChannelType, AttachmentInfo};
 use persona::message_components::MessageComponentHandler;
 use serenity::model::id::GuildId;
+use serenity::model::guild::Guild;
 
 struct Handler {
     command_handler: Arc<CommandHandler>,
@@ -76,6 +77,106 @@ impl Handler {
                 url: a.url.clone(),
             }).collect(),
             embeds_count: msg.embeds.len(),
+        }
+    }
+
+    /// Build guild info list from cache for all specified guilds
+    fn build_guild_info_from_cache(&self, ctx: &Context, guild_ids: &[GuildId]) -> Vec<GuildInfo> {
+        use serenity::model::channel::Channel as SerenityChannel;
+        use serenity::model::channel::ChannelType as SerenityChannelType;
+
+        guild_ids.iter().filter_map(|&guild_id| {
+            ctx.cache.guild(guild_id).map(|guild| {
+                let channels: Vec<ChannelInfo> = guild.channels.iter()
+                    .filter_map(|(channel_id, channel)| {
+                        if let SerenityChannel::Guild(gc) = channel {
+                            let channel_type = match gc.kind {
+                                SerenityChannelType::Text => ChannelType::Text,
+                                SerenityChannelType::Voice => ChannelType::Voice,
+                                SerenityChannelType::Category => ChannelType::Category,
+                                SerenityChannelType::News => ChannelType::News,
+                                SerenityChannelType::NewsThread
+                                | SerenityChannelType::PublicThread
+                                | SerenityChannelType::PrivateThread => ChannelType::Thread,
+                                _ => ChannelType::Other,
+                            };
+
+                            Some(ChannelInfo {
+                                id: channel_id.0,
+                                name: gc.name.clone(),
+                                channel_type,
+                            })
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                // Also include threads from the guild's thread list (Vec<GuildChannel>)
+                let mut all_channels = channels;
+                for thread in guild.threads.iter() {
+                    all_channels.push(ChannelInfo {
+                        id: thread.id.0,
+                        name: thread.name.clone(),
+                        channel_type: ChannelType::Thread,
+                    });
+                }
+
+                GuildInfo {
+                    id: guild_id.0,
+                    name: guild.name.clone(),
+                    channels: all_channels,
+                    member_count: Some(guild.member_count),
+                }
+            })
+        }).collect()
+    }
+
+    /// Build guild info for a single guild
+    fn build_single_guild_info(&self, _ctx: &Context, guild: &Guild) -> GuildInfo {
+        use serenity::model::channel::Channel as SerenityChannel;
+        use serenity::model::channel::ChannelType as SerenityChannelType;
+
+        let channels: Vec<ChannelInfo> = guild.channels.iter()
+            .filter_map(|(channel_id, channel)| {
+                if let SerenityChannel::Guild(gc) = channel {
+                    let channel_type = match gc.kind {
+                        SerenityChannelType::Text => ChannelType::Text,
+                        SerenityChannelType::Voice => ChannelType::Voice,
+                        SerenityChannelType::Category => ChannelType::Category,
+                        SerenityChannelType::News => ChannelType::News,
+                        SerenityChannelType::NewsThread
+                        | SerenityChannelType::PublicThread
+                        | SerenityChannelType::PrivateThread => ChannelType::Thread,
+                        _ => ChannelType::Other,
+                    };
+
+                    Some(ChannelInfo {
+                        id: channel_id.0,
+                        name: gc.name.clone(),
+                        channel_type,
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Also include threads (Vec<GuildChannel>)
+        let mut all_channels = channels;
+        for thread in guild.threads.iter() {
+            all_channels.push(ChannelInfo {
+                id: thread.id.0,
+                name: thread.name.clone(),
+                channel_type: ChannelType::Thread,
+            });
+        }
+
+        GuildInfo {
+            id: guild.id.0,
+            name: guild.name.clone(),
+            channels: all_channels,
+            member_count: Some(guild.member_count),
         }
     }
 }
@@ -156,7 +257,7 @@ impl EventHandler for Handler {
                     use serenity::model::channel::Channel as SerenityChannel;
                     use serenity::model::channel::ChannelType as SerenityChannelType;
 
-                    let channels: Vec<ChannelInfo> = guild.channels.iter()
+                    let mut channels: Vec<ChannelInfo> = guild.channels.iter()
                         .filter_map(|(channel_id, channel)| {
                             // Extract GuildChannel from Channel enum
                             if let SerenityChannel::Guild(gc) = channel {
@@ -182,6 +283,15 @@ impl EventHandler for Handler {
                         })
                         .collect();
 
+                    // Also include threads from guild.threads (Vec<GuildChannel>)
+                    for thread in guild.threads.iter() {
+                        channels.push(ChannelInfo {
+                            id: thread.id.0,
+                            name: thread.name.clone(),
+                            channel_type: ChannelType::Thread,
+                        });
+                    }
+
                     guilds.push(GuildInfo {
                         id: guild_id.0,
                         name: guild.name.clone(),
@@ -189,7 +299,7 @@ impl EventHandler for Handler {
                         member_count: Some(guild.member_count),
                     });
                 } else {
-                    // Guild not in cache yet, use placeholder
+                    // Guild not in cache yet, use placeholder - will be updated by cache_ready
                     guilds.push(GuildInfo {
                         id: guild_id.0,
                         name: format!("Guild {}", guild_id.0),
@@ -232,6 +342,64 @@ impl EventHandler for Handler {
 
         // Send startup notification if enabled (includes plugin versions and commit details)
         self.startup_notifier.send_if_enabled(&ctx.http, &ready, &self.plugins).await;
+    }
+
+    async fn cache_ready(&self, ctx: Context, guilds: Vec<GuildId>) {
+        info!("📦 Cache ready with {} guilds fully loaded", guilds.len());
+
+        // Update IPC with full guild/channel info now that cache is ready
+        if let Some(ipc) = &self.ipc_server {
+            let guild_info = self.build_guild_info_from_cache(&ctx, &guilds);
+            let guild_count = guild_info.len();
+
+            ipc.set_guilds(guild_info.clone()).await;
+
+            // Broadcast updated Ready event with full channel info
+            if let Some(user_id) = ipc.get_bot_user_id().await {
+                if let Some(username) = ipc.get_bot_username().await {
+                    ipc.broadcast(BotEvent::Ready {
+                        guilds: guild_info,
+                        bot_user_id: user_id,
+                        bot_username: username,
+                    });
+                    info!("📡 IPC: Sent updated Ready event with {} guilds and full channel data", guild_count);
+                }
+            }
+        }
+    }
+
+    async fn guild_create(&self, ctx: Context, guild: Guild, is_new: bool) {
+        if is_new {
+            info!("🆕 Joined new guild: {} ({})", guild.name, guild.id);
+        } else {
+            info!("📥 Guild available: {} ({}) - {} channels", guild.name, guild.id, guild.channels.len());
+        }
+
+        // Update IPC with this guild's info
+        if let Some(ipc) = &self.ipc_server {
+            let guild_info = self.build_single_guild_info(&ctx, &guild);
+
+            // Get current guilds and update/add this one
+            let mut current_guilds = ipc.get_guilds().await;
+            if let Some(existing) = current_guilds.iter_mut().find(|g| g.id == guild.id.0) {
+                *existing = guild_info;
+            } else {
+                current_guilds.push(guild_info);
+            }
+
+            ipc.set_guilds(current_guilds.clone()).await;
+
+            // Broadcast updated guild list
+            if let Some(user_id) = ipc.get_bot_user_id().await {
+                if let Some(username) = ipc.get_bot_username().await {
+                    ipc.broadcast(BotEvent::Ready {
+                        guilds: current_guilds,
+                        bot_user_id: user_id,
+                        bot_username: username,
+                    });
+                }
+            }
+        }
     }
 
     async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
@@ -630,7 +798,8 @@ async fn main() -> Result<()> {
         Some(ipc_server),
     );
 
-    let intents = GatewayIntents::GUILD_MESSAGES
+    let intents = GatewayIntents::GUILDS
+        | GatewayIntents::GUILD_MESSAGES
         | GatewayIntents::DIRECT_MESSAGES
         | GatewayIntents::MESSAGE_CONTENT;
 
