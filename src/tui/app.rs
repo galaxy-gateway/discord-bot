@@ -128,6 +128,14 @@ pub struct App {
     pub last_heartbeat: Option<i64>,
     /// Activity log (recent events)
     pub activity_log: Vec<String>,
+    /// Browse mode for channel selection
+    pub browse_mode: bool,
+    /// Selected guild index in browse mode
+    pub browse_guild_index: usize,
+    /// Selected channel index in browse mode
+    pub browse_channel_index: usize,
+    /// Whether channel pane is active in browse mode (false=guilds, true=channels)
+    pub browse_channel_pane_active: bool,
 }
 
 impl App {
@@ -159,6 +167,10 @@ impl App {
             status_message: None,
             last_heartbeat: None,
             activity_log: Vec::new(),
+            browse_mode: false,
+            browse_guild_index: 0,
+            browse_channel_index: 0,
+            browse_channel_pane_active: false,
         }
     }
 
@@ -431,6 +443,83 @@ impl App {
         let new_state = !current;
         self.feature_states.insert(feature_id.to_string(), new_state);
         new_state
+    }
+
+    /// Enter browse mode for channel selection
+    pub fn start_browse_mode(&mut self) {
+        self.browse_mode = true;
+        self.browse_guild_index = 0;
+        self.browse_channel_index = 0;
+        self.browse_channel_pane_active = false;
+    }
+
+    /// Exit browse mode
+    pub fn stop_browse_mode(&mut self) {
+        self.browse_mode = false;
+    }
+
+    /// Get the currently selected guild in browse mode
+    pub fn browse_selected_guild(&self) -> Option<&GuildInfo> {
+        self.guilds.get(self.browse_guild_index)
+    }
+
+    /// Get available text channels for the selected guild in browse mode
+    pub fn browse_available_channels(&self) -> Vec<&crate::ipc::ChannelInfo> {
+        use crate::ipc::ChannelType;
+        self.browse_selected_guild()
+            .map(|g| {
+                g.channels
+                    .iter()
+                    .filter(|c| matches!(c.channel_type, ChannelType::Text | ChannelType::News | ChannelType::Thread | ChannelType::Forum))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Get the currently selected channel in browse mode
+    pub fn browse_selected_channel(&self) -> Option<&crate::ipc::ChannelInfo> {
+        let channels = self.browse_available_channels();
+        channels.get(self.browse_channel_index).copied()
+    }
+
+    /// Navigate up in browse mode (in current pane)
+    pub fn browse_up(&mut self) {
+        if self.browse_channel_pane_active {
+            if self.browse_channel_index > 0 {
+                self.browse_channel_index -= 1;
+            }
+        } else if self.browse_guild_index > 0 {
+            self.browse_guild_index -= 1;
+            self.browse_channel_index = 0; // Reset channel selection when guild changes
+        }
+    }
+
+    /// Navigate down in browse mode (in current pane)
+    pub fn browse_down(&mut self) {
+        if self.browse_channel_pane_active {
+            let max = self.browse_available_channels().len();
+            if self.browse_channel_index < max.saturating_sub(1) {
+                self.browse_channel_index += 1;
+            }
+        } else {
+            let max = self.guilds.len();
+            if self.browse_guild_index < max.saturating_sub(1) {
+                self.browse_guild_index += 1;
+                self.browse_channel_index = 0; // Reset channel selection when guild changes
+            }
+        }
+    }
+
+    /// Switch to guild pane in browse mode
+    pub fn browse_pane_left(&mut self) {
+        self.browse_channel_pane_active = false;
+    }
+
+    /// Switch to channel pane in browse mode
+    pub fn browse_pane_right(&mut self) {
+        if !self.guilds.is_empty() {
+            self.browse_channel_pane_active = true;
+        }
     }
 }
 

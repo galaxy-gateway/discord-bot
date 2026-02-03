@@ -206,7 +206,9 @@ async fn handle_action(
         KeyAction::Up => {
             match app.current_screen {
                 Screen::Channels => {
-                    if app.channel_state.selected().is_some() {
+                    if app.browse_mode {
+                        app.browse_up();
+                    } else if app.channel_state.selected().is_some() {
                         app.channel_state.scroll_up(1);
                     } else {
                         app.select_previous();
@@ -234,7 +236,9 @@ async fn handle_action(
         KeyAction::Down => {
             match app.current_screen {
                 Screen::Channels => {
-                    if let Some(messages) = app.channel_state.get_selected_messages() {
+                    if app.browse_mode {
+                        app.browse_down();
+                    } else if let Some(messages) = app.channel_state.get_selected_messages() {
                         app.channel_state.scroll_down(1, messages.len());
                     } else {
                         let max = app.channel_state.watched_channels().len();
@@ -267,16 +271,33 @@ async fn handle_action(
         KeyAction::Select => {
             match app.current_screen {
                 Screen::Channels => {
-                    let watched = app.channel_state.watched_channels();
-                    if let Some(&channel_id) = watched.get(app.selected_index) {
-                        app.channel_state.select(channel_id);
-                        // Request channel info and history
-                        if let Some(client) = ipc_client {
-                            if app.channel_state.needs_history(channel_id) {
-                                app.channel_state.start_fetching_history();
-                                let _ = client.get_channel_history(channel_id, 50).await;
+                    if app.browse_mode {
+                        // Watch the selected channel from browse mode
+                        // Extract values before mutable borrows
+                        let channel_info = app.browse_selected_channel()
+                            .map(|c| (c.id, c.name.clone()));
+
+                        if let Some((channel_id, channel_name)) = channel_info {
+                            app.channel_state.watch(channel_id);
+                            if let Some(client) = ipc_client {
+                                let _ = client.watch_channel(channel_id).await;
+                                let _ = client.request_channel_info(channel_id).await;
                             }
-                            let _ = client.request_channel_info(channel_id).await;
+                            app.status_message = Some(format!("Now watching #{}", channel_name));
+                        }
+                        app.stop_browse_mode();
+                    } else {
+                        let watched = app.channel_state.watched_channels();
+                        if let Some(&channel_id) = watched.get(app.selected_index) {
+                            app.channel_state.select(channel_id);
+                            // Request channel info and history
+                            if let Some(client) = ipc_client {
+                                if app.channel_state.needs_history(channel_id) {
+                                    app.channel_state.start_fetching_history();
+                                    let _ = client.get_channel_history(channel_id, 50).await;
+                                }
+                                let _ = client.request_channel_info(channel_id).await;
+                            }
                         }
                     }
                 }
@@ -307,7 +328,9 @@ async fn handle_action(
         KeyAction::Back => {
             match app.current_screen {
                 Screen::Channels => {
-                    if app.channel_state.selected().is_some() {
+                    if app.browse_mode {
+                        app.stop_browse_mode();
+                    } else if app.channel_state.selected().is_some() {
                         app.channel_state.clear_selection();
                     } else {
                         app.switch_screen(Screen::Dashboard);
@@ -489,13 +512,35 @@ async fn handle_action(
             }
         }
         KeyAction::TabLeft => {
-            if app.current_screen == Screen::Settings {
+            if app.current_screen == Screen::Channels && app.browse_mode {
+                app.browse_pane_left();
+            } else if app.current_screen == Screen::Settings {
                 app.settings_tab_left();
             }
         }
         KeyAction::TabRight => {
-            if app.current_screen == Screen::Settings {
+            if app.current_screen == Screen::Channels && app.browse_mode {
+                app.browse_pane_right();
+            } else if app.current_screen == Screen::Settings {
                 app.settings_tab_right();
+            }
+        }
+        KeyAction::StartBrowse => {
+            match app.current_screen {
+                Screen::Channels => {
+                    // 'b' enters browse mode when not viewing a channel, otherwise acts as back
+                    if app.channel_state.selected().is_some() {
+                        // When viewing a channel, 'b' goes back to list
+                        app.channel_state.clear_selection();
+                    } else if !app.browse_mode {
+                        // Enter browse mode
+                        app.start_browse_mode();
+                    }
+                }
+                _ => {
+                    // On other screens, 'b' goes back to dashboard
+                    app.switch_screen(Screen::Dashboard);
+                }
             }
         }
         KeyAction::None => {}

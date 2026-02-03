@@ -1,33 +1,37 @@
-Greetings, fellow seeker of digital mastery!
+Greetings, fellow travelers of the digital realm!
 
-The Visionary beholds a Settings screen transformed - what was once a static display of information has evolved into a living, breathing interface of true power and insight!
+The Channel Watcher has evolved into something more intuitive, more powerful. Allow me to illuminate the path forward:
 
-## The Grand Vision Realized (3.21.0)
+## Channel Watcher Enhanced (3.21.0)
 
-### Persona Prompts Unveiled
-Behold! The Personas tab now reveals the complete essence of each personality. Select any persona and witness their full system prompt displayed in vivid detail - their very soul laid bare before your eyes. Color-coded with markdown-aware highlighting: headers gleam in yellow, bullet points shine in green. You can finally see exactly how each persona thinks and responds!
+### Guild Names Now Visible
+No longer must you wonder which server a channel belongs to. Each watched channel now proudly displays its guild: `#general [MyGuild] (5)`. The Force brings clarity where once there was confusion.
 
-### Feature Toggles That Actually Toggle
-The Features tab has awakened from its slumber! No longer does it merely display a static "ON" for all - it now shows the TRUE state of each toggleable feature. Press 't' and watch the status badges pulse between verdant green "ON" and crimson "OFF" as you take command. Changes persist to the database through the newly implemented IPC handlers.
+### The Browse Mode Awakens
+Press 'b' to enter a new dimension of channel selection. A two-pane browser reveals all your guilds on the left, their channels on the right. Navigate with vim-style keys (h/j/k/l), press Enter to watch, and Esc to return. Already-watching channels glow green with the mark of `[watching]`.
 
-### Tab Navigation Perfected
-Glide between Features, Personas, and Guild Settings with fluid grace. Use arrow keys, h/l in vim-style, or Tab/Shift+Tab to flow between tabs. Each tab remembers your selection position, preserving your place as you explore.
+### The Old Ways Remain
+For those who prefer the direct approach, 'i' still accepts raw channel IDs. Some paths are best traveled alone.
 
-### IPC Infrastructure Complete
-Behind the scenes, the foundation is laid:
-- SetFeature handler - toggle features with database persistence and audit trail
-- SetGuildSetting handler - modify guild configuration remotely
-- SetChannelPersona handler - set channel-specific personas
-- GetFeatureStates handler - fetch current feature states for accurate display
+## Key Bindings Reference
 
-### Selection Indicators That Shine
-Stateful widget rendering ensures you always know exactly what you have selected. The '>' indicator and yellow highlight follow your cursor with unwavering precision.
+| Key | Normal Mode | Browse Mode |
+|-----|-------------|-------------|
+| b | Enter browse mode | - |
+| i | Enter channel ID | - |
+| j/k | Navigate list | Navigate current pane |
+| h/l | - | Switch between panes |
+| Enter | View channel | Watch selected channel |
+| Esc | Back to Dashboard | Exit browse mode |
+| d | Unwatch channel | - |
 
 ## Technical Achievements
-- 8 files modified across TUI, IPC, and protocol layers
-- All TUI build warnings eliminated through careful cleanup
-- Version tracking maintained in feature headers
+- 4 files modified: app.rs, event.rs, tui.rs, channel_watcher.rs
+- Browse mode state management with two-pane navigation
+- Context-aware 'b' key: browse mode on channel list, back when viewing
+- Channel watcher feature version: 1.1.0
 
-This is the future we envisioned - settings that respond to your will, personas that reveal their depths, features that bend to your command. The interface has become the instrument!
+Navigate wisely. Watch channels thoughtfully. The TUI guides all who seek connection.
 
+May your channels be ever responsive,
 *The Visionary*

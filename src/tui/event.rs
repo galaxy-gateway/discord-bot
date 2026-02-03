@@ -116,6 +116,8 @@ pub enum KeyAction {
     TabLeft,
     /// Move to next tab
     TabRight,
+    /// Start browse mode for channel selection
+    StartBrowse,
 }
 
 /// Map a key event to an action
@@ -163,7 +165,10 @@ pub fn map_key_event(key: KeyEvent, in_edit_mode: bool) -> KeyAction {
             (KeyCode::Up, _) | (KeyCode::Char('k'), KeyModifiers::NONE) => KeyAction::Up,
             (KeyCode::Down, _) | (KeyCode::Char('j'), KeyModifiers::NONE) => KeyAction::Down,
             (KeyCode::Enter, _) | (KeyCode::Char(' '), KeyModifiers::NONE) => KeyAction::Select,
-            (KeyCode::Esc, _) | (KeyCode::Char('b'), KeyModifiers::NONE) => KeyAction::Back,
+            (KeyCode::Esc, _) => KeyAction::Back,
+
+            // Browse mode (context-aware: enters browse mode or goes back depending on screen)
+            (KeyCode::Char('b'), KeyModifiers::NONE) => KeyAction::StartBrowse,
 
             // Text input
             (KeyCode::Char('i'), KeyModifiers::NONE) => KeyAction::StartInput,
