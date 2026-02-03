@@ -1,13 +1,20 @@
 //! # Settings UI
 //!
 //! Feature toggles, persona management, and guild settings.
+//!
+//! - **Version**: 1.1.0
+//! - **Since**: 3.20.0
+//! - **Toggleable**: false
+//!
+//! ## Changelog
+//! - 1.1.0: Added tab switching, selection indicators, and persona prompt preview panel
+//! - 1.0.0: Initial settings screen with features, personas, and guild settings tabs
 
 use crate::tui::App;
-use crate::tui::app::InputMode;
 use crate::tui::ui::titled_block;
-use crate::features::FEATURES;
+use crate::features::{FEATURES, PersonaManager};
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Tabs};
+use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Tabs, Wrap};
 
 /// Settings tab
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,14 +56,18 @@ pub fn render_settings(frame: &mut Frame, app: &App, area: Rect) {
 
     let tabs = Tabs::new(titles)
         .block(Block::default().borders(Borders::ALL).title(" Settings "))
-        .select(0) // TODO: Track selected tab
+        .select(app.settings_tab as usize)
         .style(Style::default().fg(Color::White))
-        .highlight_style(Style::default().fg(Color::Yellow));
+        .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
 
     frame.render_widget(tabs, chunks[0]);
 
-    // Render features tab (default)
-    render_features(frame, app, chunks[1]);
+    // Render content based on selected tab
+    match app.settings_tab {
+        SettingsTab::Features => render_features(frame, app, chunks[1]),
+        SettingsTab::Personas => render_personas(frame, app, chunks[1]),
+        SettingsTab::Guild => render_guild_settings(frame, app, chunks[1]),
+    }
 }
 
 fn render_features(frame: &mut Frame, app: &App, area: Rect) {
@@ -76,13 +87,25 @@ fn render_features(frame: &mut Frame, app: &App, area: Rect) {
             Span::styled("    ", Style::default().fg(Color::DarkGray))
         };
 
-        let status = Span::styled(
-            " ON ",
-            Style::default().bg(Color::Green).fg(Color::Black)
-        );
+        // Get actual feature state
+        let enabled = if feature.toggleable {
+            app.is_feature_enabled(feature.id)
+        } else {
+            true // Non-toggleable features are always on
+        };
+
+        let status = if enabled {
+            Span::styled(" ON  ", Style::default().bg(Color::Green).fg(Color::Black))
+        } else {
+            Span::styled(" OFF ", Style::default().bg(Color::Red).fg(Color::White))
+        };
 
         let name_style = if feature.toggleable {
-            Style::default().fg(Color::White)
+            if enabled {
+                Style::default().fg(Color::White)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            }
         } else {
             Style::default().fg(Color::DarkGray)
         };
@@ -102,10 +125,17 @@ fn render_features(frame: &mut Frame, app: &App, area: Rect) {
         .highlight_style(Style::default().add_modifier(Modifier::BOLD).fg(Color::Yellow))
         .highlight_symbol("> ");
 
-    frame.render_widget(list, chunks[0]);
+    let mut list_state = ListState::default().with_selected(Some(app.settings_feature_index));
+    frame.render_stateful_widget(list, chunks[0], &mut list_state);
 
     // Feature details
-    if let Some(feature) = FEATURES.get(app.selected_index) {
+    if let Some(feature) = FEATURES.get(app.settings_feature_index) {
+        let enabled = if feature.toggleable {
+            app.is_feature_enabled(feature.id)
+        } else {
+            true
+        };
+
         let mut lines = vec![];
 
         lines.push(Line::from(vec![
@@ -132,14 +162,31 @@ fn render_features(frame: &mut Frame, app: &App, area: Rect) {
             },
         ]));
 
+        // Show current state for toggleable features
+        if feature.toggleable {
+            lines.push(Line::from(vec![
+                Span::raw("Status:  "),
+                if enabled {
+                    Span::styled("ENABLED", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+                } else {
+                    Span::styled("DISABLED", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
+                },
+            ]));
+        }
+
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled("Description:", Style::default().add_modifier(Modifier::BOLD))));
         lines.push(Line::from(feature.description));
 
         if feature.toggleable {
             lines.push(Line::from(""));
+            let toggle_hint = if enabled {
+                "Press 't' to disable"
+            } else {
+                "Press 't' to enable"
+            };
             lines.push(Line::from(Span::styled(
-                "Press 't' to toggle on/off",
+                toggle_hint,
                 Style::default().fg(Color::Green)
             )));
         }
@@ -158,36 +205,105 @@ fn render_features(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_personas(frame: &mut Frame, app: &App, area: Rect) {
-    let personas = vec![
-        ("obi", "Obi-Wan Kenobi", "Wise mentor from Star Wars"),
-        ("muppet", "Muppet Friend", "Enthusiastic and fun"),
-        ("chef", "Cooking Expert", "Passionate about food"),
-        ("teacher", "Patient Educator", "Clear explanations"),
-        ("analyst", "Analyst", "Step-by-step analysis"),
-        ("visionary", "Big Thinker", "Future-focused ideas"),
-        ("noir", "Detective", "Hard-boiled mystery"),
-        ("zen", "Sage", "Contemplative wisdom"),
-        ("bard", "Storyteller", "Charismatic tales"),
-        ("coach", "Coach", "Motivational support"),
-        ("scientist", "Researcher", "Curious exploration"),
-        ("gamer", "Gamer", "Friendly gaming talk"),
-    ];
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(35),
+            Constraint::Percentage(65),
+        ])
+        .split(area);
 
-    let items: Vec<ListItem> = personas.iter().map(|(id, name, desc)| {
+    // Get persona data from PersonaManager
+    let manager = PersonaManager::new();
+    let mut personas: Vec<_> = manager.list_personas();
+    // Sort by persona ID for consistent ordering
+    personas.sort_by(|a, b| a.0.cmp(b.0));
+
+    // Persona list
+    let items: Vec<ListItem> = personas.iter().map(|(id, persona)| {
+        // Convert color to RGB for display hint
+        let color = Color::Rgb(
+            ((persona.color >> 16) & 0xFF) as u8,
+            ((persona.color >> 8) & 0xFF) as u8,
+            (persona.color & 0xFF) as u8,
+        );
         ListItem::new(Line::from(vec![
-            Span::styled(format!("{:<12}", id), Style::default().fg(Color::Yellow)),
-            Span::styled(format!("{:<20}", name), Style::default().fg(Color::White)),
-            Span::styled(*desc, Style::default().fg(Color::DarkGray)),
+            Span::styled("● ", Style::default().fg(color)),
+            Span::styled(format!("{:<10}", id), Style::default().fg(Color::Yellow)),
+            Span::styled(&persona.name, Style::default().fg(Color::White)),
         ]))
     }).collect();
 
     let list = List::new(items)
-        .block(titled_block("Available Personas"))
+        .block(titled_block("Personas"))
         .style(Style::default().fg(Color::White))
         .highlight_style(Style::default().add_modifier(Modifier::BOLD).fg(Color::Yellow))
         .highlight_symbol("> ");
 
-    frame.render_widget(list, area);
+    let mut list_state = ListState::default().with_selected(Some(app.settings_persona_index));
+    frame.render_stateful_widget(list, chunks[0], &mut list_state);
+
+    // Persona details with prompt preview
+    if let Some((id, persona)) = personas.get(app.settings_persona_index) {
+        let color = Color::Rgb(
+            ((persona.color >> 16) & 0xFF) as u8,
+            ((persona.color >> 8) & 0xFF) as u8,
+            (persona.color & 0xFF) as u8,
+        );
+
+        let mut lines = vec![];
+
+        // Header with name and color indicator
+        lines.push(Line::from(vec![
+            Span::styled("● ", Style::default().fg(color)),
+            Span::styled(&persona.name, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("  ({})", id), Style::default().fg(Color::DarkGray)),
+        ]));
+        lines.push(Line::from(""));
+
+        // Description
+        lines.push(Line::from(Span::styled("Description:", Style::default().add_modifier(Modifier::BOLD))));
+        lines.push(Line::from(persona.description.clone()));
+        lines.push(Line::from(""));
+
+        // System Prompt Preview
+        lines.push(Line::from(Span::styled("System Prompt:", Style::default().add_modifier(Modifier::BOLD).fg(Color::Cyan))));
+        lines.push(Line::from(""));
+
+        // Show the prompt (truncated to fit the area, user can scroll)
+        let prompt_lines: Vec<&str> = persona.system_prompt.lines().collect();
+        let max_prompt_lines = (area.height as usize).saturating_sub(12); // Leave room for header
+
+        for (_i, line) in prompt_lines.iter().take(max_prompt_lines).enumerate() {
+            let style = if line.starts_with('#') {
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+            } else if line.starts_with('-') || line.starts_with('*') {
+                Style::default().fg(Color::Green)
+            } else {
+                Style::default().fg(Color::White)
+            };
+            lines.push(Line::from(Span::styled(*line, style)));
+        }
+
+        if prompt_lines.len() > max_prompt_lines {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                format!("... ({} more lines)", prompt_lines.len() - max_prompt_lines),
+                Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+            )));
+        }
+
+        let paragraph = Paragraph::new(lines)
+            .block(titled_block("Persona Details"))
+            .wrap(Wrap { trim: false });
+
+        frame.render_widget(paragraph, chunks[1]);
+    } else {
+        let paragraph = Paragraph::new("Select a persona to view details")
+            .block(titled_block("Persona Details"))
+            .style(Style::default().fg(Color::DarkGray));
+        frame.render_widget(paragraph, chunks[1]);
+    }
 }
 
 fn render_guild_settings(frame: &mut Frame, app: &App, area: Rect) {
@@ -204,7 +320,7 @@ fn render_guild_settings(frame: &mut Frame, app: &App, area: Rect) {
         ("response_embeds", "Use embed boxes", "enabled/disabled"),
     ];
 
-    let items: Vec<ListItem> = settings.iter().map(|(key, name, values)| {
+    let items: Vec<ListItem> = settings.iter().map(|(_key, name, values)| {
         ListItem::new(Line::from(vec![
             Span::styled(format!("{:<25}", name), Style::default().fg(Color::White)),
             Span::styled(format!("[{}]", values), Style::default().fg(Color::DarkGray)),
@@ -217,5 +333,6 @@ fn render_guild_settings(frame: &mut Frame, app: &App, area: Rect) {
         .highlight_style(Style::default().add_modifier(Modifier::BOLD).fg(Color::Yellow))
         .highlight_symbol("> ");
 
-    frame.render_widget(list, area);
+    let mut list_state = ListState::default().with_selected(Some(app.settings_guild_index));
+    frame.render_stateful_widget(list, area, &mut list_state);
 }

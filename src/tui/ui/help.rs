@@ -5,10 +5,10 @@
 use crate::tui::App;
 use crate::tui::ui::titled_block;
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Paragraph, Row, Table};
+use ratatui::widgets::Paragraph;
 
 /// Render the help screen
-pub fn render_help(frame: &mut Frame, app: &App, area: Rect) {
+pub fn render_help(frame: &mut Frame, _app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([

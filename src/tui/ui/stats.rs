@@ -5,7 +5,7 @@
 use crate::tui::App;
 use crate::tui::ui::{titled_block, format_bytes, format_currency};
 use ratatui::prelude::*;
-use ratatui::widgets::{Bar, BarChart, BarGroup, Block, Borders, List, ListItem, Paragraph, Sparkline};
+use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Sparkline};
 
 /// Render the stats screen
 pub fn render_stats(frame: &mut Frame, app: &App, area: Rect) {

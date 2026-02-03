@@ -114,6 +114,13 @@ pub enum BotEvent {
     RecentErrorsResponse {
         errors: Vec<ErrorInfo>,
     },
+    /// Feature states response (enabled/disabled for each feature)
+    FeatureStatesResponse {
+        /// Map of feature_id -> enabled
+        states: std::collections::HashMap<String, bool>,
+        /// Guild ID these states apply to (None = global)
+        guild_id: Option<u64>,
+    },
 }
 
 /// Simplified message for display in TUI
@@ -261,6 +268,7 @@ pub enum TuiCommand {
     /// Set a channel's persona
     SetChannelPersona {
         request_id: String,
+        guild_id: u64,
         channel_id: u64,
         persona: String,
     },
@@ -316,6 +324,10 @@ pub enum TuiCommand {
     GetDmSessions {
         user_id: String,
         limit: u32,
+    },
+    /// Request feature states (enabled/disabled) for a guild
+    GetFeatureStates {
+        guild_id: Option<u64>,
     },
 }
 

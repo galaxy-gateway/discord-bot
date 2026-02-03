@@ -5,7 +5,7 @@
 use crate::tui::App;
 use crate::tui::ui::{titled_block, format_currency};
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Cell, List, ListItem, Paragraph, Row, Table};
+use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table};
 
 /// Render the users screen
 pub fn render_users(frame: &mut Frame, app: &App, area: Rect) {

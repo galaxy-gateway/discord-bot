@@ -3,7 +3,6 @@
 //! Keyboard input and tick event handling.
 
 use crate::ipc::BotEvent;
-use anyhow::Result;
 use crossterm::event::{self, Event as CrosstermEvent, KeyCode, KeyEvent, KeyModifiers};
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -113,6 +112,10 @@ pub enum KeyAction {
     Home,
     /// End
     End,
+    /// Move to previous tab
+    TabLeft,
+    /// Move to next tab
+    TabRight,
 }
 
 /// Map a key event to an action
@@ -177,6 +180,12 @@ pub fn map_key_event(key: KeyEvent, in_edit_mode: bool) -> KeyAction {
             (KeyCode::PageDown, _) => KeyAction::PageDown,
             (KeyCode::Home, _) | (KeyCode::Char('g'), KeyModifiers::NONE) => KeyAction::Home,
             (KeyCode::End, _) | (KeyCode::Char('G'), KeyModifiers::SHIFT) => KeyAction::End,
+
+            // Tab navigation (for Settings screen tabs)
+            (KeyCode::Left, KeyModifiers::NONE) | (KeyCode::Char('h'), KeyModifiers::NONE) => KeyAction::TabLeft,
+            (KeyCode::Right, KeyModifiers::NONE) | (KeyCode::Char('l'), KeyModifiers::NONE) => KeyAction::TabRight,
+            (KeyCode::Tab, KeyModifiers::NONE) => KeyAction::TabRight,
+            (KeyCode::BackTab, _) => KeyAction::TabLeft,
 
             _ => KeyAction::None,
         }

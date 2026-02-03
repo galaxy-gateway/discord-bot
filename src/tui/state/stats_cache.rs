@@ -3,7 +3,6 @@
 //! Cached statistics from the database.
 
 use std::time::Instant;
-use std::collections::HashMap;
 use crate::ipc::TopUser;
 
 /// Cached usage statistics

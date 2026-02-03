@@ -220,10 +220,11 @@ impl IpcClient {
     }
 
     /// Set channel persona
-    pub async fn set_channel_persona(&self, channel_id: u64, persona: String) -> Result<String> {
+    pub async fn set_channel_persona(&self, guild_id: u64, channel_id: u64, persona: String) -> Result<String> {
         let request_id = uuid::Uuid::new_v4().to_string();
         self.send(TuiCommand::SetChannelPersona {
             request_id: request_id.clone(),
+            guild_id,
             channel_id,
             persona,
         }).await?;
@@ -285,6 +286,11 @@ impl IpcClient {
     /// Request DM sessions for a user
     pub async fn request_dm_sessions(&self, user_id: String, limit: u32) -> Result<()> {
         self.send(TuiCommand::GetDmSessions { user_id, limit }).await
+    }
+
+    /// Request feature states (enabled/disabled) for a guild
+    pub async fn request_feature_states(&self, guild_id: Option<u64>) -> Result<()> {
+        self.send(TuiCommand::GetFeatureStates { guild_id }).await
     }
 
     /// Disable auto-reconnect (for clean shutdown)

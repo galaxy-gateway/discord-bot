@@ -15,16 +15,13 @@ use ratatui::prelude::*;
 use std::io;
 use std::time::Duration;
 
-use persona::ipc::{IpcClient, BotEvent, TuiCommand, connect_with_retry};
+use persona::ipc::{IpcClient, connect_with_retry};
 use persona::tui::{App, Screen, Event, EventHandler};
 use persona::tui::event::{map_key_event, KeyAction};
 use persona::tui::app::{InputMode, InputPurpose};
 
 /// TUI refresh rate
 const TICK_RATE: Duration = Duration::from_millis(250);
-
-/// Stats refresh interval
-const STATS_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -73,11 +70,9 @@ async fn main() -> Result<()> {
     // Create event handler
     let (mut events, event_tx) = EventHandler::new(TICK_RATE);
 
-    // Spawn IPC event forwarder if connected
-    if let Some(ref mut client) = ipc_client {
-        let tx = event_tx.clone();
-        // We need to move event receiving to the main loop since we can't split the client
-    }
+    // Note: IPC event forwarding is handled in run_app main loop
+    // since we can't split the client between threads
+    let _ = &event_tx; // Suppress unused warning - may be used for future IPC forwarding
 
     // Main loop
     let result = run_app(&mut terminal, &mut app, &mut events, &mut ipc_client).await;
@@ -200,6 +195,10 @@ async fn handle_action(
                             }
                         }
                     }
+                    Screen::Settings => {
+                        // Request feature states for the settings screen
+                        let _ = client.request_feature_states(None).await;
+                    }
                     _ => {}
                 }
             }
@@ -223,6 +222,12 @@ async fn handle_action(
                 Screen::Errors => {
                     app.errors_state.select_previous();
                 }
+                Screen::Settings => {
+                    let index = app.settings_current_index_mut();
+                    if *index > 0 {
+                        *index -= 1;
+                    }
+                }
                 _ => app.select_previous(),
             }
         }
@@ -237,7 +242,11 @@ async fn handle_action(
                     }
                 }
                 Screen::Settings => {
-                    app.select_next(persona::features::FEATURES.len());
+                    let max = app.settings_list_len();
+                    let index = app.settings_current_index_mut();
+                    if *index < max.saturating_sub(1) {
+                        *index += 1;
+                    }
                 }
                 Screen::Dashboard => {
                     app.select_next(app.guilds.len());
@@ -409,17 +418,22 @@ async fn handle_action(
         KeyAction::Toggle => {
             match app.current_screen {
                 Screen::Settings => {
-                    if let Some(feature) = persona::features::FEATURES.get(app.selected_index) {
+                    if let Some(feature) = persona::features::FEATURES.get(app.settings_feature_index) {
                         if feature.toggleable {
+                            // Toggle the local state and get new value
+                            let new_state = app.toggle_feature_state(feature.id);
+
                             if let Some(client) = ipc_client {
-                                // Toggle feature (we'd need to track current state)
+                                // Send to server to persist
                                 let _ = client.set_feature(
                                     feature.id.to_string(),
-                                    true, // TODO: Toggle actual state
-                                    None,
+                                    new_state,
+                                    None, // Global toggle
                                 ).await;
-                                app.status_message = Some(format!("Toggled {}", feature.name));
                             }
+
+                            let status = if new_state { "enabled" } else { "disabled" };
+                            app.status_message = Some(format!("{} {}", feature.name, status));
                         } else {
                             app.error_message = Some("Feature cannot be toggled".to_string());
                         }
@@ -472,6 +486,16 @@ async fn handle_action(
         KeyAction::End => {
             if app.current_screen == Screen::Channels {
                 app.channel_state.scroll_to_bottom();
+            }
+        }
+        KeyAction::TabLeft => {
+            if app.current_screen == Screen::Settings {
+                app.settings_tab_left();
+            }
+        }
+        KeyAction::TabRight => {
+            if app.current_screen == Screen::Settings {
+                app.settings_tab_right();
             }
         }
         KeyAction::None => {}

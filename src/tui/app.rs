@@ -2,12 +2,9 @@
 //!
 //! Main application state and screen navigation.
 
-use crate::ipc::{
-    BotEvent, GuildInfo, DisplayMessage,
-    UserSummary, UserStats, DmSessionInfo, ErrorInfo, TopUser,
-};
+use crate::ipc::{BotEvent, GuildInfo};
 use crate::tui::state::{ChannelState, StatsCache, UsersState, ErrorsState};
-use anyhow::Result;
+use crate::tui::ui::SettingsTab;
 use std::collections::HashMap;
 
 /// Available screens in the TUI
@@ -113,6 +110,16 @@ pub struct App {
     pub input_buffer: String,
     /// Selected index for lists
     pub selected_index: usize,
+    /// Current settings tab
+    pub settings_tab: SettingsTab,
+    /// Selection index for Features tab
+    pub settings_feature_index: usize,
+    /// Selection index for Personas tab
+    pub settings_persona_index: usize,
+    /// Selection index for Guild Settings tab
+    pub settings_guild_index: usize,
+    /// Feature enabled/disabled states (feature_id -> enabled)
+    pub feature_states: HashMap<String, bool>,
     /// Error message to display
     pub error_message: Option<String>,
     /// Status message to display
@@ -143,6 +150,11 @@ impl App {
             input_purpose: InputPurpose::default(),
             input_buffer: String::new(),
             selected_index: 0,
+            settings_tab: SettingsTab::Features,
+            settings_feature_index: 0,
+            settings_persona_index: 0,
+            settings_guild_index: 0,
+            feature_states: HashMap::new(),
             error_message: None,
             status_message: None,
             last_heartbeat: None,
@@ -173,7 +185,7 @@ impl App {
                 let msg = reason.unwrap_or_else(|| "Unknown reason".to_string());
                 self.add_activity(format!("Bot disconnected: {}", msg));
             }
-            BotEvent::MessageCreate { channel_id, guild_id, message } => {
+            BotEvent::MessageCreate { channel_id, guild_id: _, message } => {
                 self.channel_state.add_message(channel_id, message.clone());
                 self.add_activity(format!(
                     "#{}: {} - {}",
@@ -185,12 +197,12 @@ impl App {
             BotEvent::MessageDelete { channel_id, message_id } => {
                 self.channel_state.remove_message(channel_id, message_id);
             }
-            BotEvent::StatusUpdate { connected, uptime_seconds, guild_count, active_sessions } => {
+            BotEvent::StatusUpdate { connected, uptime_seconds, guild_count: _, active_sessions } => {
                 self.bot_connected = connected;
                 self.uptime_seconds = uptime_seconds;
                 self.active_sessions = active_sessions;
             }
-            BotEvent::CommandResponse { request_id, success, message, .. } => {
+            BotEvent::CommandResponse { success, message, .. } => {
                 if success {
                     self.status_message = message;
                 } else {
@@ -240,7 +252,7 @@ impl App {
                 name,
                 guild_name,
                 message_count,
-                last_activity,
+                last_activity: _,
             } => {
                 self.channel_state.set_channel_info(channel_id, name, guild_name, message_count);
             }
@@ -270,6 +282,10 @@ impl App {
             }
             BotEvent::RecentErrorsResponse { errors } => {
                 self.errors_state.set_errors(errors);
+            }
+            BotEvent::FeatureStatesResponse { states, guild_id: _ } => {
+                self.feature_states = states;
+                self.add_activity(format!("Loaded {} feature states", self.feature_states.len()));
             }
         }
     }
@@ -357,6 +373,64 @@ impl App {
     /// Get and clear input buffer
     pub fn take_input(&mut self) -> String {
         std::mem::take(&mut self.input_buffer)
+    }
+
+    /// Move to the previous settings tab
+    pub fn settings_tab_left(&mut self) {
+        self.settings_tab = match self.settings_tab {
+            SettingsTab::Features => SettingsTab::Guild,  // Wrap around
+            SettingsTab::Personas => SettingsTab::Features,
+            SettingsTab::Guild => SettingsTab::Personas,
+        };
+    }
+
+    /// Move to the next settings tab
+    pub fn settings_tab_right(&mut self) {
+        self.settings_tab = match self.settings_tab {
+            SettingsTab::Features => SettingsTab::Personas,
+            SettingsTab::Personas => SettingsTab::Guild,
+            SettingsTab::Guild => SettingsTab::Features,  // Wrap around
+        };
+    }
+
+    /// Get the current settings tab's selection index
+    pub fn settings_current_index(&self) -> usize {
+        match self.settings_tab {
+            SettingsTab::Features => self.settings_feature_index,
+            SettingsTab::Personas => self.settings_persona_index,
+            SettingsTab::Guild => self.settings_guild_index,
+        }
+    }
+
+    /// Get the mutable reference to current settings tab's selection index
+    pub fn settings_current_index_mut(&mut self) -> &mut usize {
+        match self.settings_tab {
+            SettingsTab::Features => &mut self.settings_feature_index,
+            SettingsTab::Personas => &mut self.settings_persona_index,
+            SettingsTab::Guild => &mut self.settings_guild_index,
+        }
+    }
+
+    /// Get the list length for the current settings tab
+    pub fn settings_list_len(&self) -> usize {
+        match self.settings_tab {
+            SettingsTab::Features => crate::features::FEATURES.len(),
+            SettingsTab::Personas => crate::features::PersonaManager::new().list_personas().len(),
+            SettingsTab::Guild => 10,     // Number of settings in render_guild_settings()
+        }
+    }
+
+    /// Check if a feature is enabled (defaults to true if not in state map)
+    pub fn is_feature_enabled(&self, feature_id: &str) -> bool {
+        self.feature_states.get(feature_id).copied().unwrap_or(true)
+    }
+
+    /// Toggle a feature state locally (call IPC to persist)
+    pub fn toggle_feature_state(&mut self, feature_id: &str) -> bool {
+        let current = self.is_feature_enabled(feature_id);
+        let new_state = !current;
+        self.feature_states.insert(feature_id.to_string(), new_state);
+        new_state
     }
 }
 

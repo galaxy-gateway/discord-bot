@@ -14,7 +14,7 @@ pub use dashboard::render_dashboard;
 pub use channel_watcher::render_channels;
 pub use stats::render_stats;
 pub use users::render_users;
-pub use settings::render_settings;
+pub use settings::{render_settings, SettingsTab};
 pub use errors::render_errors;
 pub use help::render_help;
 

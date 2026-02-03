@@ -1,30 +1,33 @@
-Greetings, fellow traveler of the digital realm!
+Greetings, fellow seeker of digital mastery!
 
-I come bearing news of a significant enhancement to the TUI name resolution capabilities in version 3.20.0.
+The Visionary beholds a Settings screen transformed - what was once a static display of information has evolved into a living, breathing interface of true power and insight!
 
-## The Vision Realized
+## The Grand Vision Realized (3.21.0)
 
-Where once stood cold numerical identifiers - mere Discord snowflake IDs that meant nothing to the human eye - now flourish proper usernames, bringing clarity and understanding to your analytics screens.
+### Persona Prompts Unveiled
+Behold! The Personas tab now reveals the complete essence of each personality. Select any persona and witness their full system prompt displayed in vivid detail - their very soul laid bare before your eyes. Color-coded with markdown-aware highlighting: headers gleam in yellow, bullet points shine in green. You can finally see exactly how each persona thinks and responds!
 
-## What Has Been Wrought
+### Feature Toggles That Actually Toggle
+The Features tab has awakened from its slumber! No longer does it merely display a static "ON" for all - it now shows the TRUE state of each toggleable feature. Press 't' and watch the status badges pulse between verdant green "ON" and crimson "OFF" as you take command. Changes persist to the database through the newly implemented IPC handlers.
 
-### User Cache System
-A new `user_cache` table has been woven into the database fabric, capturing Discord usernames as users interact with the bot. This cache updates silently with each message, building a repository of human-readable identities.
+### Tab Navigation Perfected
+Glide between Features, Personas, and Guild Settings with fluid grace. Use arrow keys, h/l in vim-style, or Tab/Shift+Tab to flow between tabs. Each tab remembers your selection position, preserving your place as you explore.
 
-### Enhanced TUI Display
-- **Users Screen**: Now displays usernames instead of cryptic IDs in the user list and details view
-- **Stats Screen**: The Top Users by Cost list now shows proper usernames where available
-- **Graceful Fallback**: When a username has not been cached yet, the truncated user ID appears as before
+### IPC Infrastructure Complete
+Behind the scenes, the foundation is laid:
+- SetFeature handler - toggle features with database persistence and audit trail
+- SetGuildSetting handler - modify guild configuration remotely
+- SetChannelPersona handler - set channel-specific personas
+- GetFeatureStates handler - fetch current feature states for accurate display
 
-### Technical Improvements
-- Added `TopUser` struct to IPC protocol with optional username field
-- Database queries now JOIN with user_cache for automatic username resolution
-- Bot caches user info on every message for comprehensive coverage
+### Selection Indicators That Shine
+Stateful widget rendering ensures you always know exactly what you have selected. The '>' indicator and yellow highlight follow your cursor with unwavering precision.
 
-## The Path Forward
+## Technical Achievements
+- 8 files modified across TUI, IPC, and protocol layers
+- All TUI build warnings eliminated through careful cleanup
+- Version tracking maintained in feature headers
 
-As more users interact with the bot, the cache will grow richer, transforming your TUI experience from a sea of numbers into a landscape of familiar names.
-
-May your monitoring be ever insightful!
+This is the future we envisioned - settings that respond to your will, personas that reveal their depths, features that bend to your command. The interface has become the instrument!
 
 *The Visionary*

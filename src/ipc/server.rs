@@ -2,11 +2,12 @@
 //!
 //! Unix socket server for the bot to communicate with TUI clients.
 //!
-//! - **Version**: 1.4.0
+//! - **Version**: 1.5.0
 //! - **Since**: 3.17.0
 //! - **Toggleable**: false
 //!
 //! ## Changelog
+//! - 1.5.0: Implemented SetFeature, SetGuildSetting, and SetChannelPersona handlers
 //! - 1.4.0: Added cache_user method and TopUser struct support for username resolution
 //! - 1.3.0: Added SendMessage implementation with Discord HTTP client support
 //! - 1.2.0: Added GetUsageStats and GetSystemMetrics commands with database integration
@@ -427,35 +428,118 @@ impl IpcServer {
                 }
             }
             TuiCommand::SetFeature { request_id, feature, enabled, guild_id } => {
-                // This would need database access to actually set
-                warn!("SetFeature command received but not implemented (feature: {}, enabled: {}, guild: {:?})",
-                      feature, enabled, guild_id);
-                self.broadcast(BotEvent::CommandResponse {
-                    request_id,
-                    success: false,
-                    message: Some("SetFeature not yet implemented in IPC".to_string()),
-                    data: None,
-                });
+                if let Some(ref db) = self.database {
+                    let guild_id_str = guild_id.map(|id| id.to_string());
+
+                    // Set the feature flag
+                    match db.set_feature_flag(
+                        &feature,
+                        enabled,
+                        None, // user_id - global toggle
+                        guild_id_str.as_deref(),
+                    ).await {
+                        Ok(_) => {
+                            // Record the toggle in audit trail
+                            let _ = db.record_feature_toggle(
+                                &feature,
+                                "1.0.0", // version - could look up from FEATURES
+                                guild_id_str.as_deref(),
+                                "TUI", // toggled_by
+                                enabled,
+                            ).await;
+
+                            info!("Feature '{}' set to {} for guild {:?}", feature, enabled, guild_id);
+                            self.broadcast(BotEvent::CommandResponse {
+                                request_id,
+                                success: true,
+                                message: Some(format!("Feature '{}' {}", feature, if enabled { "enabled" } else { "disabled" })),
+                                data: None,
+                            });
+                        }
+                        Err(e) => {
+                            error!("Failed to set feature flag: {}", e);
+                            self.broadcast(BotEvent::CommandResponse {
+                                request_id,
+                                success: false,
+                                message: Some(format!("Failed to set feature: {}", e)),
+                                data: None,
+                            });
+                        }
+                    }
+                } else {
+                    warn!("SetFeature command received but database not configured");
+                    self.broadcast(BotEvent::CommandResponse {
+                        request_id,
+                        success: false,
+                        message: Some("Database not configured".to_string()),
+                        data: None,
+                    });
+                }
             }
-            TuiCommand::SetChannelPersona { request_id, channel_id, persona } => {
-                warn!("SetChannelPersona command received but not implemented (channel: {}, persona: {})",
-                      channel_id, persona);
-                self.broadcast(BotEvent::CommandResponse {
-                    request_id,
-                    success: false,
-                    message: Some("SetChannelPersona not yet implemented in IPC".to_string()),
-                    data: None,
-                });
+            TuiCommand::SetChannelPersona { request_id, guild_id, channel_id, persona } => {
+                if let Some(ref db) = self.database {
+                    let persona_opt = if persona.is_empty() { None } else { Some(persona.as_str()) };
+                    match db.set_channel_persona(&guild_id.to_string(), &channel_id.to_string(), persona_opt).await {
+                        Ok(_) => {
+                            info!("Channel {} persona set to '{}' in guild {}", channel_id, persona, guild_id);
+                            self.broadcast(BotEvent::CommandResponse {
+                                request_id,
+                                success: true,
+                                message: Some(format!("Channel persona set to '{}'", persona)),
+                                data: None,
+                            });
+                        }
+                        Err(e) => {
+                            error!("Failed to set channel persona: {}", e);
+                            self.broadcast(BotEvent::CommandResponse {
+                                request_id,
+                                success: false,
+                                message: Some(format!("Failed to set channel persona: {}", e)),
+                                data: None,
+                            });
+                        }
+                    }
+                } else {
+                    warn!("SetChannelPersona command received but database not configured");
+                    self.broadcast(BotEvent::CommandResponse {
+                        request_id,
+                        success: false,
+                        message: Some("Database not configured".to_string()),
+                        data: None,
+                    });
+                }
             }
             TuiCommand::SetGuildSetting { request_id, guild_id, key, value } => {
-                warn!("SetGuildSetting command received but not implemented (guild: {}, key: {}, value: {})",
-                      guild_id, key, value);
-                self.broadcast(BotEvent::CommandResponse {
-                    request_id,
-                    success: false,
-                    message: Some("SetGuildSetting not yet implemented in IPC".to_string()),
-                    data: None,
-                });
+                if let Some(ref db) = self.database {
+                    match db.set_guild_setting(&guild_id.to_string(), &key, &value).await {
+                        Ok(_) => {
+                            info!("Guild setting '{}' set to '{}' for guild {}", key, value, guild_id);
+                            self.broadcast(BotEvent::CommandResponse {
+                                request_id,
+                                success: true,
+                                message: Some(format!("Setting '{}' updated to '{}'", key, value)),
+                                data: None,
+                            });
+                        }
+                        Err(e) => {
+                            error!("Failed to set guild setting: {}", e);
+                            self.broadcast(BotEvent::CommandResponse {
+                                request_id,
+                                success: false,
+                                message: Some(format!("Failed to set setting: {}", e)),
+                                data: None,
+                            });
+                        }
+                    }
+                } else {
+                    warn!("SetGuildSetting command received but database not configured");
+                    self.broadcast(BotEvent::CommandResponse {
+                        request_id,
+                        success: false,
+                        message: Some("Database not configured".to_string()),
+                        data: None,
+                    });
+                }
             }
             TuiCommand::GetChannelHistory { channel_id, limit } => {
                 // Fetch from database conversation_history
@@ -799,6 +883,45 @@ impl IpcServer {
                             warn!("Failed to get DM sessions: {}", e);
                         }
                     }
+                }
+            }
+            TuiCommand::GetFeatureStates { guild_id } => {
+                if let Some(ref db) = self.database {
+                    let guild_id_str = guild_id.map(|id| id.to_string());
+                    match db.get_guild_feature_flags(guild_id_str.as_deref().unwrap_or("global")).await {
+                        Ok(states) => {
+                            // Ensure all toggleable features have a state (default to true if not set)
+                            let mut full_states = std::collections::HashMap::new();
+                            for feature in crate::features::FEATURES.iter() {
+                                if feature.toggleable {
+                                    let enabled = states.get(feature.id).copied().unwrap_or(true);
+                                    full_states.insert(feature.id.to_string(), enabled);
+                                }
+                            }
+                            self.broadcast(BotEvent::FeatureStatesResponse {
+                                states: full_states,
+                                guild_id,
+                            });
+                            debug!("Sent FeatureStatesResponse with {} states", states.len());
+                        }
+                        Err(e) => {
+                            warn!("Failed to get feature states: {}", e);
+                            // Send empty states on error
+                            self.broadcast(BotEvent::FeatureStatesResponse {
+                                states: std::collections::HashMap::new(),
+                                guild_id,
+                            });
+                        }
+                    }
+                } else {
+                    // No database - send default states (all enabled)
+                    let mut states = std::collections::HashMap::new();
+                    for feature in crate::features::FEATURES.iter() {
+                        if feature.toggleable {
+                            states.insert(feature.id.to_string(), true);
+                        }
+                    }
+                    self.broadcast(BotEvent::FeatureStatesResponse { states, guild_id });
                 }
             }
         }
