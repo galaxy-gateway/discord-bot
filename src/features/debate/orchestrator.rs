@@ -517,11 +517,35 @@ mod tests {
             rounds: 6,
             initiator_id: "123".to_string(),
             guild_id: Some("456".to_string()),
+            initial_history: None,
+            previous_debaters: None,
         };
 
         assert_eq!(config.persona1_id, "obi");
         assert_eq!(config.persona2_id, "muppet");
         assert_eq!(config.rounds, 6);
+    }
+
+    #[test]
+    fn test_debate_config_with_tag_team() {
+        let history = vec![
+            ("Sage".to_string(), "First argument.".to_string()),
+            ("Cynic".to_string(), "Counter argument.".to_string()),
+        ];
+        let config = DebateConfig {
+            persona1_id: "obi".to_string(),
+            persona2_id: "muppet".to_string(),
+            topic: "Is the Force real?".to_string(),
+            rounds: 4,
+            initiator_id: "123".to_string(),
+            guild_id: Some("456".to_string()),
+            initial_history: Some(history.clone()),
+            previous_debaters: Some(("Sage".to_string(), "Cynic".to_string())),
+        };
+
+        assert!(config.initial_history.is_some());
+        assert_eq!(config.initial_history.as_ref().unwrap().len(), 2);
+        assert!(config.previous_debaters.is_some());
     }
 
     #[test]

@@ -100,6 +100,7 @@ fn create_set_guild_command() -> CreateApplicationCommand {
                 .add_string_choice("audio_transcription_mode", "audio_transcription_mode")
                 .add_string_choice("audio_transcription_output", "audio_transcription_output")
                 .add_string_choice("mention_responses", "mention_responses")
+                .add_string_choice("debate_auto_response", "debate_auto_response")
                 // Global bot settings (stored in bot_settings table)
                 .add_string_choice("startup_notification", "startup_notification")
                 .add_string_choice("startup_notify_owner_id", "startup_notify_owner_id")
@@ -234,6 +235,7 @@ pub const GUILD_SETTINGS: &[&str] = &[
     "audio_transcription_mode",
     "audio_transcription_output",
     "mention_responses",
+    "debate_auto_response",
     "startup_notification",
     "startup_notify_owner_id",
     "startup_notify_channel_id",
@@ -327,7 +329,7 @@ pub fn validate_guild_setting(setting: &str, value: &str) -> (bool, &'static str
                 (false, "Invalid persona. Use one of: `obi`, `muppet`, `chef`, `teacher`, `analyst`, `visionary`, `noir`, `zen`, `bard`, `coach`, `scientist`, `gamer`.")
             }
         }
-        "conflict_mediation" | "audio_transcription" | "mention_responses" | "response_embeds" => {
+        "conflict_mediation" | "audio_transcription" | "mention_responses" | "response_embeds" | "debate_auto_response" => {
             if ENABLED_DISABLED_VALUES.contains(&value) {
                 (true, "")
             } else {

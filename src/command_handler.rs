@@ -215,6 +215,22 @@ impl CommandHandler {
         } else if is_dm && !content.is_empty() && !audio_handled {
             info!("[{request_id}] 💬 Processing DM message (auto-response mode)");
             self.handle_dm_message_with_id(ctx, msg, request_id).await?;
+        } else if !is_dm && !audio_handled && !content.is_empty() && self.is_in_active_debate_thread(msg.channel_id).await {
+            // Check if debate_auto_response is enabled for this guild
+            let auto_response_enabled = if let Some(gid) = guild_id_opt {
+                self.database.get_guild_setting(gid, "debate_auto_response").await?
+                    .map(|v| v == "enabled")
+                    .unwrap_or(false) // Default disabled
+            } else {
+                false
+            };
+
+            if auto_response_enabled {
+                info!("[{request_id}] 🎭 Auto-responding in active debate thread");
+                self.handle_mention_message_with_id(ctx, msg, request_id).await?;
+            } else {
+                debug!("[{request_id}] ℹ️ Message in debate thread but auto-response disabled");
+            }
         } else if !is_dm && !audio_handled && self.is_bot_mentioned(ctx, msg).await? && !content.is_empty() {
             // Check mention_responses guild setting
             let mention_enabled = if let Some(gid) = guild_id_opt {
@@ -244,6 +260,12 @@ impl CommandHandler {
     async fn is_bot_mentioned(&self, ctx: &Context, msg: &Message) -> Result<bool> {
         let current_user = ctx.http.get_current_user().await?;
         Ok(msg.mentions.iter().any(|user| user.id == current_user.id))
+    }
+
+    /// Check if the channel has an active debate (for auto-response feature)
+    async fn is_in_active_debate_thread(&self, channel_id: serenity::model::id::ChannelId) -> bool {
+        use crate::features::debate::get_active_debates;
+        get_active_debates().contains_key(&channel_id.0)
     }
 
     async fn is_in_thread(&self, ctx: &Context, msg: &Message) -> Result<bool> {
@@ -295,6 +317,66 @@ impl CommandHandler {
         debug!("[{}] 🧵 Processed {} non-empty messages from thread", request_id, conversation.len());
 
         Ok(conversation)
+    }
+
+    /// Fetch all messages from a debate thread for tag-team context
+    /// This includes both debate embeds (persona responses) and regular messages (user Q&A)
+    async fn fetch_thread_history_for_debate(
+        &self,
+        ctx: &Context,
+        channel_id: serenity::model::id::ChannelId,
+        request_id: Uuid,
+    ) -> Result<Vec<(String, String)>> {
+        use serenity::builder::GetMessages;
+
+        debug!("[{request_id}] 🎭 Fetching thread history for tag-team debate");
+
+        // Fetch up to 100 messages (Discord API limit)
+        let messages = channel_id.messages(&ctx.http, |builder: &mut GetMessages| {
+            builder.limit(100)
+        }).await?;
+
+        debug!("[{}] 🎭 Retrieved {} messages from debate thread", request_id, messages.len());
+
+        // Get bot's user ID to identify bot messages
+        let current_user = ctx.http.get_current_user().await?;
+        let bot_id = current_user.id;
+
+        // Process messages in chronological order (oldest first)
+        let mut history: Vec<(String, String)> = Vec::new();
+
+        for msg in messages.iter().rev() {
+            // Check for embeds first (debate responses have persona name in author)
+            if !msg.embeds.is_empty() {
+                for embed in &msg.embeds {
+                    // Debate embeds have author.name = persona name and description = response
+                    if let Some(author) = &embed.author {
+                        if let Some(description) = &embed.description {
+                            let speaker = author.name.clone();
+                            let content = description.clone();
+                            if !content.is_empty() {
+                                history.push((speaker, content));
+                            }
+                        }
+                    }
+                }
+            } else if !msg.content.is_empty() {
+                // Regular text message (user question or bot response outside debate)
+                let speaker = if msg.author.id == bot_id {
+                    "Assistant".to_string()
+                } else {
+                    format!("User ({})", msg.author.name)
+                };
+                history.push((speaker, msg.content.clone()));
+            }
+        }
+
+        debug!(
+            "[{}] 🎭 Processed {} entries from debate thread for tag-team context",
+            request_id, history.len()
+        );
+
+        Ok(history)
     }
 
     async fn handle_dm_message_with_id(&self, ctx: &Context, msg: &Message, request_id: Uuid) -> Result<()> {
@@ -3053,6 +3135,8 @@ Use the buttons below for more help or to try custom prompts!"#;
             .unwrap_or_else(|| "transcription_only".to_string());
         let guild_mention_responses = self.database.get_guild_setting(&guild_id, "mention_responses").await?
             .unwrap_or_else(|| "enabled".to_string());
+        let guild_debate_auto_response = self.database.get_guild_setting(&guild_id, "debate_auto_response").await?
+            .unwrap_or_else(|| "disabled".to_string());
 
         // Get bot admin role
         let admin_role = self.database.get_guild_setting(&guild_id, "bot_admin_role").await?;
@@ -3078,6 +3162,7 @@ Use the buttons below for more help or to try custom prompts!"#;
             • Audio Transcription Mode: `{}`\n\
             • Audio Transcription Output: `{}`\n\
             • Mention Responses: `{}`\n\
+            • Debate Auto-Response: `{}`\n\
             • Bot Admin Role: {}\n",
             channel_id,
             channel_verbosity,
@@ -3093,6 +3178,7 @@ Use the buttons below for more help or to try custom prompts!"#;
             guild_audio_mode,
             guild_audio_output,
             guild_mention_responses,
+            guild_debate_auto_response,
             admin_role_display
         );
 
@@ -4422,6 +4508,13 @@ Use the buttons below for more help or to try custom prompts!"#;
                 persona1_name, persona2_name, prev_p1, prev_p2, topic
             );
 
+            // Fetch ALL messages from the thread (includes debate exchanges AND user Q&A)
+            let thread_history = self.fetch_thread_history_for_debate(ctx, channel_id, request_id).await
+                .unwrap_or_else(|e| {
+                    warn!("[{request_id}] Failed to fetch thread history, falling back to debate state: {}", e);
+                    prev_state.history.clone()
+                });
+
             // Send response in the thread
             command
                 .create_interaction_response(&ctx.http, |r| {
@@ -4444,7 +4537,7 @@ Use the buttons below for more help or to try custom prompts!"#;
                 })
                 .await?;
 
-            (channel_id, Some(prev_state.history), Some((prev_p1, prev_p2)))
+            (channel_id, Some(thread_history), Some((prev_p1, prev_p2)))
         } else {
             // Check if the current channel is a thread (by trying to get channel info)
             // For now, we'll always create a new thread if there's no existing debate
