@@ -909,6 +909,10 @@ impl CommandHandler {
                 debug!("[{request_id}] 🎤 Handling ask command");
                 self.handle_slash_ask(ctx, command, request_id).await?;
             }
+            "council" => {
+                debug!("[{request_id}] 🏛️ Handling council command");
+                self.handle_slash_council(ctx, command, request_id).await?;
+            }
             cmd_name => {
                 // Check if this is a plugin command
                 if let Some(ref pm) = self.plugin_manager {
@@ -4945,5 +4949,310 @@ Use the buttons below for more help or to try custom prompts!"#;
             )),
             _ => Ok(false),
         }
+    }
+
+    /// Handle the /council slash command
+    ///
+    /// Gathers responses from multiple personas on a single prompt,
+    /// posting each response in a dedicated thread.
+    async fn handle_slash_council(
+        &self,
+        ctx: &Context,
+        command: &ApplicationCommandInteraction,
+        request_id: Uuid,
+    ) -> Result<()> {
+        use serenity::model::application::interaction::InteractionResponseType;
+
+        // Extract prompt
+        let prompt = get_string_option(&command.data.options, "prompt")
+            .ok_or_else(|| anyhow::anyhow!("Missing prompt argument"))?;
+
+        // Collect all selected personas (persona1 and persona2 are required, 3-6 optional)
+        let mut persona_ids: Vec<String> = Vec::new();
+        for i in 1..=6 {
+            let option_name = format!("persona{}", i);
+            if let Some(persona_id) = get_string_option(&command.data.options, &option_name) {
+                // Skip duplicates
+                if !persona_ids.contains(&persona_id) {
+                    persona_ids.push(persona_id);
+                }
+            }
+        }
+
+        let user_id = command.user.id.to_string();
+        let channel_id = command.channel_id;
+        let guild_id = command.guild_id.map(|id| id.to_string());
+
+        info!(
+            "[{request_id}] /council command | Personas: {:?} | User: {user_id}",
+            persona_ids
+        );
+
+        // Validate we have at least 2 personas
+        if persona_ids.len() < 2 {
+            command
+                .create_interaction_response(&ctx.http, |r| {
+                    r.kind(InteractionResponseType::ChannelMessageWithSource)
+                        .interaction_response_data(|m| {
+                            m.content("The council requires at least 2 different personas.")
+                                .ephemeral(true)
+                        })
+                })
+                .await?;
+            return Ok(());
+        }
+
+        // Validate all personas exist and collect their data
+        let mut personas: Vec<crate::features::personas::Persona> = Vec::new();
+        for persona_id in &persona_ids {
+            if let Some(persona) = self.persona_manager.get_persona_with_portrait(persona_id) {
+                personas.push(persona);
+            } else {
+                command
+                    .create_interaction_response(&ctx.http, |r| {
+                        r.kind(InteractionResponseType::ChannelMessageWithSource)
+                            .interaction_response_data(|m| {
+                                m.content(format!("Unknown persona: `{persona_id}`"))
+                                    .ephemeral(true)
+                            })
+                    })
+                    .await?;
+                return Ok(());
+            }
+        }
+
+        // Build persona names list for display
+        let persona_names: Vec<&str> = personas.iter().map(|p| p.name.as_str()).collect();
+        let persona_list = persona_names.join(", ");
+
+        info!(
+            "[{request_id}] Council convened: {} personas on topic: '{}'",
+            personas.len(),
+            prompt.chars().take(50).collect::<String>()
+        );
+
+        // Send initial response
+        command
+            .create_interaction_response(&ctx.http, |r| {
+                r.kind(InteractionResponseType::ChannelMessageWithSource)
+                    .interaction_response_data(|m| {
+                        m.content(format!(
+                            "**Council Convening!**\n\n\
+                            **Topic:** {}\n\
+                            **Council Members:** {}\n\n\
+                            Creating thread for the council discussion...",
+                            prompt, persona_list
+                        ))
+                    })
+            })
+            .await?;
+
+        // Get the message we sent to create a thread from it
+        let message = command.get_interaction_response(&ctx.http).await?;
+
+        // Create the council thread
+        let thread_name = format!(
+            "Council: {}",
+            if prompt.len() > 50 {
+                format!("{}...", &prompt[..47])
+            } else {
+                prompt.clone()
+            }
+        );
+
+        let thread = match channel_id
+            .create_public_thread(&ctx.http, message.id, |t| {
+                t.name(&thread_name)
+                    .auto_archive_duration(60) // Archive after 1 hour of inactivity
+            })
+            .await
+        {
+            Ok(t) => t,
+            Err(e) => {
+                error!("[{request_id}] Failed to create council thread: {e}");
+                command
+                    .edit_original_interaction_response(&ctx.http, |r| {
+                        r.content(format!(
+                            "**Council Failed**\n\n\
+                            Could not create thread. Make sure I have permission to create threads.\n\
+                            Error: {}",
+                            e
+                        ))
+                    })
+                    .await?;
+                return Ok(());
+            }
+        };
+
+        // Update original message
+        command
+            .edit_original_interaction_response(&ctx.http, |r| {
+                r.content(format!(
+                    "**Council Convened!**\n\n\
+                    **Topic:** {}\n\
+                    **Council Members:** {}\n\n\
+                    The council is deliberating in the thread below!",
+                    prompt, persona_list
+                ))
+            })
+            .await?;
+
+        // Post introduction in the thread
+        let intro_embed = serenity::builder::CreateEmbed::default()
+            .title("Council in Session")
+            .description(format!(
+                "**Topic:** {}\n\n\
+                **Council Members:** {}\n\n\
+                Each council member will now share their perspective.",
+                prompt, persona_list
+            ))
+            .color(0x9B59B6) // Purple for council
+            .to_owned();
+
+        let _ = thread
+            .id
+            .send_message(&ctx.http, |m| m.set_embed(intro_embed))
+            .await;
+
+        // Log usage
+        self.database
+            .log_usage(&user_id, "council", None)
+            .await?;
+
+        // Clone values needed for the async task
+        let openai_model = self.openai_model.clone();
+        let usage_tracker = self.usage_tracker.clone();
+        let persona_manager = self.persona_manager.clone();
+        let ctx_clone = ctx.clone();
+        let thread_id = thread.id;
+        let prompt_clone = prompt.clone();
+        let guild_id_clone = guild_id.clone();
+        let channel_id_str = channel_id.to_string();
+
+        // Spawn a task to get responses from each persona
+        tokio::spawn(async move {
+            for (i, persona_id) in persona_ids.iter().enumerate() {
+                let persona = match persona_manager.get_persona_with_portrait(persona_id) {
+                    Some(p) => p,
+                    None => continue,
+                };
+
+                // Get system prompt for this persona
+                let system_prompt = persona_manager.get_system_prompt(persona_id, None);
+
+                // Add context about being part of a council
+                let council_context = format!(
+                    "{}\n\nYou are participating in a council discussion with other personas. \
+                    Share your unique perspective on the topic. Be concise but thoughtful. \
+                    You are speaking as {} - stay true to your character.",
+                    system_prompt, persona.name
+                );
+
+                // Build messages for OpenAI
+                let messages = vec![
+                    openai::chat::ChatCompletionMessage {
+                        role: openai::chat::ChatCompletionMessageRole::System,
+                        content: Some(council_context),
+                        name: None,
+                        function_call: None,
+                        tool_call_id: None,
+                        tool_calls: None,
+                    },
+                    openai::chat::ChatCompletionMessage {
+                        role: openai::chat::ChatCompletionMessageRole::User,
+                        content: Some(prompt_clone.clone()),
+                        name: None,
+                        function_call: None,
+                        tool_call_id: None,
+                        tool_calls: None,
+                    },
+                ];
+
+                // Call OpenAI
+                let response = match openai::chat::ChatCompletion::builder(&openai_model, messages)
+                    .create()
+                    .await
+                {
+                    Ok(completion) => {
+                        // Log usage
+                        if let Some(usage) = &completion.usage {
+                            usage_tracker.log_chat(
+                                &openai_model,
+                                usage.prompt_tokens,
+                                usage.completion_tokens,
+                                usage.total_tokens,
+                                &user_id,
+                                guild_id_clone.as_deref(),
+                                Some(&channel_id_str),
+                                Some(&request_id.to_string()),
+                            );
+                        }
+
+                        completion
+                            .choices
+                            .first()
+                            .and_then(|c| c.message.content.clone())
+                            .unwrap_or_else(|| "I have no words at this time.".to_string())
+                    }
+                    Err(e) => {
+                        error!(
+                            "[{request_id}] Council: Failed to get response from {}: {}",
+                            persona.name, e
+                        );
+                        format!("*{} is momentarily lost in thought...*", persona.name)
+                    }
+                };
+
+                // Build embed for this persona's response
+                let mut embed = serenity::builder::CreateEmbed::default();
+                embed.author(|a| {
+                    a.name(&persona.name);
+                    if let Some(url) = &persona.portrait_url {
+                        a.icon_url(url);
+                    }
+                    a
+                });
+                embed.color(persona.color);
+
+                // Handle long responses (embed limit is 4096)
+                let response_text = if response.len() > 4096 {
+                    format!("{}...", &response[..4090])
+                } else {
+                    response
+                };
+                embed.description(&response_text);
+
+                // Send the response
+                if let Err(e) = thread_id
+                    .send_message(&ctx_clone.http, |m| m.set_embed(embed.clone()))
+                    .await
+                {
+                    error!(
+                        "[{request_id}] Council: Failed to send message from {}: {}",
+                        persona.name, e
+                    );
+                }
+
+                // Small delay between responses for natural pacing
+                if i < persona_ids.len() - 1 {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                }
+            }
+
+            // Post closing message
+            let closing_embed = serenity::builder::CreateEmbed::default()
+                .title("Council Adjourned")
+                .description("All council members have shared their perspectives.")
+                .color(0x9B59B6)
+                .to_owned();
+
+            let _ = thread_id
+                .send_message(&ctx_clone.http, |m| m.set_embed(closing_embed))
+                .await;
+
+            info!("[{request_id}] Council session completed");
+        });
+
+        Ok(())
     }
 }

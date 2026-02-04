@@ -13,6 +13,7 @@ pub mod admin;
 mod ask;
 mod chat;
 mod context_menu;
+pub mod council;
 pub mod debate;
 mod dm_stats;
 mod imagine;
@@ -68,6 +69,9 @@ pub fn create_slash_commands_with_plugins(plugins: &[Plugin]) -> Vec<CreateAppli
 
     // Ask command
     commands.extend(ask::create_commands());
+
+    // Council command
+    commands.extend(council::create_commands());
 
     // Plugin-generated commands
     commands.extend(create_plugin_commands(plugins));
@@ -199,7 +203,7 @@ mod tests {
     #[test]
     fn test_create_slash_commands() {
         let commands = create_slash_commands();
-        assert!(commands.len() >= 25, "Should have at least 25 commands");
+        assert!(commands.len() >= 26, "Should have at least 26 commands");
 
         let command_names: Vec<String> = commands
             .iter()
@@ -244,6 +248,8 @@ mod tests {
             "commits",
             // Ask command
             "ask",
+            // Council command
+            "council",
         ];
 
         for expected in expected_commands {

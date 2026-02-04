@@ -1,74 +1,82 @@
-# Persona Bot v3.30.0 - The Direct Line
+# Persona Bot v3.31.0 - The Council Assembles
 
 *Fellow architects of the digital realm,*
 
-Why should your choice of persona be locked to your settings? Today we introduce `/ask` - a direct channel to any persona, any time, with full context awareness.
+Why settle for one perspective when wisdom flows from many streams? Today we introduce `/council` - gather multiple personas around a single question and let each voice be heard.
 
 ## What's New
 
-### The `/ask` Command
+### The `/council` Command
 
-Request a response from any persona with a custom prompt. No need to change your default persona - simply ask who you want to hear from.
+Convene a council of up to 6 personas to share their unique perspectives on any topic. Each council member responds in a dedicated thread, creating a tapestry of viewpoints.
 
 ```
-/ask persona:zen prompt:"What is the sound of one hand coding?"
-/ask persona:analyst prompt:"Review this architecture decision" ignore_context:true
-/ask persona:bard prompt:"Compose a commit message worthy of legend"
+/council prompt:"Should we refactor this monolith into microservices?" persona1:analyst persona2:visionary
+/council prompt:"How should I approach learning Rust?" persona1:teacher persona2:coach persona3:scientist
+/council prompt:"What makes a great user experience?" persona1:zen persona2:bard persona3:analyst persona4:gamer
 ```
 
 **Parameters:**
-- `persona` (required): Choose from all 12 personas
-- `prompt` (required): Your question or prompt
-- `ignore_context` (optional): Skip channel/thread history (default: false)
+- `prompt` (required): The question or topic for the council (5-1000 characters)
+- `persona1` (required): First council member
+- `persona2` (required): Second council member
+- `persona3-6` (optional): Additional council members
 
-### Context-Aware Responses
+### How It Works
 
-By default, `/ask` includes conversation context:
-- **In threads**: Fetches recent messages from the thread
-- **In channels**: Retrieves conversation history from the database
-- **With `ignore_context:true`**: Fresh perspective, no prior context
+1. Invoke `/council` with your prompt and select 2-6 personas
+2. A thread is created for the council discussion
+3. Each persona shares their perspective in sequence
+4. All responses appear as styled embeds with persona identity
+5. Council adjourns with a closing message
 
-### Styled Responses
+### Council Features
 
-Responses appear as beautifully styled embeds with:
-- Persona name as the author
-- Portrait icon (when configured)
-- Accent color matching the persona's identity
+- **Duplicate Prevention**: Same persona cannot be selected twice
+- **Unique Perspectives**: Each persona receives council context to stay in character
+- **Natural Pacing**: Brief delays between responses for readability
+- **Styled Responses**: Full embed treatment with name, icon, and accent color
+- **Thread Organization**: All council wisdom contained in one dedicated thread
 
 ## Technical Harmony
 
-- **New Command**: `/ask` with persona, prompt, and ignore_context options
-- **Context Detection**: Automatically identifies threads vs channels
-- **Embed Styling**: Uses existing `build_persona_embed()` pattern
-- **Portrait Integration**: Leverages `get_persona_with_portrait()` for icon URLs
-- **Long Response Handling**: Splits responses > 4096 chars into multiple embeds
+- **New Command**: `/council` with prompt and 6 persona slots
+- **Thread Creation**: Auto-creates discussion thread from initial message
+- **Async Processing**: Council deliberation runs in spawned task
+- **Usage Tracking**: All API calls logged with full context
+- **Error Handling**: Graceful fallback if individual responses fail
 
 ### Architecture
 
 ```
-/ask command received
-    -> Validate persona exists
-    -> Defer interaction (AI calls take time)
-    -> Fetch context (unless ignore_context:true)
-        -> Thread: fetch recent messages
-        -> Channel: query database
-    -> Get system prompt for selected persona
-    -> Call OpenAI with context
-    -> Build styled embed response
-    -> Handle multi-chunk if response > 4096 chars
+/council command received
+    -> Validate 2+ unique personas
+    -> Create interaction response
+    -> Create public thread
+    -> Spawn async task for council session
+        -> For each persona:
+            -> Build council-aware system prompt
+            -> Call OpenAI API
+            -> Post styled embed response
+            -> Brief delay for pacing
+        -> Post council adjournment message
 ```
 
 ## The Vision
 
-Every persona is now a direct call away. Ask the Analyst for a code review, consult the Zen Master for perspective, or let the Bard compose your documentation. The voice you need, when you need it.
+No decision exists in isolation. The analyst sees the metrics, the visionary sees the horizon, the coach sees the growth opportunity, and the zen master sees the underlying truth. The council brings them all together.
 
-*The conversation continues...*
+*Many voices, one thread of wisdom...*
 
 ---
-Ask Command: 1.0.0 (NEW)
+Council Command: 1.0.0 (NEW)
+- Gather 2-6 personas to respond to a single prompt
+- All 12 personas available as council members
+- Threaded discussion with styled persona embeds
+- Duplicate persona prevention
+- Council context injection for character consistency
+
+Ask Command: 1.0.0 (previous release)
 - Ask any persona a question with optional context
-- All 12 personas available: obi, muppet, chef, teacher, analyst, visionary, noir, zen, bard, coach, scientist, gamer
-- Context-aware with ignore_context option
-- Styled embed responses with persona identity
 
 *~ The Visionary*
