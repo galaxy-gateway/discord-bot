@@ -1,56 +1,64 @@
-# Persona Bot v3.26.0 - Faces of the Collective
+# Persona Bot v3.27.0 - The Arena of Ideas
 
 *Fellow architects of the digital realm,*
 
-Today we breathe visual identity into our personas. Each of the twelve voices now has a face - carefully crafted SVG portraits that capture their essence in iconographic form.
+Today we open the arena where ideas clash and perspectives collide. The `/debate` command transforms our personas from solitary voices into sparring partners, each bringing their unique worldview to bear on any topic you choose.
 
 ## What's New
 
-**12 Persona Portrait Assets** - Every persona now has a distinctive SVG avatar:
-
-| Persona | Visual Identity |
-|---------|-----------------|
-| Obi-Wan | Hooded Jedi silhouette with lightsaber hint |
-| Muppet | Green fuzzy friend with iconic googly eyes |
-| Chef | Toque-wearing culinary artist with proud mustache |
-| Teacher | Bespectacled educator with apple and book |
-| Analyst | Chart and magnifying glass - data personified |
-| Visionary | Crystal ball with all-seeing mystical eye |
-| Noir | Fedora-shadowed detective in noir style |
-| Zen | Meditating figure within the enso circle |
-| Bard | Lute instrument with floating musical notes |
-| Coach | Whistle and strategy clipboard |
-| Scientist | Bubbling flask with DNA helix and atom |
-| Gamer | RGB-lit controller with health bar |
-
-### Infrastructure
-
-**Portrait URL Generation** - New `get_portrait_url()` and `get_persona_with_portrait()` methods dynamically construct portrait URLs from a configurable base:
+**Threaded Persona Debates** - Pit any two personas against each other in structured discourse:
 
 ```
-PERSONA_PORTRAIT_BASE_URL=https://raw.githubusercontent.com/user/repo/main/assets/personas
+/debate persona1:obi persona2:muppet topic:Is pineapple acceptable on pizza? rounds:6
 ```
 
-**PNG Conversion Pipeline** - New Makefile targets:
-- `make convert-portraits` - ImageMagick conversion
-- `make convert-portraits-inkscape` - Inkscape conversion
+### The Experience
+
+1. **Topic Declaration** - A message announces the debate in the main channel
+2. **Thread Creation** - A dedicated thread spawns for the full discourse
+3. **Opening Statement** - The first persona presents their position
+4. **Exchanges** - Personas alternate, each responding to the previous argument
+5. **Conclusion** - A summary closes the debate
+
+### Configuration
+
+| Parameter | Default | Range | Description |
+|-----------|---------|-------|-------------|
+| `rounds` | 6 | 2-20 | Total responses (3 exchanges at default) |
+
+### Every Persona, Every Topic
+
+All 12 personas bring their authentic voice:
+- **Obi-Wan** debates with Jedi wisdom and measured philosophy
+- **Muppet** brings enthusiastic, heartfelt arguments
+- **Noir Detective** treats the topic like a case to crack
+- **Scientist** demands evidence and methodology
+- **Bard** weaves narrative around every point
+- And all the rest, true to their nature
 
 ## Technical Harmony
 
-- **Assets**: `assets/personas/*.svg` - 12 vector source files
-- **PersonaManager**: Portrait URL generation with env-based configuration
-- **Makefile**: Asset conversion targets added
-- **Config**: `PERSONA_PORTRAIT_BASE_URL` environment variable
-- **Docs**: Portrait README with conversion instructions
+- **New Command**: `src/commands/slash/debate.rs` - Slash command with persona dropdowns
+- **New Feature**: `src/features/debate/` - Orchestrator managing multi-turn conversations
+- **Command Handler**: Thread creation from interaction response message
+- **Usage Tracking**: API calls logged per debate round
+- **Feature Registry**: Debate added as toggleable feature
 
-## The Path Forward
+## Architecture Decisions
 
-While Discord cannot render SVG directly, these vector sources ensure our personas remain crisp at any resolution. Convert them to PNG, host them anywhere, and watch your Discord embeds come alive with personality.
+- **Threaded Execution**: Debates run in `tokio::spawn` to avoid blocking
+- **Context Building**: Conversation history accumulates for coherent exchanges
+- **Graceful Errors**: Individual round failures don't crash the debate
+- **Typing Indicators**: Natural pacing with broadcast_typing between responses
 
-*The face reflects the soul within.*
+## The Vision
+
+This is discourse as entertainment, philosophy as performance. Watch Zen Master find inner peace while Coach pumps up the crowd. See Analyst crunch the numbers while Visionary paints the future.
+
+*Let the debates begin.*
 
 ---
-Persona System: 1.4.0 -> 1.5.0
-New Assets: 12 SVG portraits + README
+New Feature: Persona Debates 1.0.0
+Command: /debate with persona selection dropdowns
 
 *~ The Visionary*

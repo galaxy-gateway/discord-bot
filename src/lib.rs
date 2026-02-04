@@ -32,6 +32,8 @@ pub use features::{
     AudioTranscriber, TranscriptionResult,
     // Conflict
     ConflictDetector, ConflictMediator,
+    // Debate
+    DebateOrchestrator, DebateConfig,
     // Image generation
     ImageGenerator, ImageSize, ImageStyle, GeneratedImage,
     // Introspection

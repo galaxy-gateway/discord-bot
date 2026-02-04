@@ -15,6 +15,7 @@
 pub mod analytics;
 pub mod audio;
 pub mod conflict;
+pub mod debate;
 pub mod image_gen;
 pub mod introspection;
 pub mod personas;
@@ -38,6 +39,7 @@ pub use rate_limiting::RateLimiter;
 pub use reminders::ReminderScheduler;
 pub use startup::StartupNotifier;
 pub use plugins::{Plugin, PluginConfig, PluginManager, PluginExecutor, JobManager, OutputHandler};
+pub use debate::{DebateOrchestrator, orchestrator::DebateConfig};
 
 // ============================================================================
 // Feature Registry
@@ -181,6 +183,14 @@ pub const FEATURES: &[Feature] = &[
         since: "0.9.0",
         toggleable: true,
         description: "Config-based CLI command plugins with background execution",
+    },
+    Feature {
+        id: "debate",
+        name: "Persona Debates",
+        version: "1.0.0",
+        since: "3.27.0",
+        toggleable: true,
+        description: "Threaded debates between two personas on any topic",
     },
 ];
 

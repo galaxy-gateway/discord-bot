@@ -12,6 +12,7 @@
 pub mod admin;
 mod chat;
 mod context_menu;
+pub mod debate;
 mod dm_stats;
 mod imagine;
 mod persona;
@@ -60,6 +61,9 @@ pub fn create_slash_commands_with_plugins(plugins: &[Plugin]) -> Vec<CreateAppli
 
     // DM statistics commands
     commands.extend(dm_stats::create_commands());
+
+    // Debate commands
+    commands.extend(debate::create_commands());
 
     // Plugin-generated commands
     commands.extend(create_plugin_commands(plugins));

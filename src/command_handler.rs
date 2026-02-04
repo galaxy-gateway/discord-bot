@@ -1,5 +1,6 @@
 use crate::features::audio::transcriber::AudioTranscriber;
 use crate::features::conflict::{ConflictDetector, ConflictMediator};
+use crate::features::debate::{DebateOrchestrator, orchestrator::DebateConfig};
 use crate::features::image_gen::generator::{ImageGenerator, ImageSize, ImageStyle};
 use crate::features::analytics::InteractionTracker;
 use crate::features::introspection::get_component_snippet;
@@ -812,6 +813,10 @@ impl CommandHandler {
             "session_history" => {
                 debug!("[{request_id}] 📜 Handling session_history command");
                 self.handle_slash_session_history(ctx, command, request_id).await?;
+            }
+            "debate" => {
+                debug!("[{request_id}] 🎭 Handling debate command");
+                self.handle_slash_debate(ctx, command, request_id).await?;
             }
             cmd_name => {
                 // Check if this is a plugin command
@@ -4331,6 +4336,257 @@ Use the buttons below for more help or to try custom prompts!"#;
                     .await?;
             }
         }
+
+        Ok(())
+    }
+
+    /// Handle /debate command - creates a threaded debate between two personas
+    async fn handle_slash_debate(
+        &self,
+        ctx: &Context,
+        command: &ApplicationCommandInteraction,
+        request_id: Uuid,
+    ) -> Result<()> {
+        use crate::commands::slash::debate::{DEFAULT_RESPONSES, MAX_RESPONSES, MIN_RESPONSES};
+
+        // Extract command options
+        let persona1_id = get_string_option(&command.data.options, "persona1")
+            .ok_or_else(|| anyhow::anyhow!("Missing persona1 argument"))?;
+        let persona2_id = get_string_option(&command.data.options, "persona2")
+            .ok_or_else(|| anyhow::anyhow!("Missing persona2 argument"))?;
+        let topic = get_string_option(&command.data.options, "topic")
+            .ok_or_else(|| anyhow::anyhow!("Missing topic argument"))?;
+        let rounds = get_integer_option(&command.data.options, "rounds")
+            .unwrap_or(DEFAULT_RESPONSES)
+            .clamp(MIN_RESPONSES, MAX_RESPONSES);
+
+        // Validate personas are different
+        if persona1_id == persona2_id {
+            command
+                .create_interaction_response(&ctx.http, |r| {
+                    r.kind(serenity::model::application::interaction::InteractionResponseType::ChannelMessageWithSource)
+                        .interaction_response_data(|message| {
+                            message
+                                .content("Please select two different personas for the debate.")
+                                .ephemeral(true)
+                        })
+                })
+                .await?;
+            return Ok(());
+        }
+
+        // Validate personas exist
+        let orchestrator = DebateOrchestrator::new();
+        let persona1 = self.persona_manager.get_persona(&persona1_id);
+        let persona2 = self.persona_manager.get_persona(&persona2_id);
+
+        if persona1.is_none() || persona2.is_none() {
+            command
+                .create_interaction_response(&ctx.http, |r| {
+                    r.kind(serenity::model::application::interaction::InteractionResponseType::ChannelMessageWithSource)
+                        .interaction_response_data(|message| {
+                            message
+                                .content("One or both selected personas are invalid.")
+                                .ephemeral(true)
+                        })
+                })
+                .await?;
+            return Ok(());
+        }
+
+        let persona1_name = persona1.unwrap().name.clone();
+        let persona2_name = persona2.unwrap().name.clone();
+
+        info!(
+            "[{request_id}] Starting debate: {} vs {} on '{}' ({} rounds)",
+            persona1_name, persona2_name, topic, rounds
+        );
+
+        // Send initial response message (we'll create a thread from this)
+        command
+            .create_interaction_response(&ctx.http, |r| {
+                r.kind(serenity::model::application::interaction::InteractionResponseType::ChannelMessageWithSource)
+                    .interaction_response_data(|m| {
+                        m.content(format!(
+                            "**Debate Starting!**\n\n\
+                            **Topic:** {}\n\
+                            **Debaters:** {} vs {}\n\
+                            **Rounds:** {}",
+                            topic, persona1_name, persona2_name, rounds
+                        ))
+                    })
+            })
+            .await?;
+
+        // Get the message we just sent to create a thread from it
+        let message = command.get_interaction_response(&ctx.http).await?;
+
+        // Create the debate thread from the message
+        let channel_id = command.channel_id;
+        let thread_name = format!("{} vs {} - {}",
+            persona1_name, persona2_name,
+            if topic.len() > 40 { format!("{}...", &topic[..37]) } else { topic.clone() });
+
+        let thread = match channel_id
+            .create_public_thread(&ctx.http, message.id, |t| {
+                t.name(&thread_name)
+                    .auto_archive_duration(60) // Archive after 1 hour of inactivity
+            })
+            .await
+        {
+            Ok(t) => t,
+            Err(e) => {
+                error!("[{request_id}] Failed to create debate thread: {e}");
+                command
+                    .edit_original_interaction_response(&ctx.http, |r| {
+                        r.content(format!(
+                            "**Debate Failed**\n\n\
+                            Could not create thread. Make sure I have permission to create threads.\n\
+                            Error: {}",
+                            e
+                        ))
+                    })
+                    .await?;
+                return Ok(());
+            }
+        };
+
+        // Update the original message with a link to the thread
+        command
+            .edit_original_interaction_response(&ctx.http, |r| {
+                r.content(format!(
+                    "**Debate Started!**\n\n\
+                    **Topic:** {}\n\
+                    **Debaters:** {} vs {}\n\
+                    **Rounds:** {}\n\n\
+                    The debate is happening in the thread below!",
+                    topic, persona1_name, persona2_name, rounds
+                ))
+            })
+            .await?;
+
+        // Post introduction in the thread
+        let intro_embed = serenity::builder::CreateEmbed::default()
+            .title("Debate Beginning")
+            .description(format!(
+                "**Topic:** {}\n\n\
+                **{} vs {}**\n\n\
+                {} rounds of debate ahead. Let the discourse begin!",
+                topic, persona1_name, persona2_name, rounds
+            ))
+            .color(0x7289DA) // Discord blurple
+            .to_owned();
+
+        let _ = thread.id.send_message(&ctx.http, |m| {
+            m.set_embed(intro_embed)
+        }).await;
+
+        // Create debate config
+        let config = DebateConfig {
+            persona1_id: persona1_id.clone(),
+            persona2_id: persona2_id.clone(),
+            topic: topic.clone(),
+            rounds,
+            initiator_id: command.user.id.to_string(),
+            guild_id: command.guild_id.map(|g| g.to_string()),
+        };
+
+        // Clone what we need for the async closure
+        let openai_model = self.openai_model.clone();
+        let usage_tracker = self.usage_tracker.clone();
+        let user_id = command.user.id.to_string();
+        let guild_id = command.guild_id.map(|g| g.to_string());
+        let channel_id_str = thread.id.to_string();
+
+        // Run the debate (this spawns the orchestrator)
+        let ctx_clone = ctx.clone();
+        let thread_id = thread.id;
+
+        tokio::spawn(async move {
+            // Create a closure for getting AI responses
+            let get_response = |system_prompt: String, user_message: String, history: Vec<(String, String)>| {
+                let model = openai_model.clone();
+                let tracker = usage_tracker.clone();
+                let uid = user_id.clone();
+                let gid = guild_id.clone();
+                let cid = channel_id_str.clone();
+
+                async move {
+                    // Build messages for OpenAI
+                    let mut messages = vec![
+                        openai::chat::ChatCompletionMessage {
+                            role: openai::chat::ChatCompletionMessageRole::System,
+                            content: Some(system_prompt),
+                            name: None,
+                            function_call: None,
+                            tool_call_id: None,
+                            tool_calls: None,
+                        },
+                    ];
+
+                    // Add conversation history
+                    for (role, content) in history {
+                        let message_role = if role == "user" {
+                            openai::chat::ChatCompletionMessageRole::User
+                        } else {
+                            openai::chat::ChatCompletionMessageRole::Assistant
+                        };
+                        messages.push(openai::chat::ChatCompletionMessage {
+                            role: message_role,
+                            content: Some(content),
+                            name: None,
+                            function_call: None,
+                            tool_call_id: None,
+                            tool_calls: None,
+                        });
+                    }
+
+                    // Add user message
+                    messages.push(openai::chat::ChatCompletionMessage {
+                        role: openai::chat::ChatCompletionMessageRole::User,
+                        content: Some(user_message),
+                        name: None,
+                        function_call: None,
+                        tool_call_id: None,
+                        tool_calls: None,
+                    });
+
+                    // Call OpenAI
+                    let chat_completion = openai::chat::ChatCompletion::builder(&model, messages)
+                        .create()
+                        .await
+                        .map_err(|e| anyhow::anyhow!("OpenAI API error: {}", e))?;
+
+                    // Log usage
+                    if let Some(usage) = &chat_completion.usage {
+                        tracker.log_chat(
+                            &model,
+                            usage.prompt_tokens,
+                            usage.completion_tokens,
+                            usage.total_tokens,
+                            &uid,
+                            gid.as_deref(),
+                            Some(&cid),
+                            None, // No request_id for debate turns
+                        );
+                    }
+
+                    // Extract response
+                    chat_completion
+                        .choices
+                        .first()
+                        .and_then(|c| c.message.content.clone())
+                        .ok_or_else(|| anyhow::anyhow!("No response from OpenAI"))
+                }
+            };
+
+            if let Err(e) = orchestrator.run_debate(&ctx_clone, thread_id, config, get_response).await {
+                error!("Debate failed: {e}");
+                let _ = thread_id.send_message(&ctx_clone.http, |m| {
+                    m.content("The debate encountered an error and could not continue.")
+                }).await;
+            }
+        });
 
         Ok(())
     }
