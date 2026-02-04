@@ -2,13 +2,13 @@
 
 *Fellow architects of the digital realm,*
 
-Why settle for one perspective when wisdom flows from many streams? Today we introduce `/council` - gather multiple personas around a single question and let each voice be heard.
+Why settle for one perspective when wisdom flows from many streams? Today we introduce `/council` - gather multiple personas around a single question, and continue the conversation with follow-up questions.
 
 ## What's New
 
 ### The `/council` Command
 
-Convene a council of up to 6 personas to share their unique perspectives on any topic. Each council member responds in a dedicated thread, creating a tapestry of viewpoints.
+Convene a council of up to 6 personas to share their unique perspectives on any topic. Each council member responds in a dedicated thread, and the conversation can continue with follow-ups.
 
 ```
 /council prompt:"Should we refactor this monolith into microservices?" persona1:analyst persona2:visionary
@@ -22,16 +22,31 @@ Convene a council of up to 6 personas to share their unique perspectives on any 
 - `persona2` (required): Second council member
 - `persona3-6` (optional): Additional council members
 
+### Follow-up Questions
+
+The council remembers the entire conversation! After the initial responses:
+1. **Mention the bot** with your follow-up question in the council thread
+2. All council members respond with **full context** of what was discussed
+3. Ask as many follow-ups as you need - the conversation builds on itself
+
+```
+@Bot What about the security implications?
+@Bot Can you elaborate on the testing strategy?
+@Bot How would this work with our current tech stack?
+```
+
 ### How It Works
 
 1. Invoke `/council` with your prompt and select 2-6 personas
 2. A thread is created for the council discussion
 3. Each persona shares their perspective in sequence
-4. All responses appear as styled embeds with persona identity
-5. Council adjourns with a closing message
+4. Council adjourns with a closing message
+5. **Mention the bot** for follow-up questions - the council reconvenes!
+6. Each persona responds with awareness of the full discussion history
 
 ### Council Features
 
+- **Conversation Memory**: Full discussion history maintained for context-aware follow-ups
 - **Duplicate Prevention**: Same persona cannot be selected twice
 - **Unique Perspectives**: Each persona receives council context to stay in character
 - **Natural Pacing**: Brief delays between responses for readability
@@ -40,11 +55,11 @@ Convene a council of up to 6 personas to share their unique perspectives on any 
 
 ## Technical Harmony
 
-- **New Command**: `/council` with prompt and 6 persona slots
-- **Thread Creation**: Auto-creates discussion thread from initial message
-- **Async Processing**: Council deliberation runs in spawned task
+- **New Feature Module**: `src/features/council/` with state tracking
+- **Active Council Tracking**: Global state map for follow-up support
+- **Context Summary**: History formatted for system prompt injection
+- **Message Handler Integration**: Detects mentions in council threads
 - **Usage Tracking**: All API calls logged with full context
-- **Error Handling**: Graceful fallback if individual responses fail
 
 ### Architecture
 
@@ -53,25 +68,41 @@ Convene a council of up to 6 personas to share their unique perspectives on any 
     -> Validate 2+ unique personas
     -> Create interaction response
     -> Create public thread
+    -> Initialize CouncilState with personas and topic
+    -> Store state in ACTIVE_COUNCILS map
     -> Spawn async task for council session
+        -> Add user prompt to history
         -> For each persona:
             -> Build council-aware system prompt
             -> Call OpenAI API
+            -> Add response to history
             -> Post styled embed response
-            -> Brief delay for pacing
         -> Post council adjournment message
+
+Follow-up question (mention in thread)
+    -> Detect active council thread
+    -> Retrieve CouncilState with full history
+    -> Add user question to history
+    -> Post "Council Reconvening" message
+    -> For each persona:
+        -> Build context-aware prompt with history summary
+        -> Call OpenAI API
+        -> Add response to history
+        -> Post styled embed response
 ```
 
 ## The Vision
 
-No decision exists in isolation. The analyst sees the metrics, the visionary sees the horizon, the coach sees the growth opportunity, and the zen master sees the underlying truth. The council brings them all together.
+No decision exists in isolation. The analyst sees the metrics, the visionary sees the horizon, the coach sees the growth opportunity, and the zen master sees the underlying truth. Now they can discuss, respond, and build on each other's insights through your follow-up questions.
 
-*Many voices, one thread of wisdom...*
+*Many voices, one continuous thread of wisdom...*
 
 ---
 Council Command: 1.0.0 (NEW)
 - Gather 2-6 personas to respond to a single prompt
 - All 12 personas available as council members
+- **Follow-up questions supported** - mention bot in thread
+- Full conversation history maintained for context
 - Threaded discussion with styled persona embeds
 - Duplicate persona prevention
 - Council context injection for character consistency

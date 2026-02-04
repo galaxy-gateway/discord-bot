@@ -1,5 +1,6 @@
 use crate::features::audio::transcriber::AudioTranscriber;
 use crate::features::conflict::{ConflictDetector, ConflictMediator};
+use crate::features::council::{CouncilState, get_active_councils};
 use crate::features::debate::{DebateOrchestrator, orchestrator::DebateConfig};
 use crate::features::image_gen::generator::{ImageGenerator, ImageSize, ImageStyle};
 use crate::features::analytics::InteractionTracker;
@@ -231,6 +232,14 @@ impl CommandHandler {
             } else {
                 debug!("[{request_id}] ℹ️ Message in debate thread but auto-response disabled");
             }
+        } else if !is_dm && !audio_handled && !content.is_empty() && self.is_in_active_council_thread(msg.channel_id).await {
+            // Council threads respond to mentions by default
+            if self.is_bot_mentioned(ctx, msg).await? {
+                info!("[{request_id}] 🏛️ Responding to mention in active council thread");
+                self.handle_council_followup(ctx, msg, request_id).await?;
+            } else {
+                debug!("[{request_id}] ℹ️ Message in council thread but bot not mentioned");
+            }
         } else if !is_dm && !audio_handled && self.is_bot_mentioned(ctx, msg).await? && !content.is_empty() {
             // Check mention_responses guild setting
             let mention_enabled = if let Some(gid) = guild_id_opt {
@@ -266,6 +275,11 @@ impl CommandHandler {
     async fn is_in_active_debate_thread(&self, channel_id: serenity::model::id::ChannelId) -> bool {
         use crate::features::debate::get_active_debates;
         get_active_debates().contains_key(&channel_id.0)
+    }
+
+    /// Check if the channel has an active council (for follow-up questions)
+    async fn is_in_active_council_thread(&self, channel_id: serenity::model::id::ChannelId) -> bool {
+        get_active_councils().contains_key(&channel_id.0)
     }
 
     async fn is_in_thread(&self, ctx: &Context, msg: &Message) -> Result<bool> {
@@ -5119,6 +5133,15 @@ Use the buttons below for more help or to try custom prompts!"#;
             .log_usage(&user_id, "council", None)
             .await?;
 
+        // Create initial council state and store it
+        let council_state = CouncilState::new(
+            prompt.clone(),
+            persona_ids.clone(),
+            user_id.clone(),
+            guild_id.clone(),
+        );
+        get_active_councils().insert(thread.id.0, council_state);
+
         // Clone values needed for the async task
         let openai_model = self.openai_model.clone();
         let usage_tracker = self.usage_tracker.clone();
@@ -5131,6 +5154,11 @@ Use the buttons below for more help or to try custom prompts!"#;
 
         // Spawn a task to get responses from each persona
         tokio::spawn(async move {
+            // Add the initial user message to history
+            if let Some(mut state) = get_active_councils().get_mut(&thread_id.0) {
+                state.add_user_message(prompt_clone.clone());
+            }
+
             for (i, persona_id) in persona_ids.iter().enumerate() {
                 let persona = match persona_manager.get_persona_with_portrait(persona_id) {
                     Some(p) => p,
@@ -5203,6 +5231,11 @@ Use the buttons below for more help or to try custom prompts!"#;
                     }
                 };
 
+                // Add response to council history
+                if let Some(mut state) = get_active_councils().get_mut(&thread_id.0) {
+                    state.add_persona_response(persona_id, response.clone());
+                }
+
                 // Build embed for this persona's response
                 let mut embed = serenity::builder::CreateEmbed::default();
                 embed.author(|a| {
@@ -5239,10 +5272,13 @@ Use the buttons below for more help or to try custom prompts!"#;
                 }
             }
 
-            // Post closing message
+            // Post closing message with hint about follow-ups
             let closing_embed = serenity::builder::CreateEmbed::default()
                 .title("Council Adjourned")
-                .description("All council members have shared their perspectives.")
+                .description(
+                    "All council members have shared their perspectives.\n\n\
+                    **Tip:** Mention me with a follow-up question and the council will reconvene!"
+                )
                 .color(0x9B59B6)
                 .to_owned();
 
@@ -5254,5 +5290,207 @@ Use the buttons below for more help or to try custom prompts!"#;
         });
 
         Ok(())
+    }
+
+    /// Handle a follow-up question in an active council thread
+    ///
+    /// All council personas respond to the follow-up with context from the discussion.
+    async fn handle_council_followup(
+        &self,
+        ctx: &Context,
+        msg: &Message,
+        request_id: Uuid,
+    ) -> Result<()> {
+        let channel_id = msg.channel_id;
+        let user_id = msg.author.id.to_string();
+
+        // Get the council state
+        let council_state = match get_active_councils().get(&channel_id.0) {
+            Some(state) => state.clone(),
+            None => {
+                debug!("[{request_id}] No active council found for channel {}", channel_id);
+                return Ok(());
+            }
+        };
+
+        // Extract the question (remove bot mention)
+        let question = self.strip_bot_mention(ctx, &msg.content).await?;
+        if question.trim().is_empty() {
+            return Ok(());
+        }
+
+        info!(
+            "[{request_id}] Council follow-up question: '{}' from user {}",
+            question.chars().take(50).collect::<String>(),
+            user_id
+        );
+
+        // Add the user's question to history
+        if let Some(mut state) = get_active_councils().get_mut(&channel_id.0) {
+            state.add_user_message(question.clone());
+        }
+
+        // Send typing indicator
+        let _ = channel_id.broadcast_typing(&ctx.http).await;
+
+        // Get context summary for the personas
+        let context_summary = council_state.get_context_summary();
+
+        // Clone values for async task
+        let openai_model = self.openai_model.clone();
+        let usage_tracker = self.usage_tracker.clone();
+        let persona_manager = self.persona_manager.clone();
+        let persona_ids = council_state.persona_ids.clone();
+        let guild_id = council_state.guild_id.clone();
+        let ctx_clone = ctx.clone();
+        let channel_id_str = channel_id.to_string();
+
+        // Post a "reconvening" message
+        let reconvene_embed = serenity::builder::CreateEmbed::default()
+            .title("Council Reconvening")
+            .description(format!("**Follow-up Question:** {}", question))
+            .color(0x9B59B6)
+            .to_owned();
+
+        let _ = channel_id
+            .send_message(&ctx.http, |m| m.set_embed(reconvene_embed))
+            .await;
+
+        // Spawn task to get responses from each persona
+        tokio::spawn(async move {
+            for (i, persona_id) in persona_ids.iter().enumerate() {
+                let persona = match persona_manager.get_persona_with_portrait(persona_id) {
+                    Some(p) => p,
+                    None => continue,
+                };
+
+                // Get system prompt for this persona
+                let system_prompt = persona_manager.get_system_prompt(persona_id, None);
+
+                // Build context-aware prompt
+                let council_context = format!(
+                    "{}\n\n\
+                    You are participating in a council discussion with other personas.\n\n\
+                    {}\n\n\
+                    A user has asked a follow-up question. Respond thoughtfully, considering \
+                    what was discussed before. Be concise but insightful. Stay in character as {}.",
+                    system_prompt, context_summary, persona.name
+                );
+
+                // Build messages for OpenAI
+                let messages = vec![
+                    openai::chat::ChatCompletionMessage {
+                        role: openai::chat::ChatCompletionMessageRole::System,
+                        content: Some(council_context),
+                        name: None,
+                        function_call: None,
+                        tool_call_id: None,
+                        tool_calls: None,
+                    },
+                    openai::chat::ChatCompletionMessage {
+                        role: openai::chat::ChatCompletionMessageRole::User,
+                        content: Some(question.clone()),
+                        name: None,
+                        function_call: None,
+                        tool_call_id: None,
+                        tool_calls: None,
+                    },
+                ];
+
+                // Call OpenAI
+                let response = match openai::chat::ChatCompletion::builder(&openai_model, messages)
+                    .create()
+                    .await
+                {
+                    Ok(completion) => {
+                        // Log usage
+                        if let Some(usage) = &completion.usage {
+                            usage_tracker.log_chat(
+                                &openai_model,
+                                usage.prompt_tokens,
+                                usage.completion_tokens,
+                                usage.total_tokens,
+                                &user_id,
+                                guild_id.as_deref(),
+                                Some(&channel_id_str),
+                                Some(&request_id.to_string()),
+                            );
+                        }
+
+                        completion
+                            .choices
+                            .first()
+                            .and_then(|c| c.message.content.clone())
+                            .unwrap_or_else(|| "I have no further words at this time.".to_string())
+                    }
+                    Err(e) => {
+                        error!(
+                            "[{request_id}] Council follow-up: Failed to get response from {}: {}",
+                            persona.name, e
+                        );
+                        format!("*{} contemplates in silence...*", persona.name)
+                    }
+                };
+
+                // Add response to council history
+                if let Some(mut state) = get_active_councils().get_mut(&channel_id.0) {
+                    state.add_persona_response(persona_id, response.clone());
+                }
+
+                // Build embed for this persona's response
+                let mut embed = serenity::builder::CreateEmbed::default();
+                embed.author(|a| {
+                    a.name(&persona.name);
+                    if let Some(url) = &persona.portrait_url {
+                        a.icon_url(url);
+                    }
+                    a
+                });
+                embed.color(persona.color);
+
+                // Handle long responses
+                let response_text = if response.len() > 4096 {
+                    format!("{}...", &response[..4090])
+                } else {
+                    response
+                };
+                embed.description(&response_text);
+
+                // Send the response
+                if let Err(e) = channel_id
+                    .send_message(&ctx_clone.http, |m| m.set_embed(embed.clone()))
+                    .await
+                {
+                    error!(
+                        "[{request_id}] Council follow-up: Failed to send message from {}: {}",
+                        persona.name, e
+                    );
+                }
+
+                // Small delay between responses
+                if i < persona_ids.len() - 1 {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                }
+            }
+
+            info!("[{request_id}] Council follow-up completed");
+        });
+
+        Ok(())
+    }
+
+    /// Strip bot mention from message content
+    async fn strip_bot_mention(&self, ctx: &Context, content: &str) -> Result<String> {
+        let current_user = ctx.http.get_current_user().await?;
+        let bot_mention = format!("<@{}>", current_user.id);
+        let bot_mention_nick = format!("<@!{}>", current_user.id);
+
+        let stripped = content
+            .replace(&bot_mention, "")
+            .replace(&bot_mention_nick, "")
+            .trim()
+            .to_string();
+
+        Ok(stripped)
     }
 }

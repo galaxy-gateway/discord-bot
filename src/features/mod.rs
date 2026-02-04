@@ -15,6 +15,7 @@
 pub mod analytics;
 pub mod audio;
 pub mod conflict;
+pub mod council;
 pub mod debate;
 pub mod image_gen;
 pub mod introspection;
@@ -39,6 +40,7 @@ pub use rate_limiting::RateLimiter;
 pub use reminders::ReminderScheduler;
 pub use startup::StartupNotifier;
 pub use plugins::{Plugin, PluginConfig, PluginManager, PluginExecutor, JobManager, OutputHandler};
+pub use council::{CouncilState, CouncilMessage, get_active_councils};
 pub use debate::{DebateOrchestrator, orchestrator::DebateConfig, DebateState, get_active_debates, CONTINUE_ROUNDS};
 
 // ============================================================================
@@ -191,6 +193,14 @@ pub const FEATURES: &[Feature] = &[
         since: "3.27.0",
         toggleable: true,
         description: "Threaded debates between two personas with continue and tag-team options",
+    },
+    Feature {
+        id: "council",
+        name: "Persona Council",
+        version: "1.0.0",
+        since: "3.31.0",
+        toggleable: true,
+        description: "Multi-persona discussions with follow-up question support",
     },
 ];
 
