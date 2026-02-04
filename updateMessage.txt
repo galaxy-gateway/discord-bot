@@ -1,70 +1,74 @@
-# Persona Bot v3.29.0 - The Tag-Team Tournament
+# Persona Bot v3.30.0 - The Direct Line
 
 *Fellow architects of the digital realm,*
 
-What if a debate need never truly end - but instead *evolve*? Today we introduce tag-team debates with full conversational awareness, plus optional auto-response mode for seamless Q&A during debates.
+Why should your choice of persona be locked to your settings? Today we introduce `/ask` - a direct channel to any persona, any time, with full context awareness.
 
 ## What's New
 
-### Tag-Team Debates with Full Context
+### The `/ask` Command
 
-Run `/debate` inside an existing debate thread, and new personas inherit the *complete* thread history - not just debate exchanges, but every interaction: questions you asked, answers the bot gave, the full context of the conversation.
-
-```
-1. Start a debate with /debate topic:AI ethics persona1:sage persona2:cynic
-2. Ask questions directly in the thread (mention the bot)
-3. Click Continue or End Debate when ready
-4. In the same thread, run /debate with different personas
-5. New debaters receive EVERYTHING - debate history AND your Q&A
-```
-
-### Configurable Auto-Response in Debate Threads
-
-New guild setting: `debate_auto_response`
-
-When enabled, the bot responds to any message in an active debate thread without requiring a mention. Perfect for asking follow-up questions mid-debate.
+Request a response from any persona with a custom prompt. No need to change your default persona - simply ask who you want to hear from.
 
 ```
-/set setting:debate_auto_response value:enabled
+/ask persona:zen prompt:"What is the sound of one hand coding?"
+/ask persona:analyst prompt:"Review this architecture decision" ignore_context:true
+/ask persona:bard prompt:"Compose a commit message worthy of legend"
 ```
 
-- **Default**: `disabled` (requires @mention to ask questions)
-- **Enabled**: Bot responds to all messages in active debate threads
+**Parameters:**
+- `persona` (required): Choose from all 12 personas
+- `prompt` (required): Your question or prompt
+- `ignore_context` (optional): Skip channel/thread history (default: false)
+
+### Context-Aware Responses
+
+By default, `/ask` includes conversation context:
+- **In threads**: Fetches recent messages from the thread
+- **In channels**: Retrieves conversation history from the database
+- **With `ignore_context:true`**: Fresh perspective, no prior context
+
+### Styled Responses
+
+Responses appear as beautifully styled embeds with:
+- Persona name as the author
+- Portrait icon (when configured)
+- Accent color matching the persona's identity
 
 ## Technical Harmony
 
-- **Thread History Fetching**: `fetch_thread_history_for_debate()` retrieves up to 100 messages
-- **Embed Parsing**: Extracts persona name from embed author, content from description
-- **Message Parsing**: Captures user questions and assistant responses
-- **Auto-Response Check**: `is_in_active_debate_thread()` queries active debate state
-- **New Guild Setting**: `debate_auto_response` (enabled/disabled)
+- **New Command**: `/ask` with persona, prompt, and ignore_context options
+- **Context Detection**: Automatically identifies threads vs channels
+- **Embed Styling**: Uses existing `build_persona_embed()` pattern
+- **Portrait Integration**: Leverages `get_persona_with_portrait()` for icon URLs
+- **Long Response Handling**: Splits responses > 4096 chars into multiple embeds
 
 ### Architecture
 
 ```
-Message in debate thread
-    -> Check if debate_auto_response enabled
-    -> Check if channel has active debate
-    -> If both true, auto-respond without mention
-    -> Response captured for future tag-team debates
-
-Tag-team debate started
-    -> Fetch ALL messages from thread
-    -> Parse embeds for debate exchanges
-    -> Parse text for user Q&A
-    -> Build unified history for new debaters
+/ask command received
+    -> Validate persona exists
+    -> Defer interaction (AI calls take time)
+    -> Fetch context (unless ignore_context:true)
+        -> Thread: fetch recent messages
+        -> Channel: query database
+    -> Get system prompt for selected persona
+    -> Call OpenAI with context
+    -> Build styled embed response
+    -> Handle multi-chunk if response > 4096 chars
 ```
 
 ## The Vision
 
-A debate thread becomes a living symposium. Ask questions, get answers, and watch as new debaters inherit the complete conversation. Every exchange enriches the context for those who follow.
+Every persona is now a direct call away. Ask the Analyst for a code review, consult the Zen Master for perspective, or let the Bard compose your documentation. The voice you need, when you need it.
 
-*The tournament continues...*
+*The conversation continues...*
 
 ---
-Persona Debates: 1.1.0 -> 1.2.0
-- Tag-team debates with full thread history inheritance
-- Captures both debate exchanges AND direct Q&A
-- New `debate_auto_response` guild setting for mention-free Q&A
+Ask Command: 1.0.0 (NEW)
+- Ask any persona a question with optional context
+- All 12 personas available: obi, muppet, chef, teacher, analyst, visionary, noir, zen, bard, coach, scientist, gamer
+- Context-aware with ignore_context option
+- Styled embed responses with persona identity
 
 *~ The Visionary*

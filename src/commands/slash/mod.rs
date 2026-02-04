@@ -10,6 +10,7 @@
 //! - 1.0.0: Reorganized from monolithic slash_commands.rs
 
 pub mod admin;
+mod ask;
 mod chat;
 mod context_menu;
 pub mod debate;
@@ -64,6 +65,9 @@ pub fn create_slash_commands_with_plugins(plugins: &[Plugin]) -> Vec<CreateAppli
 
     // Debate commands
     commands.extend(debate::create_commands());
+
+    // Ask command
+    commands.extend(ask::create_commands());
 
     // Plugin-generated commands
     commands.extend(create_plugin_commands(plugins));
@@ -179,6 +183,15 @@ pub fn get_integer_option(options: &[CommandDataOption], name: &str) -> Option<i
         .and_then(|val| val.as_i64())
 }
 
+/// Utility function to get boolean option from slash command
+pub fn get_bool_option(options: &[CommandDataOption], name: &str) -> Option<bool> {
+    options
+        .iter()
+        .find(|opt| opt.name == name)
+        .and_then(|opt| opt.value.as_ref())
+        .and_then(|val| val.as_bool())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -186,7 +199,7 @@ mod tests {
     #[test]
     fn test_create_slash_commands() {
         let commands = create_slash_commands();
-        assert!(commands.len() >= 24, "Should have at least 24 commands");
+        assert!(commands.len() >= 25, "Should have at least 25 commands");
 
         let command_names: Vec<String> = commands
             .iter()
@@ -229,6 +242,8 @@ mod tests {
             "sysinfo",
             // Commits command
             "commits",
+            // Ask command
+            "ask",
         ];
 
         for expected in expected_commands {

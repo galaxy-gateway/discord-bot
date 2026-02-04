@@ -10,7 +10,7 @@ use crate::features::rate_limiting::RateLimiter;
 use crate::features::analytics::UsageTracker;
 use crate::database::Database;
 use crate::message_components::MessageComponentHandler;
-use crate::commands::slash::{get_string_option, get_channel_option, get_role_option, get_integer_option};
+use crate::commands::slash::{get_string_option, get_channel_option, get_role_option, get_integer_option, get_bool_option};
 use anyhow::Result;
 use log::{debug, error, info, warn};
 use tokio::time::{timeout, Duration as TokioDuration, Instant};
@@ -904,6 +904,10 @@ impl CommandHandler {
             "debate" => {
                 debug!("[{request_id}] 🎭 Handling debate command");
                 self.handle_slash_debate(ctx, command, request_id).await?;
+            }
+            "ask" => {
+                debug!("[{request_id}] 🎤 Handling ask command");
+                self.handle_slash_ask(ctx, command, request_id).await?;
             }
             cmd_name => {
                 // Check if this is a plugin command
@@ -4736,5 +4740,210 @@ Use the buttons below for more help or to try custom prompts!"#;
         });
 
         Ok(())
+    }
+
+    /// Handle the /ask slash command
+    ///
+    /// Allows users to ask any persona a question with optional context from
+    /// the current channel or thread.
+    async fn handle_slash_ask(
+        &self,
+        ctx: &Context,
+        command: &ApplicationCommandInteraction,
+        request_id: Uuid,
+    ) -> Result<()> {
+        use serenity::model::application::interaction::InteractionResponseType;
+        use serenity::builder::GetMessages;
+
+        let start_time = Instant::now();
+
+        // Extract command options
+        let persona_id = get_string_option(&command.data.options, "persona")
+            .ok_or_else(|| anyhow::anyhow!("Missing persona argument"))?;
+        let prompt = get_string_option(&command.data.options, "prompt")
+            .ok_or_else(|| anyhow::anyhow!("Missing prompt argument"))?;
+        let ignore_context = get_bool_option(&command.data.options, "ignore_context")
+            .unwrap_or(false);
+
+        let user_id = command.user.id.to_string();
+        let channel_id = command.channel_id;
+        let guild_id = command.guild_id.map(|id| id.to_string());
+
+        info!(
+            "[{request_id}] /ask command | Persona: {persona_id} | User: {user_id} | Ignore context: {ignore_context}"
+        );
+
+        // Validate persona exists
+        let persona = self.persona_manager.get_persona_with_portrait(&persona_id);
+        if persona.is_none() {
+            command
+                .create_interaction_response(&ctx.http, |r| {
+                    r.kind(InteractionResponseType::ChannelMessageWithSource)
+                        .interaction_response_data(|m| {
+                            m.content(format!("Unknown persona: `{persona_id}`"))
+                                .ephemeral(true)
+                        })
+                })
+                .await?;
+            return Ok(());
+        }
+        let persona = persona.unwrap();
+
+        // Get system prompt for the persona
+        let system_prompt = self.persona_manager.get_system_prompt(&persona_id, None);
+
+        // Defer the interaction (required for AI calls that may take time)
+        info!("[{request_id}] Deferring interaction response");
+        command
+            .create_interaction_response(&ctx.http, |r| {
+                r.kind(InteractionResponseType::DeferredChannelMessageWithSource)
+            })
+            .await
+            .map_err(|e| {
+                error!("[{request_id}] Failed to defer interaction: {e}");
+                anyhow::anyhow!("Failed to defer interaction: {e}")
+            })?;
+
+        // Fetch context if not ignored
+        let conversation_history: Vec<(String, String)> = if ignore_context {
+            debug!("[{request_id}] Skipping context fetch (ignore_context=true)");
+            Vec::new()
+        } else {
+            // Check if we're in a thread
+            let in_thread = self.is_in_thread_channel(ctx, channel_id).await?;
+
+            if in_thread {
+                debug!("[{request_id}] Fetching thread context");
+                // Fetch recent messages from thread
+                let messages = channel_id
+                    .messages(&ctx.http, |builder: &mut GetMessages| builder.limit(20))
+                    .await
+                    .unwrap_or_default();
+
+                let bot_id = ctx.http.get_current_user().await?.id;
+                messages
+                    .iter()
+                    .rev() // Oldest first
+                    .filter(|m| !m.content.is_empty())
+                    .map(|m| {
+                        let role = if m.author.id == bot_id {
+                            "assistant".to_string()
+                        } else {
+                            "user".to_string()
+                        };
+                        (role, m.content.clone())
+                    })
+                    .collect()
+            } else {
+                debug!("[{request_id}] Fetching channel context from database");
+                // Fetch from database for channels (works for both guild and DM)
+                self.database
+                    .get_conversation_history(&user_id, &channel_id.to_string(), 10)
+                    .await
+                    .unwrap_or_default()
+            }
+        };
+
+        debug!(
+            "[{request_id}] Context: {} messages | Prompt length: {}",
+            conversation_history.len(),
+            prompt.len()
+        );
+
+        // Log usage
+        self.database
+            .log_usage(&user_id, "ask", Some(&persona_id))
+            .await?;
+
+        // Get AI response
+        info!("[{request_id}] Calling OpenAI API");
+        let ai_response = self
+            .get_ai_response_with_context(
+                &system_prompt,
+                &prompt,
+                conversation_history,
+                request_id,
+                Some(&user_id),
+                guild_id.as_deref(),
+                Some(&channel_id.to_string()),
+            )
+            .await;
+
+        match ai_response {
+            Ok(response) => {
+                let processing_time = start_time.elapsed();
+                info!(
+                    "[{request_id}] Response received | Time: {:?} | Length: {}",
+                    processing_time,
+                    response.len()
+                );
+
+                // Build and send embed response
+                if response.len() > 4096 {
+                    // Split into chunks for long responses
+                    let chunks: Vec<&str> = response
+                        .as_bytes()
+                        .chunks(4096)
+                        .map(|chunk| std::str::from_utf8(chunk).unwrap_or(""))
+                        .collect();
+
+                    debug!("[{request_id}] Response split into {} chunks", chunks.len());
+
+                    if let Some(first_chunk) = chunks.first() {
+                        let embed = Self::build_persona_embed(&persona, first_chunk);
+                        command
+                            .edit_original_interaction_response(&ctx.http, |r| r.set_embed(embed))
+                            .await?;
+                    }
+
+                    // Send remaining chunks as follow-ups
+                    for chunk in chunks.iter().skip(1) {
+                        if !chunk.trim().is_empty() {
+                            let embed = Self::build_continuation_embed(&persona, chunk);
+                            command
+                                .create_followup_message(&ctx.http, |m| m.set_embed(embed))
+                                .await?;
+                        }
+                    }
+                } else {
+                    let embed = Self::build_persona_embed(&persona, &response);
+                    command
+                        .edit_original_interaction_response(&ctx.http, |r| r.set_embed(embed))
+                        .await?;
+                }
+
+                info!("[{request_id}] /ask response sent successfully");
+            }
+            Err(e) => {
+                error!("[{request_id}] AI response failed: {e}");
+                command
+                    .edit_original_interaction_response(&ctx.http, |r| {
+                        r.content(format!(
+                            "Sorry, I couldn't get a response from {}. Please try again.",
+                            persona.name
+                        ))
+                    })
+                    .await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Check if a channel is a thread
+    async fn is_in_thread_channel(
+        &self,
+        ctx: &Context,
+        channel_id: serenity::model::id::ChannelId,
+    ) -> Result<bool> {
+        use serenity::model::channel::{Channel, ChannelType};
+
+        match ctx.http.get_channel(channel_id.0).await {
+            Ok(Channel::Guild(guild_channel)) => Ok(matches!(
+                guild_channel.kind,
+                ChannelType::PublicThread | ChannelType::PrivateThread
+            )),
+            _ => Ok(false),
+        }
     }
 }
