@@ -25,6 +25,11 @@ const PERSONA_CHOICES: &[(&str, &str)] = &[
     ("Coach", "coach"),
     ("Scientist", "scientist"),
     ("Gamer", "gamer"),
+    ("Architect", "architect"),
+    ("Debugger", "debugger"),
+    ("Reviewer", "reviewer"),
+    ("DevOps", "devops"),
+    ("Designer", "designer"),
 ];
 
 pub fn create_commands() -> Vec<CreateApplicationCommand> {
@@ -82,7 +87,7 @@ mod tests {
 
     #[test]
     fn test_persona_choices_complete() {
-        // Ensure all 12 personas are available
-        assert_eq!(PERSONA_CHOICES.len(), 12);
+        // Ensure all 17 personas are available
+        assert_eq!(PERSONA_CHOICES.len(), 17);
     }
 }

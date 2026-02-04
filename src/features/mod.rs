@@ -69,10 +69,10 @@ pub const FEATURES: &[Feature] = &[
     Feature {
         id: "personas",
         name: "Persona System",
-        version: "1.5.0",
+        version: "1.6.0",
         since: "0.1.0",
         toggleable: false,
-        description: "Multi-personality AI responses with 12 distinct personas and portrait support",
+        description: "Multi-personality AI responses with 17 distinct personas including software dev specialists",
     },
     Feature {
         id: "reminders",

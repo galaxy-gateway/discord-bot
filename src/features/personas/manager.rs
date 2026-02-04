@@ -1,14 +1,15 @@
 //! # Feature: Persona System
 //!
-//! Multi-personality AI responses with 12 distinct personas (obi, muppet, chef, teacher, analyst, visionary,
-//! noir, zen, bard, coach, scientist, gamer). Each persona has a unique system prompt loaded from
-//! prompt/*.md files at compile time.
+//! Multi-personality AI responses with 17 distinct personas (obi, muppet, chef, teacher, analyst, visionary,
+//! noir, zen, bard, coach, scientist, gamer, architect, debugger, reviewer, devops, designer).
+//! Each persona has a unique system prompt loaded from prompt/*.md files at compile time.
 //!
-//! - **Version**: 1.5.0
+//! - **Version**: 1.6.0
 //! - **Since**: 0.1.0
 //! - **Toggleable**: false
 //!
 //! ## Changelog
+//! - 1.6.0: Added 5 software development personas - architect, debugger, reviewer, devops, designer
 //! - 1.5.0: Added SVG portrait assets and portrait URL generation
 //! - 1.4.0: Added embed responses with persona colors and optional portrait support
 //! - 1.3.0: Added 6 new personas - noir, zen, bard, coach, scientist, gamer
@@ -144,6 +145,47 @@ impl PersonaManager {
             color: 0x9146FF, // Twitch purple
         });
 
+        // Software Development & Design Personas
+        personas.insert("architect".to_string(), Persona {
+            name: "The Architect".to_string(),
+            system_prompt: include_str!("../../../prompt/architect.md").to_string(),
+            description: "A systems thinker who designs for scale, trade-offs, and the long game".to_string(),
+            portrait_url: None,
+            color: 0x34495E, // Blueprint slate
+        });
+
+        personas.insert("debugger".to_string(), Persona {
+            name: "The Debugger".to_string(),
+            system_prompt: include_str!("../../../prompt/debugger.md").to_string(),
+            description: "A tenacious bug hunter who tracks down root causes with methodical precision".to_string(),
+            portrait_url: None,
+            color: 0xC0392B, // Error red
+        });
+
+        personas.insert("reviewer".to_string(), Persona {
+            name: "The Reviewer".to_string(),
+            system_prompt: include_str!("../../../prompt/reviewer.md").to_string(),
+            description: "A thoughtful code reviewer who makes code better and helps developers grow".to_string(),
+            portrait_url: None,
+            color: 0x27AE60, // Approval green
+        });
+
+        personas.insert("devops".to_string(), Persona {
+            name: "The DevOps".to_string(),
+            system_prompt: include_str!("../../../prompt/devops.md").to_string(),
+            description: "An automation expert who makes deployments boring and systems observable".to_string(),
+            portrait_url: None,
+            color: 0x2980B9, // Pipeline blue
+        });
+
+        personas.insert("designer".to_string(), Persona {
+            name: "The Designer".to_string(),
+            system_prompt: include_str!("../../../prompt/designer.md").to_string(),
+            description: "A UX advocate who designs with empathy, clarity, and accessibility".to_string(),
+            portrait_url: None,
+            color: 0xE91E63, // Creative pink
+        });
+
         PersonaManager { personas }
     }
 
@@ -251,6 +293,12 @@ mod tests {
         assert!(manager.get_persona("coach").is_some());
         assert!(manager.get_persona("scientist").is_some());
         assert!(manager.get_persona("gamer").is_some());
+        // Software development personas
+        assert!(manager.get_persona("architect").is_some());
+        assert!(manager.get_persona("debugger").is_some());
+        assert!(manager.get_persona("reviewer").is_some());
+        assert!(manager.get_persona("devops").is_some());
+        assert!(manager.get_persona("designer").is_some());
         assert!(manager.get_persona("nonexistent").is_none());
     }
 
@@ -328,6 +376,62 @@ mod tests {
         assert!(visionary.system_prompt.contains("Transformation Energy"));
         assert!(visionary.system_prompt.contains("Hardcore Intensity"));
         assert!(visionary.system_prompt.len() > 100, "Prompt should be substantial");
+    }
+
+    #[test]
+    fn test_architect_prompt_loaded() {
+        let manager = PersonaManager::new();
+        let architect = manager.get_persona("architect").expect("architect persona should exist");
+
+        assert!(architect.system_prompt.contains("The Architect"));
+        assert!(architect.system_prompt.contains("Systems Thinker"));
+        assert!(architect.system_prompt.contains("trade-offs"));
+        assert!(architect.system_prompt.contains("scalability") || architect.system_prompt.contains("scale"));
+        assert!(architect.system_prompt.len() > 100, "Prompt should be substantial");
+    }
+
+    #[test]
+    fn test_debugger_prompt_loaded() {
+        let manager = PersonaManager::new();
+        let debugger = manager.get_persona("debugger").expect("debugger persona should exist");
+
+        assert!(debugger.system_prompt.contains("The Debugger"));
+        assert!(debugger.system_prompt.contains("root cause"));
+        assert!(debugger.system_prompt.contains("Evidence-Driven"));
+        assert!(debugger.system_prompt.len() > 100, "Prompt should be substantial");
+    }
+
+    #[test]
+    fn test_reviewer_prompt_loaded() {
+        let manager = PersonaManager::new();
+        let reviewer = manager.get_persona("reviewer").expect("reviewer persona should exist");
+
+        assert!(reviewer.system_prompt.contains("The Reviewer"));
+        assert!(reviewer.system_prompt.contains("code review"));
+        assert!(reviewer.system_prompt.contains("Constructively Critical"));
+        assert!(reviewer.system_prompt.len() > 100, "Prompt should be substantial");
+    }
+
+    #[test]
+    fn test_devops_prompt_loaded() {
+        let manager = PersonaManager::new();
+        let devops = manager.get_persona("devops").expect("devops persona should exist");
+
+        assert!(devops.system_prompt.contains("The DevOps"));
+        assert!(devops.system_prompt.contains("Automation"));
+        assert!(devops.system_prompt.contains("CI/CD") || devops.system_prompt.contains("pipeline"));
+        assert!(devops.system_prompt.len() > 100, "Prompt should be substantial");
+    }
+
+    #[test]
+    fn test_designer_prompt_loaded() {
+        let manager = PersonaManager::new();
+        let designer = manager.get_persona("designer").expect("designer persona should exist");
+
+        assert!(designer.system_prompt.contains("The Designer"));
+        assert!(designer.system_prompt.contains("UX") || designer.system_prompt.contains("user experience"));
+        assert!(designer.system_prompt.contains("Accessibility"));
+        assert!(designer.system_prompt.len() > 100, "Prompt should be substantial");
     }
 
     #[test]

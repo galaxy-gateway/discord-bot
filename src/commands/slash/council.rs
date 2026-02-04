@@ -31,6 +31,11 @@ const PERSONA_CHOICES: &[(&str, &str)] = &[
     ("Coach", "coach"),
     ("Scientist", "scientist"),
     ("Gamer", "gamer"),
+    ("Architect", "architect"),
+    ("Debugger", "debugger"),
+    ("Reviewer", "reviewer"),
+    ("DevOps", "devops"),
+    ("Designer", "designer"),
 ];
 
 pub fn create_commands() -> Vec<CreateApplicationCommand> {
@@ -136,14 +141,14 @@ mod tests {
 
     #[test]
     fn test_persona_choices_complete() {
-        // Ensure all 12 personas are available
-        assert_eq!(PERSONA_CHOICES.len(), 12);
+        // Ensure all 17 personas are available
+        assert_eq!(PERSONA_CHOICES.len(), 17);
     }
 
     #[test]
     fn test_council_limits() {
         assert!(MIN_PERSONAS >= 2, "Council needs at least 2 personas");
-        assert!(MAX_PERSONAS <= 12, "Cannot exceed available personas");
+        assert!(MAX_PERSONAS <= 17, "Cannot exceed available personas");
         assert!(MAX_PERSONAS >= MIN_PERSONAS);
     }
 }
