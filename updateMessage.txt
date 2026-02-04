@@ -1,64 +1,59 @@
-# Persona Bot v3.27.0 - The Arena of Ideas
+# Persona Bot v3.29.0 - The Tag-Team Tournament
 
 *Fellow architects of the digital realm,*
 
-Today we open the arena where ideas clash and perspectives collide. The `/debate` command transforms our personas from solitary voices into sparring partners, each bringing their unique worldview to bear on any topic you choose.
+What if a debate need never truly end - but instead *evolve*? Today we introduce tag-team debates: the ability for new personas to step into the ring and continue a conversation that others began.
 
 ## What's New
 
-**Threaded Persona Debates** - Pit any two personas against each other in structured discourse:
+**Tag-Team Debates** - Run `/debate` inside an existing debate thread, and new personas inherit the full conversation history. They acknowledge their predecessors and build upon the arguments already made.
+
+### How It Works
 
 ```
-/debate persona1:obi persona2:muppet topic:Is pineapple acceptable on pizza? rounds:6
+1. Start a debate with /debate topic:AI ethics persona1:sage persona2:cynic
+2. Let it run, or click End Debate when ready
+3. In the same thread, run /debate topic:AI ethics persona1:optimist persona2:realist
+4. New debaters receive full context from the previous round
 ```
 
 ### The Experience
 
-1. **Topic Declaration** - A message announces the debate in the main channel
-2. **Thread Creation** - A dedicated thread spawns for the full discourse
-3. **Opening Statement** - The first persona presents their position
-4. **Exchanges** - Personas alternate, each responding to the previous argument
-5. **Conclusion** - A summary closes the debate
+The new debaters acknowledge the change:
 
-### Configuration
+> *Taking over this debate from Sage and Cynic, who explored the ethical boundaries of artificial intelligence...*
 
-| Parameter | Default | Range | Description |
-|-----------|---------|-------|-------------|
-| `rounds` | 6 | 2-20 | Total responses (3 exchanges at default) |
-
-### Every Persona, Every Topic
-
-All 12 personas bring their authentic voice:
-- **Obi-Wan** debates with Jedi wisdom and measured philosophy
-- **Muppet** brings enthusiastic, heartfelt arguments
-- **Noir Detective** treats the topic like a case to crack
-- **Scientist** demands evidence and methodology
-- **Bard** weaves narrative around every point
-- And all the rest, true to their nature
+They then dive in with fresh perspectives while honoring what came before.
 
 ## Technical Harmony
 
-- **New Command**: `src/commands/slash/debate.rs` - Slash command with persona dropdowns
-- **New Feature**: `src/features/debate/` - Orchestrator managing multi-turn conversations
-- **Command Handler**: Thread creation from interaction response message
-- **Usage Tracking**: API calls logged per debate round
-- **Feature Registry**: Debate added as toggleable feature
+- **Config Enhancement**: `DebateConfig` now carries `initial_history` and `previous_debaters`
+- **Context Builder**: `build_debate_prompt_with_context()` crafts tag-team opening prompts
+- **Thread Detection**: `handle_slash_debate()` detects existing debates in the current channel
+- **History Threading**: Complete conversation history flows to new participants
 
-## Architecture Decisions
+### Architecture
 
-- **Threaded Execution**: Debates run in `tokio::spawn` to avoid blocking
-- **Context Building**: Conversation history accumulates for coherent exchanges
-- **Graceful Errors**: Individual round failures don't crash the debate
-- **Typing Indicators**: Natural pacing with broadcast_typing between responses
+```
+User runs /debate in existing thread
+    -> Detect active debate state
+    -> Extract full message history
+    -> Build tag-team config with context
+    -> New orchestrator spawns with inherited history
+    -> Opening messages acknowledge predecessors
+    -> Fresh debate continues the discourse
+```
 
 ## The Vision
 
-This is discourse as entertainment, philosophy as performance. Watch Zen Master find inner peace while Coach pumps up the crowd. See Analyst crunch the numbers while Visionary paints the future.
+A debate transforms from a single exchange into a living symposium. Different minds can approach the same question from new angles, each building on insights that came before. The conversation becomes a tapestry woven by many voices.
 
-*Let the debates begin.*
+*The tournament continues...*
 
 ---
-New Feature: Persona Debates 1.0.0
-Command: /debate with persona selection dropdowns
+Persona Debates: 1.1.0 -> 1.2.0
+- Tag-team debates with history inheritance
+- New debaters acknowledge previous participants
+- Full conversation context preserved across teams
 
 *~ The Visionary*

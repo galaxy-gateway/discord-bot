@@ -92,6 +92,11 @@ impl CommandHandler {
             .unwrap_or_default()
     }
 
+    /// Get the usage tracker for external use
+    pub fn get_usage_tracker(&self) -> UsageTracker {
+        self.usage_tracker.clone()
+    }
+
     /// Build an embed for a persona response
     /// Used for both DM and guild responses when response_embeds is enabled
     fn build_persona_embed(persona: &Persona, response_text: &str) -> CreateEmbed {
@@ -4348,6 +4353,7 @@ Use the buttons below for more help or to try custom prompts!"#;
         request_id: Uuid,
     ) -> Result<()> {
         use crate::commands::slash::debate::{DEFAULT_RESPONSES, MAX_RESPONSES, MIN_RESPONSES};
+        use crate::features::debate::get_active_debates;
 
         // Extract command options
         let persona1_id = get_string_option(&command.data.options, "persona1")
@@ -4397,91 +4403,138 @@ Use the buttons below for more help or to try custom prompts!"#;
         let persona1_name = persona1.unwrap().name.clone();
         let persona2_name = persona2.unwrap().name.clone();
 
-        info!(
-            "[{request_id}] Starting debate: {} vs {} on '{}' ({} rounds)",
-            persona1_name, persona2_name, topic, rounds
-        );
-
-        // Send initial response message (we'll create a thread from this)
-        command
-            .create_interaction_response(&ctx.http, |r| {
-                r.kind(serenity::model::application::interaction::InteractionResponseType::ChannelMessageWithSource)
-                    .interaction_response_data(|m| {
-                        m.content(format!(
-                            "**Debate Starting!**\n\n\
-                            **Topic:** {}\n\
-                            **Debaters:** {} vs {}\n\
-                            **Rounds:** {}",
-                            topic, persona1_name, persona2_name, rounds
-                        ))
-                    })
-            })
-            .await?;
-
-        // Get the message we just sent to create a thread from it
-        let message = command.get_interaction_response(&ctx.http).await?;
-
-        // Create the debate thread from the message
+        // Check if we're already in a thread with an existing debate
         let channel_id = command.channel_id;
-        let thread_name = format!("{} vs {} - {}",
-            persona1_name, persona2_name,
-            if topic.len() > 40 { format!("{}...", &topic[..37]) } else { topic.clone() });
+        let existing_debate = get_active_debates().get(&channel_id.0).map(|d| d.clone());
 
-        let thread = match channel_id
-            .create_public_thread(&ctx.http, message.id, |t| {
-                t.name(&thread_name)
-                    .auto_archive_duration(60) // Archive after 1 hour of inactivity
-            })
-            .await
-        {
-            Ok(t) => t,
-            Err(e) => {
-                error!("[{request_id}] Failed to create debate thread: {e}");
-                command
-                    .edit_original_interaction_response(&ctx.http, |r| {
-                        r.content(format!(
-                            "**Debate Failed**\n\n\
-                            Could not create thread. Make sure I have permission to create threads.\n\
-                            Error: {}",
-                            e
-                        ))
-                    })
-                    .await?;
-                return Ok(());
-            }
-        };
+        // Determine if this is a tag-team debate (joining an existing one)
+        let (thread_id, initial_history, previous_debaters) = if let Some(prev_state) = existing_debate {
+            // We're in a thread with an existing debate - this is a tag-team!
+            let prev_p1 = self.persona_manager.get_persona(&prev_state.config.persona1_id)
+                .map(|p| p.name.clone())
+                .unwrap_or_else(|| prev_state.config.persona1_id.clone());
+            let prev_p2 = self.persona_manager.get_persona(&prev_state.config.persona2_id)
+                .map(|p| p.name.clone())
+                .unwrap_or_else(|| prev_state.config.persona2_id.clone());
 
-        // Update the original message with a link to the thread
-        command
-            .edit_original_interaction_response(&ctx.http, |r| {
-                r.content(format!(
-                    "**Debate Started!**\n\n\
-                    **Topic:** {}\n\
-                    **Debaters:** {} vs {}\n\
-                    **Rounds:** {}\n\n\
-                    The debate is happening in the thread below!",
+            info!(
+                "[{request_id}] Tag-team debate: {} & {} taking over from {} & {} on '{}'",
+                persona1_name, persona2_name, prev_p1, prev_p2, topic
+            );
+
+            // Send response in the thread
+            command
+                .create_interaction_response(&ctx.http, |r| {
+                    r.kind(serenity::model::application::interaction::InteractionResponseType::ChannelMessageWithSource)
+                        .interaction_response_data(|m| {
+                            m.embed(|e| {
+                                e.title("New Debaters Entering!")
+                                    .description(format!(
+                                        "**{} and {}** are stepping aside.\n\n\
+                                        **{} vs {}** will now continue the debate on:\n\
+                                        *{}*\n\n\
+                                        The new debaters have reviewed everything said so far.",
+                                        prev_p1, prev_p2,
+                                        persona1_name, persona2_name,
+                                        topic
+                                    ))
+                                    .color(0xF39C12) // Gold for transition
+                            })
+                        })
+                })
+                .await?;
+
+            (channel_id, Some(prev_state.history), Some((prev_p1, prev_p2)))
+        } else {
+            // Check if the current channel is a thread (by trying to get channel info)
+            // For now, we'll always create a new thread if there's no existing debate
+            info!(
+                "[{request_id}] Starting debate: {} vs {} on '{}' ({} rounds)",
+                persona1_name, persona2_name, topic, rounds
+            );
+
+            // Send initial response message (we'll create a thread from this)
+            command
+                .create_interaction_response(&ctx.http, |r| {
+                    r.kind(serenity::model::application::interaction::InteractionResponseType::ChannelMessageWithSource)
+                        .interaction_response_data(|m| {
+                            m.content(format!(
+                                "**Debate Starting!**\n\n\
+                                **Topic:** {}\n\
+                                **Debaters:** {} vs {}\n\
+                                **Rounds:** {}",
+                                topic, persona1_name, persona2_name, rounds
+                            ))
+                        })
+                })
+                .await?;
+
+            // Get the message we just sent to create a thread from it
+            let message = command.get_interaction_response(&ctx.http).await?;
+
+            // Create the debate thread from the message
+            let thread_name = format!("{} vs {} - {}",
+                persona1_name, persona2_name,
+                if topic.len() > 40 { format!("{}...", &topic[..37]) } else { topic.clone() });
+
+            let thread = match channel_id
+                .create_public_thread(&ctx.http, message.id, |t| {
+                    t.name(&thread_name)
+                        .auto_archive_duration(60) // Archive after 1 hour of inactivity
+                })
+                .await
+            {
+                Ok(t) => t,
+                Err(e) => {
+                    error!("[{request_id}] Failed to create debate thread: {e}");
+                    command
+                        .edit_original_interaction_response(&ctx.http, |r| {
+                            r.content(format!(
+                                "**Debate Failed**\n\n\
+                                Could not create thread. Make sure I have permission to create threads.\n\
+                                Error: {}",
+                                e
+                            ))
+                        })
+                        .await?;
+                    return Ok(());
+                }
+            };
+
+            // Update the original message
+            command
+                .edit_original_interaction_response(&ctx.http, |r| {
+                    r.content(format!(
+                        "**Debate Started!**\n\n\
+                        **Topic:** {}\n\
+                        **Debaters:** {} vs {}\n\
+                        **Rounds:** {}\n\n\
+                        The debate is happening in the thread below!",
+                        topic, persona1_name, persona2_name, rounds
+                    ))
+                })
+                .await?;
+
+            // Post introduction in the thread
+            let intro_embed = serenity::builder::CreateEmbed::default()
+                .title("Debate Beginning")
+                .description(format!(
+                    "**Topic:** {}\n\n\
+                    **{} vs {}**\n\n\
+                    {} rounds of debate ahead. Let the discourse begin!",
                     topic, persona1_name, persona2_name, rounds
                 ))
-            })
-            .await?;
+                .color(0x7289DA) // Discord blurple
+                .to_owned();
 
-        // Post introduction in the thread
-        let intro_embed = serenity::builder::CreateEmbed::default()
-            .title("Debate Beginning")
-            .description(format!(
-                "**Topic:** {}\n\n\
-                **{} vs {}**\n\n\
-                {} rounds of debate ahead. Let the discourse begin!",
-                topic, persona1_name, persona2_name, rounds
-            ))
-            .color(0x7289DA) // Discord blurple
-            .to_owned();
+            let _ = thread.id.send_message(&ctx.http, |m| {
+                m.set_embed(intro_embed)
+            }).await;
 
-        let _ = thread.id.send_message(&ctx.http, |m| {
-            m.set_embed(intro_embed)
-        }).await;
+            (thread.id, None, None)
+        };
 
-        // Create debate config
+        // Create debate config with optional initial history
         let config = DebateConfig {
             persona1_id: persona1_id.clone(),
             persona2_id: persona2_id.clone(),
@@ -4489,6 +4542,8 @@ Use the buttons below for more help or to try custom prompts!"#;
             rounds,
             initiator_id: command.user.id.to_string(),
             guild_id: command.guild_id.map(|g| g.to_string()),
+            initial_history,
+            previous_debaters,
         };
 
         // Clone what we need for the async closure
@@ -4496,11 +4551,10 @@ Use the buttons below for more help or to try custom prompts!"#;
         let usage_tracker = self.usage_tracker.clone();
         let user_id = command.user.id.to_string();
         let guild_id = command.guild_id.map(|g| g.to_string());
-        let channel_id_str = thread.id.to_string();
+        let channel_id_str = thread_id.to_string();
 
         // Run the debate (this spawns the orchestrator)
         let ctx_clone = ctx.clone();
-        let thread_id = thread.id;
 
         tokio::spawn(async move {
             // Create a closure for getting AI responses

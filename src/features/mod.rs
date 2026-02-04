@@ -39,7 +39,7 @@ pub use rate_limiting::RateLimiter;
 pub use reminders::ReminderScheduler;
 pub use startup::StartupNotifier;
 pub use plugins::{Plugin, PluginConfig, PluginManager, PluginExecutor, JobManager, OutputHandler};
-pub use debate::{DebateOrchestrator, orchestrator::DebateConfig};
+pub use debate::{DebateOrchestrator, orchestrator::DebateConfig, DebateState, get_active_debates, CONTINUE_ROUNDS};
 
 // ============================================================================
 // Feature Registry
@@ -187,10 +187,10 @@ pub const FEATURES: &[Feature] = &[
     Feature {
         id: "debate",
         name: "Persona Debates",
-        version: "1.0.0",
+        version: "1.2.0",
         since: "3.27.0",
         toggleable: true,
-        description: "Threaded debates between two personas on any topic",
+        description: "Threaded debates between two personas with continue and tag-team options",
     },
 ];
 

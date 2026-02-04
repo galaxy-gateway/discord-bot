@@ -47,6 +47,12 @@ impl MessageComponentHandler {
             id if id.starts_with("page_") => {
                 self.handle_pagination(ctx, interaction).await?;
             }
+            id if id.starts_with("debate_continue_") => {
+                self.handle_debate_continue(ctx, interaction).await?;
+            }
+            id if id.starts_with("debate_end_") => {
+                self.handle_debate_end(ctx, interaction).await?;
+            }
             "show_help_modal" => {
                 self.show_help_modal(ctx, interaction).await?;
             }
@@ -520,6 +526,174 @@ impl MessageComponentHandler {
     async fn handle_ai_prompt_modal(&self, ctx: &Context, interaction: &ModalSubmitInteraction) -> Result<()> {
         // This is the same as persona creation modal for now
         self.handle_persona_creation_modal(ctx, interaction).await
+    }
+
+    /// Handle debate continue button
+    async fn handle_debate_continue(&self, ctx: &Context, interaction: &MessageComponentInteraction) -> Result<()> {
+        use crate::features::debate::{DebateOrchestrator, get_active_debates, CONTINUE_ROUNDS};
+        use serenity::model::id::ChannelId;
+
+        // Extract thread ID from custom_id
+        let thread_id_str = interaction.data.custom_id
+            .strip_prefix("debate_continue_")
+            .unwrap_or("0");
+        let thread_id: u64 = thread_id_str.parse().unwrap_or(0);
+
+        // Check if debate state exists
+        if get_active_debates().get(&thread_id).is_none() {
+            interaction
+                .create_interaction_response(&ctx.http, |response| {
+                    response
+                        .kind(InteractionResponseType::ChannelMessageWithSource)
+                        .interaction_response_data(|message| {
+                            message
+                                .content("This debate has expired or already ended.")
+                                .ephemeral(true)
+                        })
+                })
+                .await?;
+            return Ok(());
+        }
+
+        // Acknowledge the button click
+        interaction
+            .create_interaction_response(&ctx.http, |response| {
+                response
+                    .kind(InteractionResponseType::UpdateMessage)
+                    .interaction_response_data(|message| {
+                        message
+                            .content("*Continuing the debate...*")
+                            .components(|c| c) // Clear buttons
+                    })
+            })
+            .await?;
+
+        // Clone what we need for the async task
+        let ctx_clone = ctx.clone();
+        let user_id = interaction.user.id.to_string();
+        let guild_id = interaction.guild_id.map(|g| g.to_string());
+        let channel_id_str = thread_id.to_string();
+        let openai_model = std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o".to_string());
+        let usage_tracker = self.command_handler.get_usage_tracker();
+
+        // Spawn the continuation
+        tokio::spawn(async move {
+            let orchestrator = DebateOrchestrator::new();
+            let channel_id = ChannelId(thread_id);
+
+            let get_response = |system_prompt: String, user_message: String, history: Vec<(String, String)>| {
+                let model = openai_model.clone();
+                let tracker = usage_tracker.clone();
+                let uid = user_id.clone();
+                let gid = guild_id.clone();
+                let cid = channel_id_str.clone();
+
+                async move {
+                    let mut messages = vec![
+                        openai::chat::ChatCompletionMessage {
+                            role: openai::chat::ChatCompletionMessageRole::System,
+                            content: Some(system_prompt),
+                            name: None,
+                            function_call: None,
+                            tool_call_id: None,
+                            tool_calls: None,
+                        },
+                    ];
+
+                    for (role, content) in history {
+                        let message_role = if role == "user" {
+                            openai::chat::ChatCompletionMessageRole::User
+                        } else {
+                            openai::chat::ChatCompletionMessageRole::Assistant
+                        };
+                        messages.push(openai::chat::ChatCompletionMessage {
+                            role: message_role,
+                            content: Some(content),
+                            name: None,
+                            function_call: None,
+                            tool_call_id: None,
+                            tool_calls: None,
+                        });
+                    }
+
+                    messages.push(openai::chat::ChatCompletionMessage {
+                        role: openai::chat::ChatCompletionMessageRole::User,
+                        content: Some(user_message),
+                        name: None,
+                        function_call: None,
+                        tool_call_id: None,
+                        tool_calls: None,
+                    });
+
+                    let chat_completion = openai::chat::ChatCompletion::builder(&model, messages)
+                        .create()
+                        .await
+                        .map_err(|e| anyhow::anyhow!("OpenAI API error: {}", e))?;
+
+                    if let Some(usage) = &chat_completion.usage {
+                        tracker.log_chat(
+                            &model,
+                            usage.prompt_tokens,
+                            usage.completion_tokens,
+                            usage.total_tokens,
+                            &uid,
+                            gid.as_deref(),
+                            Some(&cid),
+                            None,
+                        );
+                    }
+
+                    chat_completion
+                        .choices
+                        .first()
+                        .and_then(|c| c.message.content.clone())
+                        .ok_or_else(|| anyhow::anyhow!("No response from OpenAI"))
+                }
+            };
+
+            if let Err(e) = orchestrator.continue_debate(&ctx_clone, channel_id, CONTINUE_ROUNDS, get_response).await {
+                error!("Debate continuation failed: {e}");
+                let _ = channel_id.send_message(&ctx_clone.http, |m| {
+                    m.content("The debate continuation encountered an error.")
+                }).await;
+            }
+        });
+
+        Ok(())
+    }
+
+    /// Handle debate end button
+    async fn handle_debate_end(&self, ctx: &Context, interaction: &MessageComponentInteraction) -> Result<()> {
+        use crate::features::debate::DebateOrchestrator;
+
+        // Extract thread ID from custom_id
+        let thread_id_str = interaction.data.custom_id
+            .strip_prefix("debate_end_")
+            .unwrap_or("0");
+        let thread_id: u64 = thread_id_str.parse().unwrap_or(0);
+
+        // Clean up the debate state
+        DebateOrchestrator::end_debate(thread_id);
+
+        // Update the message to remove buttons
+        interaction
+            .create_interaction_response(&ctx.http, |response| {
+                response
+                    .kind(InteractionResponseType::UpdateMessage)
+                    .interaction_response_data(|message| {
+                        message
+                            .embed(|e| {
+                                e.title("Debate Concluded")
+                                    .description("This debate has ended. Thank you for watching!")
+                                    .color(0x7289DA)
+                            })
+                            .components(|c| c) // Clear buttons
+                    })
+            })
+            .await?;
+
+        info!("Debate ended by user for thread {}", thread_id);
+        Ok(())
     }
 }
 
