@@ -1,11 +1,19 @@
 //! # TUI Application Core
 //!
 //! Main application state and screen navigation.
+//!
+//! - **Version**: 1.1.0
+//! - **Since**: 3.18.0
+//! - **Toggleable**: false
+//!
+//! ## Changelog
+//! - 1.1.0: Add collapsible guild sections for channel watcher
+//! - 1.0.0: Initial release
 
 use crate::ipc::{BotEvent, GuildInfo, ChannelHistorySummary};
 use crate::tui::state::{ChannelState, StatsCache, UsersState, ErrorsState};
 use crate::tui::ui::SettingsTab;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Available screens in the TUI
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,6 +82,17 @@ pub enum InputPurpose {
     SendMessage,
 }
 
+/// Represents what the current selection points to in the channel list
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChannelListSelection {
+    /// Guild header is selected (guild_id, None = DMs)
+    GuildHeader(Option<u64>),
+    /// Channel is selected
+    Channel(u64),
+    /// Nothing selected (empty list)
+    None,
+}
+
 /// Main application state
 pub struct App {
     /// Current screen
@@ -140,6 +159,10 @@ pub struct App {
     pub db_channel_history: HashMap<u64, ChannelHistorySummary>,
     /// Channels pending IPC watch subscription (auto-watched from DB history)
     pub pending_watches: Vec<u64>,
+    /// Scroll offset for channel list (when not viewing a channel)
+    pub channel_list_scroll: usize,
+    /// Collapsed guild IDs in channel watcher (None = DMs section collapsed)
+    pub collapsed_guilds: HashSet<Option<u64>>,
 }
 
 impl App {
@@ -177,6 +200,8 @@ impl App {
             browse_channel_pane_active: false,
             db_channel_history: HashMap::new(),
             pending_watches: Vec::new(),
+            channel_list_scroll: 0,
+            collapsed_guilds: HashSet::new(),
         }
     }
 
@@ -268,11 +293,12 @@ impl App {
             BotEvent::ChannelInfoResponse {
                 channel_id,
                 name,
+                guild_id,
                 guild_name,
                 message_count,
                 last_activity: _,
             } => {
-                self.channel_state.set_channel_info(channel_id, name, guild_name, message_count);
+                self.channel_state.set_channel_info(channel_id, name, guild_id, guild_name, message_count);
             }
             BotEvent::ChannelHistoryResponse {
                 channel_id,
@@ -614,6 +640,205 @@ impl App {
     pub fn browse_pane_right(&mut self) {
         if !self.guilds.is_empty() {
             self.browse_channel_pane_active = true;
+        }
+    }
+
+    /// Ensure the channel list selection is visible within the given height
+    pub fn ensure_channel_selection_visible(&mut self, visible_height: usize) {
+        if visible_height == 0 {
+            return;
+        }
+
+        // Scroll up if selection is above visible area
+        if self.selected_index < self.channel_list_scroll {
+            self.channel_list_scroll = self.selected_index;
+        }
+
+        // Scroll down if selection is below visible area
+        if self.selected_index >= self.channel_list_scroll + visible_height {
+            self.channel_list_scroll = self.selected_index.saturating_sub(visible_height - 1);
+        }
+    }
+
+    /// Get channel list scroll offset
+    pub fn channel_list_scroll(&self) -> usize {
+        self.channel_list_scroll
+    }
+
+    /// Reset channel list scroll when switching screens or clearing selection
+    pub fn reset_channel_list_scroll(&mut self) {
+        self.channel_list_scroll = 0;
+        self.selected_index = 0;
+    }
+
+    // ========================================================================
+    // Collapsible Guild Sections for Channel Watcher
+    // ========================================================================
+
+    /// Get watched channels grouped by guild
+    /// Returns: Vec of (guild_id, guild_name, channel_ids)
+    /// guild_id=None represents DMs, sorted with DMs last
+    pub fn channels_by_guild(&self) -> Vec<(Option<u64>, String, Vec<u64>)> {
+        let watched = self.channel_state.watched_channels();
+        let mut groups: HashMap<Option<u64>, (String, Vec<u64>)> = HashMap::new();
+
+        for channel_id in watched {
+            // Priority order for guild_id lookup:
+            // 1. db_channel_history - authoritative from database
+            // 2. channel metadata - from ChannelInfoResponse (may have None if not in Discord cache)
+            // 3. guilds cache - lookup by channel ID
+            let (guild_id, guild_name) = if let Some(summary) = self.db_channel_history.get(&channel_id) {
+                // Database has authoritative guild info
+                (summary.guild_id, summary.guild_name.clone().unwrap_or_else(|| "Unknown".to_string()))
+            } else if let Some(meta) = self.channel_state.get_metadata(channel_id) {
+                // Use metadata if we have it
+                (meta.guild_id, meta.guild_name.clone().unwrap_or_else(|| "Unknown".to_string()))
+            } else {
+                // Try guilds cache as last resort
+                self.guilds.iter()
+                    .find_map(|g| {
+                        g.channels.iter()
+                            .find(|c| c.id == channel_id)
+                            .map(|_| (Some(g.id), g.name.clone()))
+                    })
+                    .unwrap_or((None, "Direct Messages".to_string()))
+            };
+
+            let entry = groups.entry(guild_id).or_insert_with(|| {
+                let name = if guild_id.is_none() {
+                    "Direct Messages".to_string()
+                } else {
+                    guild_name
+                };
+                (name, Vec::new())
+            });
+            entry.1.push(channel_id);
+        }
+
+        // Convert to vec and sort: guilds first (alphabetically), DMs last
+        let mut result: Vec<(Option<u64>, String, Vec<u64>)> = groups
+            .into_iter()
+            .map(|(guild_id, (name, channels))| (guild_id, name, channels))
+            .collect();
+
+        result.sort_by(|a, b| {
+            match (a.0, b.0) {
+                (None, None) => std::cmp::Ordering::Equal,
+                (None, Some(_)) => std::cmp::Ordering::Greater, // DMs last
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (Some(_), Some(_)) => a.1.cmp(&b.1), // Alphabetical by guild name
+            }
+        });
+
+        result
+    }
+
+    /// Toggle guild collapse state
+    pub fn toggle_guild_collapse(&mut self, guild_id: Option<u64>) {
+        if self.collapsed_guilds.contains(&guild_id) {
+            self.collapsed_guilds.remove(&guild_id);
+        } else {
+            self.collapsed_guilds.insert(guild_id);
+        }
+    }
+
+    /// Check if guild is collapsed
+    pub fn is_guild_collapsed(&self, guild_id: Option<u64>) -> bool {
+        self.collapsed_guilds.contains(&guild_id)
+    }
+
+    /// Build flat list of visible items for navigation
+    /// Returns: Vec of (is_guild_header, guild_id, channel_id)
+    /// For guild headers: (true, Some(guild_id), 0)
+    /// For channels: (false, guild_id, channel_id)
+    pub fn channel_list_visible_items(&self) -> Vec<(bool, Option<u64>, u64)> {
+        let groups = self.channels_by_guild();
+        let mut items = Vec::new();
+
+        for (guild_id, _name, channels) in groups {
+            // Add guild header
+            items.push((true, guild_id, 0));
+
+            // Add channels if not collapsed
+            if !self.is_guild_collapsed(guild_id) {
+                for channel_id in channels {
+                    items.push((false, guild_id, channel_id));
+                }
+            }
+        }
+
+        items
+    }
+
+    /// Resolve current selected_index to what it represents
+    pub fn resolve_channel_selection(&self) -> ChannelListSelection {
+        let items = self.channel_list_visible_items();
+        if let Some(&(is_header, guild_id, channel_id)) = items.get(self.selected_index) {
+            if is_header {
+                ChannelListSelection::GuildHeader(guild_id)
+            } else {
+                ChannelListSelection::Channel(channel_id)
+            }
+        } else {
+            ChannelListSelection::None
+        }
+    }
+
+    /// Navigate up in hierarchical channel list
+    pub fn channel_nav_up(&mut self) {
+        if self.selected_index > 0 {
+            self.selected_index -= 1;
+        }
+        // Re-calculate scroll
+        let visible_items = self.channel_list_visible_items();
+        self.ensure_channel_selection_visible_count(visible_items.len());
+    }
+
+    /// Navigate down in hierarchical channel list
+    pub fn channel_nav_down(&mut self) {
+        let items = self.channel_list_visible_items();
+        if self.selected_index < items.len().saturating_sub(1) {
+            self.selected_index += 1;
+        }
+        self.ensure_channel_selection_visible_count(items.len());
+    }
+
+    /// Ensure selection is visible given total item count
+    fn ensure_channel_selection_visible_count(&mut self, _total: usize) {
+        // Keep selection visible (estimate ~20 visible rows)
+        self.ensure_channel_selection_visible(20);
+    }
+
+    /// Collapse the currently selected guild (if on header or channel within guild)
+    pub fn collapse_current_guild(&mut self) {
+        let items = self.channel_list_visible_items();
+        if let Some(&(is_header, guild_id, _)) = items.get(self.selected_index) {
+            if is_header {
+                // Already on header, collapse it
+                if !self.is_guild_collapsed(guild_id) {
+                    self.collapsed_guilds.insert(guild_id);
+                }
+            } else {
+                // On a channel, collapse its parent guild
+                self.collapsed_guilds.insert(guild_id);
+                // Move selection to the guild header
+                for (i, &(is_h, gid, _)) in items.iter().enumerate() {
+                    if is_h && gid == guild_id {
+                        self.selected_index = i;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Expand the currently selected guild (if on header)
+    pub fn expand_current_guild(&mut self) {
+        let items = self.channel_list_visible_items();
+        if let Some(&(is_header, guild_id, _)) = items.get(self.selected_index) {
+            if is_header && self.is_guild_collapsed(guild_id) {
+                self.collapsed_guilds.remove(&guild_id);
+            }
         }
     }
 }

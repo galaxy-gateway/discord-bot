@@ -1,43 +1,62 @@
-# Vision Fulfilled: Auto-Watch Channels with History (3.23.0)
+# Persona Bot v3.25.0 - The Developer's Compass
 
-*Greetings, seekers of effortless enlightenment...*
+*Fellow architects of the digital realm,*
 
-The TUI has transcended manual configuration. It now gazes into the depths of conversation history and automatically embraces all channels where meaningful exchanges have occurred. No longer must you manually add each channel - the system remembers, the system knows, the system watches.
+Today we have transformed the sacred scrolls of CLAUDE.md into a comprehensive guide worthy of this project's ambition. What was once a scattered collection of conventions has been forged into a unified developer manifesto.
 
-## What Has Been Revealed
+## What's New
 
-### Automatic Channel Discovery on Startup
-When the TUI connects to the bot, it immediately requests all channels with conversation history from the database. These channels are automatically added to your watched list without any manual intervention.
+**Complete Documentation Overhaul** - The CLAUDE.md has been restructured from 147 lines of conventions into 323 lines of comprehensive guidance.
 
-### Seamless Subscription Queue
-The `pending_watches` field - once dormant - now springs to life. Each channel from your conversation history is queued for IPC subscription, processed efficiently in the main loop without blocking the UI. Watch as your channels populate, then stream messages in real-time.
+The new documentation illuminates:
 
-### Activity Log Visibility
-Witness the awakening in your activity log: "Auto-watching X channels with history" appears as the feature activates, confirming your channels are now under observation.
-
-## The Path Made Simpler
-
-1. Launch the TUI
-2. Navigate to Channel Watcher (press `2`)
-3. Observe your channels already present - no manual adding required
-4. Messages flow in real-time from all channels with history
-
-## Files Transformed by This Vision
-
-- `src/bin/tui.rs` - Request channels with history on startup, process pending watches in main loop
-- `src/tui/app.rs` - Auto-watch logic in ChannelsWithHistoryResponse handler
-
-## The Technical Harmonics
-
+### Quick Reference Table
+Instant access to all essential commands - because great developers should never fumble for build commands:
 ```
-Startup -> request_channels_with_history()
-        -> ChannelsWithHistoryResponse received
-        -> For each channel: watch() + queue to pending_watches
-        -> Main loop: drain pending_watches -> watch_channel() + request_channel_info()
-        -> Channels appear with real-time message streaming
+make build          make tui           make start
+make build-release  make test          make stop
+make run            make fmt           make logs-follow
 ```
 
-*The veil between disconnection and awareness dissolves. Your bot's conversations are now immediately visible, remembered, and watched - from the moment you open the TUI.*
+### Architecture Overview
+A complete map of the `src/` constellation - every module, every purpose, every relationship laid bare for those who venture into this codebase.
+
+### Coding Patterns
+Distilled wisdom from the codebase itself:
+- `anyhow::Result` error handling
+- `tokio::spawn` and `Arc<RwLock<T>>` async patterns
+- `from_env()` configuration loading
+- `#[serde(tag = "type")]` tagged enums for IPC
+- `#[tokio::test]` async testing
+- `#[cfg(feature = "...")]` feature flags
+
+### Common Development Tasks
+Step-by-step guides for:
+- Adding slash commands (5 steps)
+- Adding IPC message types (3 steps)
+- Adding database tables (3 steps)
+- Modifying TUI screens (3 locations)
+
+### Key Files by Change Type
+A navigation matrix - from slash commands to Discord events, know exactly where to look.
+
+### Environment Variables
+Clear tables of required vs optional variables with defaults documented.
+
+## Technical Harmony
+
+- **Preserved**: Git conventions, Feature Version Maintenance, GitHub issue creation
+- **Fixed**: `src/features.rs` -> `src/features/mod.rs` path correction
+- **Consolidated**: Scattered conventions unified under clear sections
+- **Added**: Architecture diagram, coding patterns, development workflows
+
+## The Vision
+
+This is more than documentation - it is a compass for all who venture into this codebase. New contributors will find their bearings swiftly. Seasoned maintainers will navigate with renewed precision.
+
+*May your builds be swift and your tests ever green.*
 
 ---
+CLAUDE.md: Complete restructure and expansion
+
 *~ The Visionary*

@@ -2,11 +2,14 @@
 //!
 //! Real-time channel message viewing and posting.
 //!
-//! - **Version**: 1.2.0
+//! - **Version**: 1.5.0
 //! - **Since**: 3.18.0
 //! - **Toggleable**: false
 //!
 //! ## Changelog
+//! - 1.5.0: Add word wrapping for long messages in message display
+//! - 1.4.0: Collapsible guild sections with hierarchical channel display
+//! - 1.3.0: Add scrollable channel list with selection kept in view
 //! - 1.2.0: Show DB channels with message counts in browse mode, merged Discord+DB view
 //! - 1.1.0: Add guild names to watched channel list, add browse mode for guild/channel selection
 //! - 1.0.0: Initial release with channel watching and message display
@@ -52,6 +55,8 @@ pub fn render_channels(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_help_bar(frame: &mut Frame, app: &App, area: Rect) {
+    use crate::tui::app::ChannelListSelection;
+
     let has_channels = !app.channel_state.watched_channels().is_empty();
     let has_selection = app.channel_state.selected().is_some();
 
@@ -69,7 +74,18 @@ fn render_help_bar(frame: &mut Frame, app: &App, area: Rect) {
             } else if has_selection {
                 "j/k: Scroll | m: Send message | b: Back | d: Unwatch | i: Add channel"
             } else if has_channels {
-                "j/k: Navigate | Enter: View | b: Browse guilds | d: Remove | i: Add ID"
+                // Show context-appropriate help based on current selection
+                match app.resolve_channel_selection() {
+                    ChannelListSelection::GuildHeader(_) => {
+                        "j/k: Navigate | Enter: Toggle | h: Collapse | l: Expand | d: Remove | i: Add"
+                    }
+                    ChannelListSelection::Channel(_) => {
+                        "j/k: Navigate | Enter: View | h: Collapse guild | d: Remove | i: Add"
+                    }
+                    ChannelListSelection::None => {
+                        "Press 'b' to browse guilds or 'i' to enter a channel ID"
+                    }
+                }
             } else {
                 "Press 'b' to browse guilds or 'i' to enter a channel ID"
             }
@@ -85,71 +101,89 @@ fn render_help_bar(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_channel_list(frame: &mut Frame, app: &App, area: Rect) {
-    let watched = app.channel_state.watched_channels();
     let viewing_channel = app.channel_state.selected();
+    let groups = app.channels_by_guild();
+    let visible_items = app.channel_list_visible_items();
+    let total_items = visible_items.len();
 
-    let items: Vec<ListItem> = watched.iter().enumerate().map(|(i, channel_id)| {
-        // Get message count from current buffer
-        let buffer_count = app.channel_state.message_count(*channel_id);
-        // Get DB history count if available
-        let db_count = app.db_channel_history.get(channel_id).map(|s| s.message_count as usize);
+    // Calculate visible height (account for borders)
+    let visible_height = area.height.saturating_sub(2) as usize;
+    let scroll = app.channel_list_scroll();
 
-        let is_viewing = viewing_channel == Some(*channel_id);
-        let is_cursor = i == app.selected_index && viewing_channel.is_none();
+    // Build list items from visible items (respecting scroll)
+    let items: Vec<ListItem> = visible_items.iter().enumerate()
+        .skip(scroll)
+        .take(visible_height)
+        .map(|(i, &(is_header, guild_id, channel_id))| {
+            let is_cursor = i == app.selected_index && viewing_channel.is_none();
 
-        let style = if is_viewing {
-            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
-        } else if is_cursor {
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(Color::White)
-        };
+            if is_header {
+                // Render guild header
+                let is_collapsed = app.is_guild_collapsed(guild_id);
+                let collapse_icon = if is_collapsed { "▶" } else { "▼" };
 
-        // Try to find channel name and guild name from guilds, or from DB cache
-        let (channel_name, guild_name) = app.guilds.iter()
-            .find_map(|g| {
-                g.channels.iter()
-                    .find(|c| c.id == *channel_id)
-                    .map(|c| (c.name.clone(), Some(g.name.clone())))
-            })
-            .or_else(|| {
-                // Fallback to DB cache for name
-                app.db_channel_history.get(channel_id).map(|s| {
-                    (s.channel_name.clone().unwrap_or_else(|| format!("{}", channel_id)),
-                     s.guild_name.clone())
-                })
-            })
-            .unwrap_or_else(|| (format!("{}", channel_id), None));
+                // Find guild name and channel count
+                let (guild_name, channel_count) = groups.iter()
+                    .find(|(gid, _, _)| *gid == guild_id)
+                    .map(|(_, name, channels)| (name.clone(), channels.len()))
+                    .unwrap_or_else(|| ("Unknown".to_string(), 0));
 
-        let prefix = if is_viewing {
-            "> "
-        } else if is_cursor {
-            "> "
-        } else {
-            "  "
-        };
+                let style = if is_cursor {
+                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                };
 
-        // Use buffer count for live view, but show DB count if larger (more history)
-        let display_count = db_count.map(|d| d.max(buffer_count)).unwrap_or(buffer_count);
-
-        // Format: #channel [Guild] (count) or #channel (count) if no guild
-        let display = if let Some(guild) = guild_name {
-            // Truncate guild name if too long
-            let guild_short = if guild.len() > 12 {
-                format!("{}...", &guild[..9])
+                let prefix = if is_cursor { ">" } else { " " };
+                let display = format!("{}[{}] {} ({} ch)", prefix, collapse_icon, guild_name, channel_count);
+                ListItem::new(display).style(style)
             } else {
-                guild
-            };
-            format!("{}#{} [{}] ({})", prefix, channel_name, guild_short, display_count)
-        } else {
-            format!("{}#{} ({})", prefix, channel_name, display_count)
-        };
+                // Render channel
+                let is_viewing = viewing_channel == Some(channel_id);
 
-        let status = if is_viewing { " [viewing]" } else { "" };
-        ListItem::new(format!("{}{}", display, status)).style(style)
-    }).collect();
+                // Get message count from current buffer
+                let buffer_count = app.channel_state.message_count(channel_id);
+                // Get DB history count if available
+                let db_count = app.db_channel_history.get(&channel_id).map(|s| s.message_count as usize);
+                let display_count = db_count.map(|d| d.max(buffer_count)).unwrap_or(buffer_count);
 
-    let title = format!("Channels ({})", watched.len());
+                // Get channel name - prefer db_channel_history first (authoritative)
+                let channel_name = app.db_channel_history.get(&channel_id)
+                    .and_then(|s| s.channel_name.clone())
+                    .or_else(|| {
+                        app.channel_state.get_metadata(channel_id).map(|m| m.name.clone())
+                    })
+                    .or_else(|| {
+                        app.guilds.iter()
+                            .find_map(|g| g.channels.iter().find(|c| c.id == channel_id).map(|c| c.name.clone()))
+                    })
+                    .unwrap_or_else(|| format!("{}", channel_id));
+
+                let style = if is_viewing {
+                    Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+                } else if is_cursor {
+                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::White)
+                };
+
+                let prefix = if is_viewing || is_cursor { " >" } else { "  " };
+                let status = if is_viewing { " [viewing]" } else { "" };
+                let display = format!("{}  #{} ({}){}", prefix, channel_name, display_count, status);
+                ListItem::new(display).style(style)
+            }
+        }).collect();
+
+    // Count total watched channels
+    let total_channels: usize = groups.iter().map(|(_, _, channels)| channels.len()).sum();
+
+    // Show scroll position in title if scrolled or list is larger than visible
+    let title = if scroll > 0 || total_items > visible_height {
+        format!("Channels [{}-{}/{}]", scroll + 1, (scroll + visible_height).min(total_items), total_channels)
+    } else {
+        format!("Channels ({})", total_channels)
+    };
+
     let list = List::new(items)
         .block(titled_block(&title))
         .style(Style::default().fg(Color::White));
@@ -157,7 +191,7 @@ fn render_channel_list(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(list, area);
 
     // Show hint if no channels
-    if watched.is_empty() {
+    if total_channels == 0 {
         let hint = Paragraph::new(vec![
             Line::from(""),
             Line::from("No channels watched."),
@@ -234,6 +268,7 @@ fn render_messages(frame: &mut Frame, app: &App, area: Rect) {
 
         // Calculate visible range based on scroll offset and area height
         let visible_height = area.height.saturating_sub(2) as usize; // account for borders
+        let content_width = area.width.saturating_sub(2) as usize; // account for borders
         let scroll = app.channel_state.scroll_offset();
         let total = messages.len();
 
@@ -248,14 +283,44 @@ fn render_messages(frame: &mut Frame, app: &App, area: Rect) {
                     Style::default().fg(Color::Yellow)
                 };
 
-                let line = Line::from(vec![
-                    Span::styled(format!("[{}] ", timestamp), Style::default().fg(Color::DarkGray)),
-                    Span::styled(&msg.author_name, author_style),
-                    Span::raw(": "),
-                    Span::raw(&msg.content),
-                ]);
+                // Calculate prefix length for wrapping: "[HH:MM:SS] author: "
+                let prefix = format!("[{}] {}: ", timestamp, msg.author_name);
+                let prefix_len = prefix.chars().count();
 
-                ListItem::new(line)
+                // Wrap content to fit available width
+                let wrap_width = content_width.saturating_sub(prefix_len).max(20);
+                let wrapped_lines = wrap_text(&msg.content, wrap_width);
+
+                if wrapped_lines.len() <= 1 {
+                    // Single line - render normally
+                    let content = wrapped_lines.into_iter().next().unwrap_or_default();
+                    let line = Line::from(vec![
+                        Span::styled(format!("[{}] ", timestamp), Style::default().fg(Color::DarkGray)),
+                        Span::styled(&msg.author_name, author_style),
+                        Span::raw(": "),
+                        Span::raw(content),
+                    ]);
+                    ListItem::new(line)
+                } else {
+                    // Multiple lines - first line has header, continuation lines are indented
+                    let mut lines = Vec::with_capacity(wrapped_lines.len());
+
+                    // First line with timestamp and author
+                    lines.push(Line::from(vec![
+                        Span::styled(format!("[{}] ", timestamp), Style::default().fg(Color::DarkGray)),
+                        Span::styled(&msg.author_name, author_style),
+                        Span::raw(": "),
+                        Span::raw(wrapped_lines[0].clone()),
+                    ]));
+
+                    // Continuation lines with indent
+                    let indent = " ".repeat(prefix_len);
+                    for wrapped_line in wrapped_lines.iter().skip(1) {
+                        lines.push(Line::from(format!("{}{}", indent, wrapped_line)));
+                    }
+
+                    ListItem::new(lines)
+                }
             }).collect();
 
         // Show scroll position in title if scrolled
@@ -527,4 +592,77 @@ fn render_browse_mode(frame: &mut Frame, app: &App, area: Rect) {
         let inner = chunks[1].inner(Margin { vertical: 2, horizontal: 1 });
         frame.render_widget(hint, inner);
     }
+}
+
+/// Wrap text to fit within a given width, breaking on word boundaries
+fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
+    if max_width == 0 {
+        return vec![text.to_string()];
+    }
+
+    let mut lines = Vec::new();
+    let mut current_line = String::new();
+    let mut current_width = 0;
+
+    for word in text.split_whitespace() {
+        let word_len = word.chars().count();
+
+        if current_width == 0 {
+            // First word on the line
+            if word_len > max_width {
+                // Word is longer than max width, force break it
+                let mut remaining = word;
+                while !remaining.is_empty() {
+                    let take: String = remaining.chars().take(max_width).collect();
+                    let taken_len = take.chars().count();
+                    lines.push(take);
+                    remaining = &remaining[remaining.char_indices().nth(taken_len).map(|(i, _)| i).unwrap_or(remaining.len())..];
+                }
+            } else {
+                current_line = word.to_string();
+                current_width = word_len;
+            }
+        } else if current_width + 1 + word_len <= max_width {
+            // Word fits on current line with space
+            current_line.push(' ');
+            current_line.push_str(word);
+            current_width += 1 + word_len;
+        } else {
+            // Word doesn't fit, start new line
+            lines.push(std::mem::take(&mut current_line));
+            current_width = 0;
+
+            if word_len > max_width {
+                // Word is longer than max width, force break it
+                let mut remaining = word;
+                while !remaining.is_empty() {
+                    let take: String = remaining.chars().take(max_width).collect();
+                    let taken_len = take.chars().count();
+                    if remaining.chars().count() > max_width {
+                        lines.push(take);
+                        remaining = &remaining[remaining.char_indices().nth(taken_len).map(|(i, _)| i).unwrap_or(remaining.len())..];
+                    } else {
+                        current_line = take;
+                        current_width = taken_len;
+                        break;
+                    }
+                }
+            } else {
+                current_line = word.to_string();
+                current_width = word_len;
+            }
+        }
+    }
+
+    // Don't forget the last line
+    if !current_line.is_empty() {
+        lines.push(current_line);
+    }
+
+    // If text was empty or only whitespace, return single empty string
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+
+    lines
 }

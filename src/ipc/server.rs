@@ -655,13 +655,14 @@ impl IpcServer {
                 // Look up channel in cached guilds
                 let guilds = self.get_guilds().await;
                 let channel_info = guilds.iter()
-                    .flat_map(|g| g.channels.iter().map(move |c| (c, &g.name)))
-                    .find(|(c, _)| c.id == channel_id);
+                    .flat_map(|g| g.channels.iter().map(move |c| (c, g.id, &g.name)))
+                    .find(|(c, _, _)| c.id == channel_id);
 
-                if let Some((channel, guild_name)) = channel_info {
+                if let Some((channel, guild_id, guild_name)) = channel_info {
                     self.broadcast(BotEvent::ChannelInfoResponse {
                         channel_id,
                         name: channel.name.clone(),
+                        guild_id: Some(guild_id),
                         guild_name: Some(guild_name.clone()),
                         message_count: 0, // Would need to query Discord
                         last_activity: None,
@@ -672,6 +673,7 @@ impl IpcServer {
                     self.broadcast(BotEvent::ChannelInfoResponse {
                         channel_id,
                         name: format!("{}", channel_id),
+                        guild_id: None,
                         guild_name: None,
                         message_count: 0,
                         last_activity: None,

@@ -18,7 +18,7 @@ use std::time::Duration;
 use persona::ipc::{IpcClient, connect_with_retry};
 use persona::tui::{App, Screen, Event, EventHandler};
 use persona::tui::event::{map_key_event, KeyAction};
-use persona::tui::app::{InputMode, InputPurpose};
+use persona::tui::app::{InputMode, InputPurpose, ChannelListSelection};
 
 /// TUI refresh rate
 const TICK_RATE: Duration = Duration::from_millis(250);
@@ -218,7 +218,8 @@ async fn handle_action(
                     } else if app.channel_state.selected().is_some() {
                         app.channel_state.scroll_up(1);
                     } else {
-                        app.select_previous();
+                        // Navigate hierarchical channel list
+                        app.channel_nav_up();
                     }
                 }
                 Screen::Users => {
@@ -248,8 +249,8 @@ async fn handle_action(
                     } else if let Some(messages) = app.channel_state.get_selected_messages() {
                         app.channel_state.scroll_down(1, messages.len());
                     } else {
-                        let max = app.channel_state.watched_channels().len();
-                        app.select_next(max);
+                        // Navigate hierarchical channel list
+                        app.channel_nav_down();
                     }
                 }
                 Screen::Settings => {
@@ -293,17 +294,25 @@ async fn handle_action(
                         }
                         app.stop_browse_mode();
                     } else {
-                        let watched = app.channel_state.watched_channels();
-                        if let Some(&channel_id) = watched.get(app.selected_index) {
-                            app.channel_state.select(channel_id);
-                            // Request channel info and history
-                            if let Some(client) = ipc_client {
-                                if app.channel_state.needs_history(channel_id) {
-                                    app.channel_state.start_fetching_history();
-                                    let _ = client.get_channel_history(channel_id, 50).await;
-                                }
-                                let _ = client.request_channel_info(channel_id).await;
+                        // Handle hierarchical selection
+                        match app.resolve_channel_selection() {
+                            ChannelListSelection::GuildHeader(guild_id) => {
+                                // Toggle collapse on guild header
+                                app.toggle_guild_collapse(guild_id);
                             }
+                            ChannelListSelection::Channel(channel_id) => {
+                                // Select channel to view messages
+                                app.channel_state.select(channel_id);
+                                // Request channel info and history
+                                if let Some(client) = ipc_client {
+                                    if app.channel_state.needs_history(channel_id) {
+                                        app.channel_state.start_fetching_history();
+                                        let _ = client.get_channel_history(channel_id, 50).await;
+                                    }
+                                    let _ = client.request_channel_info(channel_id).await;
+                                }
+                            }
+                            ChannelListSelection::None => {}
                         }
                     }
                 }
@@ -481,13 +490,49 @@ async fn handle_action(
         KeyAction::Delete => {
             match app.current_screen {
                 Screen::Channels => {
-                    let watched = app.channel_state.watched_channels();
-                    if let Some(&channel_id) = watched.get(app.selected_index) {
-                        app.channel_state.unwatch(channel_id);
-                        if let Some(client) = ipc_client {
-                            let _ = client.unwatch_channel(channel_id).await;
+                    // Handle delete based on hierarchical selection
+                    match app.resolve_channel_selection() {
+                        ChannelListSelection::Channel(channel_id) => {
+                            app.channel_state.unwatch(channel_id);
+                            if let Some(client) = ipc_client {
+                                let _ = client.unwatch_channel(channel_id).await;
+                            }
+                            app.status_message = Some(format!("Unwatched channel {}", channel_id));
+
+                            // Adjust selection if needed
+                            let new_items = app.channel_list_visible_items();
+                            if app.selected_index >= new_items.len() && !new_items.is_empty() {
+                                app.selected_index = new_items.len() - 1;
+                            }
+                            app.ensure_channel_selection_visible(20);
                         }
-                        app.status_message = Some(format!("Unwatched channel {}", channel_id));
+                        ChannelListSelection::GuildHeader(guild_id) => {
+                            // Remove all channels in this guild
+                            let channels_to_remove: Vec<u64> = app.channels_by_guild()
+                                .iter()
+                                .find(|(gid, _, _)| *gid == guild_id)
+                                .map(|(_, _, channels)| channels.clone())
+                                .unwrap_or_default();
+
+                            for channel_id in channels_to_remove {
+                                app.channel_state.unwatch(channel_id);
+                                if let Some(client) = ipc_client {
+                                    let _ = client.unwatch_channel(channel_id).await;
+                                }
+                            }
+                            let guild_name = if guild_id.is_none() { "DMs" } else { "guild" };
+                            app.status_message = Some(format!("Unwatched all channels in {}", guild_name));
+
+                            // Reset selection
+                            let new_items = app.channel_list_visible_items();
+                            if app.selected_index >= new_items.len() && !new_items.is_empty() {
+                                app.selected_index = new_items.len() - 1;
+                            } else if new_items.is_empty() {
+                                app.selected_index = 0;
+                            }
+                            app.ensure_channel_selection_visible(20);
+                        }
+                        ChannelListSelection::None => {}
                     }
                 }
                 _ => {}
@@ -495,38 +540,77 @@ async fn handle_action(
         }
         KeyAction::PageUp => {
             if app.current_screen == Screen::Channels {
-                app.channel_state.scroll_up(10);
+                if app.channel_state.selected().is_some() {
+                    // Scroll messages when viewing a channel
+                    app.channel_state.scroll_up(10);
+                } else {
+                    // Page up in hierarchical channel list
+                    app.selected_index = app.selected_index.saturating_sub(10);
+                    app.ensure_channel_selection_visible(20);
+                }
             }
         }
         KeyAction::PageDown => {
             if app.current_screen == Screen::Channels {
                 if let Some(messages) = app.channel_state.get_selected_messages() {
+                    // Scroll messages when viewing a channel
                     app.channel_state.scroll_down(10, messages.len());
+                } else {
+                    // Page down in hierarchical channel list
+                    let max = app.channel_list_visible_items().len();
+                    app.selected_index = (app.selected_index + 10).min(max.saturating_sub(1));
+                    app.ensure_channel_selection_visible(20);
                 }
             }
         }
         KeyAction::Home => {
             if app.current_screen == Screen::Channels {
-                app.channel_state.scroll_to_top();
+                if app.channel_state.selected().is_some() {
+                    // Scroll to top of messages when viewing a channel
+                    app.channel_state.scroll_to_top();
+                } else {
+                    // Jump to top of hierarchical channel list
+                    app.reset_channel_list_scroll();
+                }
             } else {
                 app.selected_index = 0;
             }
         }
         KeyAction::End => {
             if app.current_screen == Screen::Channels {
-                app.channel_state.scroll_to_bottom();
+                if app.channel_state.selected().is_some() {
+                    // Scroll to bottom of messages when viewing a channel
+                    app.channel_state.scroll_to_bottom();
+                } else {
+                    // Jump to end of hierarchical channel list
+                    let max = app.channel_list_visible_items().len();
+                    if max > 0 {
+                        app.selected_index = max - 1;
+                        app.ensure_channel_selection_visible(20);
+                    }
+                }
             }
         }
         KeyAction::TabLeft => {
-            if app.current_screen == Screen::Channels && app.browse_mode {
-                app.browse_pane_left();
+            if app.current_screen == Screen::Channels {
+                if app.browse_mode {
+                    app.browse_pane_left();
+                } else if app.channel_state.selected().is_none() {
+                    // Collapse current guild with 'h'
+                    app.collapse_current_guild();
+                }
             } else if app.current_screen == Screen::Settings {
                 app.settings_tab_left();
             }
         }
         KeyAction::TabRight => {
-            if app.current_screen == Screen::Channels && app.browse_mode {
-                app.browse_pane_right();
+            if app.current_screen == Screen::Channels {
+                if app.browse_mode {
+                    app.browse_pane_right();
+                } else if app.channel_state.selected().is_none() {
+                    // Expand current guild with 'l'
+                    app.expand_current_guild();
+                }
             } else if app.current_screen == Screen::Settings {
                 app.settings_tab_right();
             }

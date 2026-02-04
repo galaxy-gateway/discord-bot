@@ -86,6 +86,7 @@ pub enum BotEvent {
     ChannelInfoResponse {
         channel_id: u64,
         name: String,
+        guild_id: Option<u64>,
         guild_name: Option<String>,
         message_count: u64,
         last_activity: Option<DateTime<Utc>>,

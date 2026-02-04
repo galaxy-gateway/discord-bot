@@ -1,6 +1,14 @@
 //! # Channel State
 //!
 //! State management for watched channels and message buffers.
+//!
+//! - **Version**: 1.1.0
+//! - **Since**: 3.18.0
+//! - **Toggleable**: false
+//!
+//! ## Changelog
+//! - 1.1.0: Add guild_id to ChannelMetadata for hierarchical grouping
+//! - 1.0.0: Initial release
 
 use crate::ipc::DisplayMessage;
 use std::collections::{HashMap, VecDeque};
@@ -11,6 +19,7 @@ const MAX_MESSAGES_PER_CHANNEL: usize = 200;
 /// Channel metadata
 #[derive(Debug, Clone, Default)]
 pub struct ChannelMetadata {
+    pub guild_id: Option<u64>,
     pub name: String,
     pub guild_name: Option<String>,
     pub message_count: u64,
@@ -151,8 +160,9 @@ impl ChannelState {
     }
 
     /// Set channel metadata (from ChannelInfoResponse)
-    pub fn set_channel_info(&mut self, channel_id: u64, name: String, guild_name: Option<String>, message_count: u64) {
+    pub fn set_channel_info(&mut self, channel_id: u64, name: String, guild_id: Option<u64>, guild_name: Option<String>, message_count: u64) {
         self.metadata.insert(channel_id, ChannelMetadata {
+            guild_id,
             name,
             guild_name,
             message_count,
