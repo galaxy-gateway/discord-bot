@@ -4,11 +4,12 @@
 //! noir, zen, bard, coach, scientist, gamer). Each persona has a unique system prompt loaded from
 //! prompt/*.md files at compile time.
 //!
-//! - **Version**: 1.4.0
+//! - **Version**: 1.5.0
 //! - **Since**: 0.1.0
 //! - **Toggleable**: false
 //!
 //! ## Changelog
+//! - 1.5.0: Added SVG portrait assets and portrait URL generation
 //! - 1.4.0: Added embed responses with persona colors and optional portrait support
 //! - 1.3.0: Added 6 new personas - noir, zen, bard, coach, scientist, gamer
 //! - 1.2.0: Added channel-level persona override via /set_channel_setting persona
@@ -17,6 +18,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::env;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Persona {
@@ -151,6 +153,43 @@ impl PersonaManager {
 
     pub fn list_personas(&self) -> Vec<(&String, &Persona)> {
         self.personas.iter().collect()
+    }
+
+    /// Get the portrait URL for a persona.
+    ///
+    /// Uses the persona's custom portrait_url if set, otherwise generates one
+    /// from PERSONA_PORTRAIT_BASE_URL environment variable.
+    ///
+    /// Example base URLs:
+    /// - GitHub raw: https://raw.githubusercontent.com/user/repo/main/assets/personas
+    /// - GitHub pages: https://user.github.io/repo/assets/personas
+    /// - Custom CDN: https://cdn.example.com/personas
+    pub fn get_portrait_url(&self, persona_id: &str) -> Option<String> {
+        // First check if persona has a custom portrait URL
+        if let Some(persona) = self.personas.get(persona_id) {
+            if persona.portrait_url.is_some() {
+                return persona.portrait_url.clone();
+            }
+        }
+
+        // Generate URL from base URL if configured
+        if let Ok(base_url) = env::var("PERSONA_PORTRAIT_BASE_URL") {
+            let base = base_url.trim_end_matches('/');
+            Some(format!("{}/{}.png", base, persona_id))
+        } else {
+            None
+        }
+    }
+
+    /// Get a persona with its portrait URL resolved
+    pub fn get_persona_with_portrait(&self, name: &str) -> Option<Persona> {
+        self.personas.get(name).map(|p| {
+            let mut persona = p.clone();
+            if persona.portrait_url.is_none() {
+                persona.portrait_url = self.get_portrait_url(name);
+            }
+            persona
+        })
     }
 
     pub fn get_system_prompt(&self, persona_name: &str, modifier: Option<&str>) -> String {
@@ -325,5 +364,58 @@ mod tests {
         // Should have both modifier and verbosity
         assert!(prompt.contains("clear explanations"));
         assert!(prompt.contains("brief and to the point"));
+    }
+
+    #[test]
+    fn test_get_portrait_url_without_base() {
+        // Clear any existing base URL
+        env::remove_var("PERSONA_PORTRAIT_BASE_URL");
+
+        let manager = PersonaManager::new();
+        // Without base URL configured, should return None
+        assert!(manager.get_portrait_url("obi").is_none());
+    }
+
+    #[test]
+    fn test_get_portrait_url_with_base() {
+        env::set_var("PERSONA_PORTRAIT_BASE_URL", "https://example.com/portraits");
+
+        let manager = PersonaManager::new();
+        let url = manager.get_portrait_url("obi");
+
+        assert!(url.is_some());
+        assert_eq!(url.unwrap(), "https://example.com/portraits/obi.png");
+
+        env::remove_var("PERSONA_PORTRAIT_BASE_URL");
+    }
+
+    #[test]
+    fn test_get_portrait_url_trailing_slash() {
+        env::set_var("PERSONA_PORTRAIT_BASE_URL", "https://example.com/portraits/");
+
+        let manager = PersonaManager::new();
+        let url = manager.get_portrait_url("muppet");
+
+        assert!(url.is_some());
+        // Should not have double slashes
+        assert_eq!(url.unwrap(), "https://example.com/portraits/muppet.png");
+
+        env::remove_var("PERSONA_PORTRAIT_BASE_URL");
+    }
+
+    #[test]
+    fn test_get_persona_with_portrait() {
+        env::set_var("PERSONA_PORTRAIT_BASE_URL", "https://cdn.example.com/img");
+
+        let manager = PersonaManager::new();
+        let persona = manager.get_persona_with_portrait("chef");
+
+        assert!(persona.is_some());
+        let p = persona.unwrap();
+        assert_eq!(p.name, "Chef");
+        assert!(p.portrait_url.is_some());
+        assert_eq!(p.portrait_url.unwrap(), "https://cdn.example.com/img/chef.png");
+
+        env::remove_var("PERSONA_PORTRAIT_BASE_URL");
     }
 }

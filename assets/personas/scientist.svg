@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Scientist: Curious, analytical, cyan -->
+  <defs>
+    <linearGradient id="scientist-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#26C6DA"/>
+      <stop offset="100%" style="stop-color:#00CED1"/>
+    </linearGradient>
+    <linearGradient id="flask-liquid" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#76FF03"/>
+      <stop offset="100%" style="stop-color:#64DD17"/>
+    </linearGradient>
+  </defs>
+  <!-- Background circle -->
+  <circle cx="50" cy="50" r="48" fill="url(#scientist-bg)"/>
+  <!-- Erlenmeyer flask -->
+  <path d="M40 25 L40 45 L25 80 L75 80 L60 45 L60 25 Z" fill="white" opacity="0.9"/>
+  <path d="M42 25 L42 45 L28 78 L72 78 L58 45 L58 25 Z" fill="none" stroke="#B2EBF2" stroke-width="2"/>
+  <!-- Flask neck -->
+  <rect x="42" y="20" width="16" height="8" fill="white" stroke="#B2EBF2" stroke-width="2"/>
+  <!-- Bubbling liquid -->
+  <path d="M30 78 L30 60 Q50 55 70 60 L70 78 Z" fill="url(#flask-liquid)" opacity="0.8"/>
+  <!-- Bubbles -->
+  <circle cx="40" cy="65" r="3" fill="white" opacity="0.6"/>
+  <circle cx="55" cy="62" r="2" fill="white" opacity="0.5"/>
+  <circle cx="48" cy="58" r="2.5" fill="white" opacity="0.4"/>
+  <circle cx="60" cy="68" r="2" fill="white" opacity="0.5"/>
+  <circle cx="35" cy="70" r="1.5" fill="white" opacity="0.4"/>
+  <!-- Atom symbol -->
+  <ellipse cx="78" cy="25" rx="12" ry="5" fill="none" stroke="white" stroke-width="1.5" transform="rotate(-30 78 25)" opacity="0.7"/>
+  <ellipse cx="78" cy="25" rx="12" ry="5" fill="none" stroke="white" stroke-width="1.5" transform="rotate(30 78 25)" opacity="0.7"/>
+  <ellipse cx="78" cy="25" rx="12" ry="5" fill="none" stroke="white" stroke-width="1.5" transform="rotate(90 78 25)" opacity="0.7"/>
+  <circle cx="78" cy="25" r="3" fill="white"/>
+  <!-- DNA helix hint -->
+  <path d="M15 35 Q20 40 15 45 Q10 50 15 55 Q20 60 15 65" fill="none" stroke="white" stroke-width="2" opacity="0.5"/>
+  <path d="M22 35 Q17 40 22 45 Q27 50 22 55 Q17 60 22 65" fill="none" stroke="white" stroke-width="2" opacity="0.5"/>
+</svg>

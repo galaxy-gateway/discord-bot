@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Noir Detective: Hard-boiled 1940s, dark gray -->
+  <defs>
+    <linearGradient id="noir-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#37474F"/>
+      <stop offset="100%" style="stop-color:#2C3E50"/>
+    </linearGradient>
+  </defs>
+  <!-- Background circle -->
+  <circle cx="50" cy="50" r="48" fill="url(#noir-bg)"/>
+  <!-- Fedora hat -->
+  <ellipse cx="50" cy="32" rx="35" ry="10" fill="#1A1A1A"/>
+  <path d="M20 32 Q50 15 80 32" fill="#263238"/>
+  <ellipse cx="50" cy="28" rx="25" ry="15" fill="#37474F"/>
+  <!-- Hat band -->
+  <rect x="25" y="30" width="50" height="4" fill="#212121"/>
+  <!-- Face in shadow -->
+  <ellipse cx="50" cy="55" rx="22" ry="25" fill="#BCAAA4"/>
+  <!-- Shadow across face -->
+  <path d="M28 45 L72 45 L72 55 Q50 50 28 55 Z" fill="#2C3E50" opacity="0.5"/>
+  <!-- Eyes peering from shadow -->
+  <ellipse cx="40" cy="50" rx="4" ry="3" fill="#1A1A1A"/>
+  <ellipse cx="60" cy="50" rx="4" ry="3" fill="#1A1A1A"/>
+  <!-- Slight glint in eyes -->
+  <circle cx="41" cy="49" r="1" fill="white" opacity="0.5"/>
+  <circle cx="61" cy="49" r="1" fill="white" opacity="0.5"/>
+  <!-- Stubble/shadow on jaw -->
+  <path d="M35 65 Q50 75 65 65" fill="#5D4037" opacity="0.3"/>
+  <!-- Cigarette smoke hint -->
+  <path d="M70 70 Q75 60 72 50 Q78 45 75 35" fill="none" stroke="#78909C" stroke-width="1.5" opacity="0.4"/>
+  <!-- Trench coat collar -->
+  <path d="M25 85 L35 70 L50 78 L65 70 L75 85" fill="#455A64"/>
+</svg>

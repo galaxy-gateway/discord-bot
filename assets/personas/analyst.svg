@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Analyst: Professional, methodical, blue -->
+  <defs>
+    <linearGradient id="analyst-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#5DADE2"/>
+      <stop offset="100%" style="stop-color:#3498DB"/>
+    </linearGradient>
+  </defs>
+  <!-- Background circle -->
+  <circle cx="50" cy="50" r="48" fill="url(#analyst-bg)"/>
+  <!-- Chart/Graph -->
+  <rect x="20" y="30" width="60" height="45" rx="3" fill="white" opacity="0.95"/>
+  <!-- Grid lines -->
+  <line x1="25" y1="40" x2="75" y2="40" stroke="#E0E0E0" stroke-width="1"/>
+  <line x1="25" y1="50" x2="75" y2="50" stroke="#E0E0E0" stroke-width="1"/>
+  <line x1="25" y1="60" x2="75" y2="60" stroke="#E0E0E0" stroke-width="1"/>
+  <!-- Bar chart -->
+  <rect x="28" y="52" width="8" height="18" fill="#2196F3"/>
+  <rect x="40" y="42" width="8" height="28" fill="#4CAF50"/>
+  <rect x="52" y="48" width="8" height="22" fill="#FF9800"/>
+  <rect x="64" y="38" width="8" height="32" fill="#9C27B0"/>
+  <!-- Trend line -->
+  <polyline points="32,55 44,45 56,50 68,38"
+            fill="none" stroke="#F44336" stroke-width="2" stroke-linecap="round"/>
+  <!-- Data points -->
+  <circle cx="32" cy="55" r="3" fill="#F44336"/>
+  <circle cx="44" cy="45" r="3" fill="#F44336"/>
+  <circle cx="56" cy="50" r="3" fill="#F44336"/>
+  <circle cx="68" cy="38" r="3" fill="#F44336"/>
+  <!-- Magnifying glass -->
+  <circle cx="72" cy="78" r="12" fill="none" stroke="white" stroke-width="4"/>
+  <line x1="80" y1="86" x2="88" y2="94" stroke="white" stroke-width="4" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Obi-Wan: Jedi wisdom, calm blue -->
+  <defs>
+    <linearGradient id="obi-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#5BA3E0"/>
+      <stop offset="100%" style="stop-color:#4A90D9"/>
+    </linearGradient>
+  </defs>
+  <!-- Background circle -->
+  <circle cx="50" cy="50" r="48" fill="url(#obi-bg)"/>
+  <!-- Hooded robe silhouette -->
+  <path d="M50 15 C30 15 20 35 20 50 C20 70 30 85 50 85 C70 85 80 70 80 50 C80 35 70 15 50 15"
+        fill="#3A7AB8" opacity="0.6"/>
+  <!-- Face area -->
+  <ellipse cx="50" cy="45" rx="18" ry="22" fill="#E8D4B8"/>
+  <!-- Hood -->
+  <path d="M25 55 Q25 25 50 18 Q75 25 75 55"
+        fill="none" stroke="#2C5F8A" stroke-width="4" stroke-linecap="round"/>
+  <!-- Beard -->
+  <path d="M38 52 Q50 70 62 52" fill="#B8956E"/>
+  <!-- Eyes -->
+  <ellipse cx="42" cy="42" rx="3" ry="4" fill="#4A6B8A"/>
+  <ellipse cx="58" cy="42" rx="3" ry="4" fill="#4A6B8A"/>
+  <!-- Lightsaber glow hint -->
+  <line x1="75" y1="75" x2="85" y2="65" stroke="#88CCFF" stroke-width="3" stroke-linecap="round" opacity="0.8"/>
+</svg>

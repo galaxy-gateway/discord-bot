@@ -297,6 +297,7 @@ Types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`
 | `CONFLICT_MEDIATION_ENABLED` | `true` | Enable conflict detection |
 | `CONFLICT_SENSITIVITY` | `medium` | Detection sensitivity (low/medium/high/ultra) |
 | `MEDIATION_COOLDOWN_MINUTES` | `5` | Cooldown between mediations |
+| `PERSONA_PORTRAIT_BASE_URL` | - | Base URL for persona portrait PNGs |
 
 See `.env.example` for full documentation.
 

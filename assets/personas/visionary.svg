@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Visionary: Futuristic, big-picture, purple -->
+  <defs>
+    <linearGradient id="visionary-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#AB47BC"/>
+      <stop offset="100%" style="stop-color:#9B59B6"/>
+    </linearGradient>
+    <linearGradient id="crystal-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#E1BEE7"/>
+      <stop offset="50%" style="stop-color:#CE93D8"/>
+      <stop offset="100%" style="stop-color:#9C27B0"/>
+    </linearGradient>
+  </defs>
+  <!-- Background circle -->
+  <circle cx="50" cy="50" r="48" fill="url(#visionary-bg)"/>
+  <!-- Stars/sparkles -->
+  <circle cx="20" cy="25" r="2" fill="white" opacity="0.8"/>
+  <circle cx="80" cy="30" r="1.5" fill="white" opacity="0.7"/>
+  <circle cx="15" cy="60" r="1" fill="white" opacity="0.6"/>
+  <circle cx="85" cy="55" r="2" fill="white" opacity="0.8"/>
+  <circle cx="75" cy="20" r="1" fill="white" opacity="0.5"/>
+  <!-- Crystal ball -->
+  <circle cx="50" cy="50" r="28" fill="url(#crystal-grad)" opacity="0.9"/>
+  <ellipse cx="50" cy="50" rx="28" ry="28" fill="none" stroke="#E1BEE7" stroke-width="2"/>
+  <!-- Crystal ball shine -->
+  <ellipse cx="40" cy="40" rx="8" ry="6" fill="white" opacity="0.4"/>
+  <!-- Eye of vision inside crystal -->
+  <ellipse cx="50" cy="50" rx="15" ry="10" fill="#7B1FA2"/>
+  <circle cx="50" cy="50" r="6" fill="#E1BEE7"/>
+  <circle cx="50" cy="50" r="3" fill="#4A148C"/>
+  <!-- Mystical rays -->
+  <line x1="50" y1="18" x2="50" y2="8" stroke="#E1BEE7" stroke-width="2" opacity="0.6"/>
+  <line x1="75" y1="30" x2="82" y2="23" stroke="#E1BEE7" stroke-width="2" opacity="0.6"/>
+  <line x1="25" y1="30" x2="18" y2="23" stroke="#E1BEE7" stroke-width="2" opacity="0.6"/>
+  <!-- Base -->
+  <ellipse cx="50" cy="82" rx="18" ry="6" fill="#6A1B9A"/>
+  <rect x="42" y="76" width="16" height="8" fill="#7B1FA2"/>
+</svg>

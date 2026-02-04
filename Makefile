@@ -153,6 +153,26 @@ env-setup: ## Copy .env.example to .env
 	cp $(PROJECT_DIR)/.env.example $(PROJECT_DIR)/.env
 	@echo ".env file created! Please edit it with your credentials."
 
+##@ Assets
+
+convert-portraits: ## Convert persona SVGs to PNGs (requires ImageMagick)
+	@echo "Converting persona portraits to PNG..."
+	@for svg in assets/personas/*.svg; do \
+		png="$${svg%.svg}.png"; \
+		echo "  $$svg -> $$png"; \
+		convert -background none -resize 128x128 "$$svg" "$$png"; \
+	done
+	@echo "Conversion complete!"
+
+convert-portraits-inkscape: ## Convert persona SVGs to PNGs (requires Inkscape)
+	@echo "Converting persona portraits to PNG..."
+	@for svg in assets/personas/*.svg; do \
+		png="$${svg%.svg}.png"; \
+		echo "  $$svg -> $$png"; \
+		inkscape "$$svg" -w 128 -h 128 -o "$$png"; \
+	done
+	@echo "Conversion complete!"
+
 ##@ Database
 
 db-status: ## Check database status

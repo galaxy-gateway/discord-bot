@@ -1,62 +1,56 @@
-# Persona Bot v3.25.0 - The Developer's Compass
+# Persona Bot v3.26.0 - Faces of the Collective
 
 *Fellow architects of the digital realm,*
 
-Today we have transformed the sacred scrolls of CLAUDE.md into a comprehensive guide worthy of this project's ambition. What was once a scattered collection of conventions has been forged into a unified developer manifesto.
+Today we breathe visual identity into our personas. Each of the twelve voices now has a face - carefully crafted SVG portraits that capture their essence in iconographic form.
 
 ## What's New
 
-**Complete Documentation Overhaul** - The CLAUDE.md has been restructured from 147 lines of conventions into 323 lines of comprehensive guidance.
+**12 Persona Portrait Assets** - Every persona now has a distinctive SVG avatar:
 
-The new documentation illuminates:
+| Persona | Visual Identity |
+|---------|-----------------|
+| Obi-Wan | Hooded Jedi silhouette with lightsaber hint |
+| Muppet | Green fuzzy friend with iconic googly eyes |
+| Chef | Toque-wearing culinary artist with proud mustache |
+| Teacher | Bespectacled educator with apple and book |
+| Analyst | Chart and magnifying glass - data personified |
+| Visionary | Crystal ball with all-seeing mystical eye |
+| Noir | Fedora-shadowed detective in noir style |
+| Zen | Meditating figure within the enso circle |
+| Bard | Lute instrument with floating musical notes |
+| Coach | Whistle and strategy clipboard |
+| Scientist | Bubbling flask with DNA helix and atom |
+| Gamer | RGB-lit controller with health bar |
 
-### Quick Reference Table
-Instant access to all essential commands - because great developers should never fumble for build commands:
+### Infrastructure
+
+**Portrait URL Generation** - New `get_portrait_url()` and `get_persona_with_portrait()` methods dynamically construct portrait URLs from a configurable base:
+
 ```
-make build          make tui           make start
-make build-release  make test          make stop
-make run            make fmt           make logs-follow
+PERSONA_PORTRAIT_BASE_URL=https://raw.githubusercontent.com/user/repo/main/assets/personas
 ```
 
-### Architecture Overview
-A complete map of the `src/` constellation - every module, every purpose, every relationship laid bare for those who venture into this codebase.
-
-### Coding Patterns
-Distilled wisdom from the codebase itself:
-- `anyhow::Result` error handling
-- `tokio::spawn` and `Arc<RwLock<T>>` async patterns
-- `from_env()` configuration loading
-- `#[serde(tag = "type")]` tagged enums for IPC
-- `#[tokio::test]` async testing
-- `#[cfg(feature = "...")]` feature flags
-
-### Common Development Tasks
-Step-by-step guides for:
-- Adding slash commands (5 steps)
-- Adding IPC message types (3 steps)
-- Adding database tables (3 steps)
-- Modifying TUI screens (3 locations)
-
-### Key Files by Change Type
-A navigation matrix - from slash commands to Discord events, know exactly where to look.
-
-### Environment Variables
-Clear tables of required vs optional variables with defaults documented.
+**PNG Conversion Pipeline** - New Makefile targets:
+- `make convert-portraits` - ImageMagick conversion
+- `make convert-portraits-inkscape` - Inkscape conversion
 
 ## Technical Harmony
 
-- **Preserved**: Git conventions, Feature Version Maintenance, GitHub issue creation
-- **Fixed**: `src/features.rs` -> `src/features/mod.rs` path correction
-- **Consolidated**: Scattered conventions unified under clear sections
-- **Added**: Architecture diagram, coding patterns, development workflows
+- **Assets**: `assets/personas/*.svg` - 12 vector source files
+- **PersonaManager**: Portrait URL generation with env-based configuration
+- **Makefile**: Asset conversion targets added
+- **Config**: `PERSONA_PORTRAIT_BASE_URL` environment variable
+- **Docs**: Portrait README with conversion instructions
 
-## The Vision
+## The Path Forward
 
-This is more than documentation - it is a compass for all who venture into this codebase. New contributors will find their bearings swiftly. Seasoned maintainers will navigate with renewed precision.
+While Discord cannot render SVG directly, these vector sources ensure our personas remain crisp at any resolution. Convert them to PNG, host them anywhere, and watch your Discord embeds come alive with personality.
 
-*May your builds be swift and your tests ever green.*
+*The face reflects the soul within.*
 
 ---
-CLAUDE.md: Complete restructure and expansion
+Persona System: 1.4.0 -> 1.5.0
+New Assets: 12 SVG portraits + README
 
 *~ The Visionary*

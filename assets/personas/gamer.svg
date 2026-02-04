@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Gamer: Gaming culture, Twitch purple -->
+  <defs>
+    <linearGradient id="gamer-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#A855F7"/>
+      <stop offset="100%" style="stop-color:#9146FF"/>
+    </linearGradient>
+  </defs>
+  <!-- Background circle -->
+  <circle cx="50" cy="50" r="48" fill="url(#gamer-bg)"/>
+  <!-- Game controller -->
+  <rect x="20" y="40" width="60" height="30" rx="15" fill="#1F1F1F"/>
+  <!-- Controller grips -->
+  <ellipse cx="25" cy="65" rx="10" ry="12" fill="#1F1F1F"/>
+  <ellipse cx="75" cy="65" rx="10" ry="12" fill="#1F1F1F"/>
+  <!-- D-pad -->
+  <rect x="28" y="48" width="5" height="14" rx="1" fill="#333"/>
+  <rect x="23" y="53" width="14" height="5" rx="1" fill="#333"/>
+  <!-- Action buttons -->
+  <circle cx="65" cy="48" r="4" fill="#4CAF50"/>
+  <circle cx="73" cy="55" r="4" fill="#F44336"/>
+  <circle cx="57" cy="55" r="4" fill="#2196F3"/>
+  <circle cx="65" cy="62" r="4" fill="#FFEB3B"/>
+  <!-- Analog sticks -->
+  <circle cx="40" cy="60" r="6" fill="#333"/>
+  <circle cx="40" cy="60" r="4" fill="#444"/>
+  <circle cx="60" cy="48" r="6" fill="#333"/>
+  <circle cx="60" cy="48" r="4" fill="#444"/>
+  <!-- Menu buttons -->
+  <rect x="45" y="52" width="4" height="2" rx="1" fill="#666"/>
+  <rect x="51" y="52" width="4" height="2" rx="1" fill="#666"/>
+  <!-- RGB glow effect -->
+  <ellipse cx="50" cy="55" rx="35" ry="20" fill="none" stroke="#00FFFF" stroke-width="1" opacity="0.3"/>
+  <ellipse cx="50" cy="55" rx="38" ry="22" fill="none" stroke="#FF00FF" stroke-width="1" opacity="0.2"/>
+  <!-- "GG" text -->
+  <text x="50" y="28" text-anchor="middle" font-size="14" font-weight="bold" fill="white" opacity="0.8">GG</text>
+  <!-- Health bar -->
+  <rect x="15" y="82" width="70" height="6" rx="3" fill="#333"/>
+  <rect x="15" y="82" width="55" height="6" rx="3" fill="#4CAF50"/>
+  <!-- XP sparkles -->
+  <text x="80" y="35" font-size="8" fill="#FFD700">+XP</text>
+</svg>

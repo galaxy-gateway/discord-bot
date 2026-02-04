@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Teacher: Educational, patient, green -->
+  <defs>
+    <linearGradient id="teacher-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#2ECC71"/>
+      <stop offset="100%" style="stop-color:#27AE60"/>
+    </linearGradient>
+  </defs>
+  <!-- Background circle -->
+  <circle cx="50" cy="50" r="48" fill="url(#teacher-bg)"/>
+  <!-- Face -->
+  <ellipse cx="50" cy="48" rx="22" ry="25" fill="#FFCCBC"/>
+  <!-- Hair -->
+  <ellipse cx="50" cy="30" rx="24" ry="15" fill="#5D4037"/>
+  <!-- Glasses -->
+  <circle cx="38" cy="45" r="10" fill="none" stroke="#333" stroke-width="3"/>
+  <circle cx="62" cy="45" r="10" fill="none" stroke="#333" stroke-width="3"/>
+  <line x1="48" y1="45" x2="52" y2="45" stroke="#333" stroke-width="3"/>
+  <line x1="28" y1="43" x2="22" y2="40" stroke="#333" stroke-width="2"/>
+  <line x1="72" y1="43" x2="78" y2="40" stroke="#333" stroke-width="2"/>
+  <!-- Eyes behind glasses -->
+  <circle cx="38" cy="45" r="3" fill="#3E2723"/>
+  <circle cx="62" cy="45" r="3" fill="#3E2723"/>
+  <!-- Friendly smile -->
+  <path d="M40 60 Q50 68 60 60" fill="none" stroke="#5D4037" stroke-width="2" stroke-linecap="round"/>
+  <!-- Book hint -->
+  <rect x="15" y="72" width="20" height="15" rx="2" fill="#1976D2"/>
+  <line x1="25" y1="72" x2="25" y2="87" stroke="#0D47A1" stroke-width="2"/>
+  <!-- Apple -->
+  <circle cx="78" cy="78" r="10" fill="#C62828"/>
+  <path d="M78 68 L80 65" stroke="#4CAF50" stroke-width="2"/>
+  <ellipse cx="81" cy="66" rx="3" ry="2" fill="#4CAF50"/>
+</svg>

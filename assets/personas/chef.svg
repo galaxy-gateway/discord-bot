@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Chef: Culinary passion, red -->
+  <defs>
+    <linearGradient id="chef-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#EF5350"/>
+      <stop offset="100%" style="stop-color:#E74C3C"/>
+    </linearGradient>
+  </defs>
+  <!-- Background circle -->
+  <circle cx="50" cy="50" r="48" fill="url(#chef-bg)"/>
+  <!-- Chef hat (toque) -->
+  <ellipse cx="50" cy="22" rx="22" ry="12" fill="white"/>
+  <rect x="32" y="20" width="36" height="25" fill="white"/>
+  <ellipse cx="50" cy="18" rx="18" ry="10" fill="#F5F5F5"/>
+  <!-- Poofy top of hat -->
+  <circle cx="40" cy="15" r="8" fill="white"/>
+  <circle cx="50" cy="12" r="9" fill="white"/>
+  <circle cx="60" cy="15" r="8" fill="white"/>
+  <!-- Face -->
+  <ellipse cx="50" cy="55" rx="20" ry="22" fill="#FFCCBC"/>
+  <!-- Mustache -->
+  <path d="M35 60 Q42 55 50 58 Q58 55 65 60 Q58 65 50 62 Q42 65 35 60" fill="#5D4037"/>
+  <!-- Eyes -->
+  <ellipse cx="42" cy="50" rx="4" ry="5" fill="#3E2723"/>
+  <ellipse cx="58" cy="50" rx="4" ry="5" fill="#3E2723"/>
+  <!-- Smile under mustache -->
+  <path d="M42 68 Q50 75 58 68" fill="none" stroke="#5D4037" stroke-width="2" stroke-linecap="round"/>
+  <!-- Neckerchief hint -->
+  <path d="M35 78 L50 85 L65 78" fill="#1565C0"/>
+</svg>
