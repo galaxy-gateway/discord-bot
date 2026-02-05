@@ -1,29 +1,31 @@
+use crate::commands::slash::{
+    get_bool_option, get_channel_option, get_integer_option, get_role_option, get_string_option,
+};
+use crate::database::Database;
+use crate::features::analytics::InteractionTracker;
+use crate::features::analytics::UsageTracker;
 use crate::features::audio::transcriber::AudioTranscriber;
 use crate::features::conflict::{ConflictDetector, ConflictMediator};
-use crate::features::council::{CouncilState, get_active_councils};
-use crate::features::debate::{DebateOrchestrator, orchestrator::DebateConfig};
+use crate::features::council::{get_active_councils, CouncilState};
+use crate::features::debate::{get_active_debates, orchestrator::DebateConfig, DebateOrchestrator};
 use crate::features::image_gen::generator::{ImageGenerator, ImageSize, ImageStyle};
-use crate::features::analytics::InteractionTracker;
 use crate::features::introspection::get_component_snippet;
-use crate::features::personas::{PersonaManager, Persona};
+use crate::features::personas::{Persona, PersonaManager};
 use crate::features::plugins::PluginManager;
 use crate::features::rate_limiting::RateLimiter;
-use crate::features::analytics::UsageTracker;
-use crate::database::Database;
 use crate::message_components::MessageComponentHandler;
-use crate::commands::slash::{get_string_option, get_channel_option, get_role_option, get_integer_option, get_bool_option};
 use anyhow::Result;
 use log::{debug, error, info, warn};
-use tokio::time::{timeout, Duration as TokioDuration, Instant};
-use uuid::Uuid;
-use std::sync::Arc;
-use std::collections::HashMap;
 use openai::chat::{ChatCompletion, ChatCompletionMessage, ChatCompletionMessageRole};
 use serenity::builder::CreateEmbed;
 use serenity::model::application::interaction::application_command::ApplicationCommandInteraction;
 use serenity::model::channel::Message;
 use serenity::prelude::Context;
+use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::time::{timeout, Duration as TokioDuration, Instant};
+use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct CommandHandler {
@@ -56,10 +58,10 @@ impl CommandHandler {
     ) -> Self {
         // Map sensitivity to threshold
         let sensitivity_threshold = match conflict_sensitivity.to_lowercase().as_str() {
-            "low" => 0.7,      // Only very high confidence conflicts
-            "high" => 0.35,    // More sensitive - catches single keywords + context
-            "ultra" => 0.3,    // Maximum sensitivity - triggers on single hostile keyword
-            _ => 0.5,          // Medium (default)
+            "low" => 0.7,   // Only very high confidence conflicts
+            "high" => 0.35, // More sensitive - catches single keywords + context
+            "ultra" => 0.3, // Maximum sensitivity - triggers on single hostile keyword
+            _ => 0.5,       // Medium (default)
         };
 
         CommandHandler {
@@ -138,19 +140,34 @@ impl CommandHandler {
         let request_id = Uuid::new_v4();
         let user_id = msg.author.id.to_string();
         let channel_id = msg.channel_id.to_string();
-        let guild_id = msg.guild_id.map(|id| id.to_string()).unwrap_or_else(|| "DM".to_string());
-        let guild_id_opt = if guild_id != "DM" { Some(guild_id.as_str()) } else { None };
+        let guild_id = msg
+            .guild_id
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| "DM".to_string());
+        let guild_id_opt = if guild_id != "DM" {
+            Some(guild_id.as_str())
+        } else {
+            None
+        };
 
-        info!("[{}] 📥 Message received | User: {} | Channel: {} | Guild: {} | Content: '{}'",
-              request_id, user_id, channel_id, guild_id,
-              msg.content.chars().take(100).collect::<String>());
+        info!(
+            "[{}] 📥 Message received | User: {} | Channel: {} | Guild: {} | Content: '{}'",
+            request_id,
+            user_id,
+            channel_id,
+            guild_id,
+            msg.content.chars().take(100).collect::<String>()
+        );
 
         debug!("[{request_id}] 🔍 Checking rate limit for user: {user_id}");
         if !self.rate_limiter.wait_for_rate_limit(&user_id).await {
             warn!("[{request_id}] 🚫 Rate limit exceeded for user: {user_id}");
             debug!("[{request_id}] 📤 Sending rate limit message to Discord");
             msg.channel_id
-                .say(&ctx.http, "You're sending messages too quickly! Please slow down.")
+                .say(
+                    &ctx.http,
+                    "You're sending messages too quickly! Please slow down.",
+                )
                 .await?;
             info!("[{request_id}] ✅ Rate limit message sent successfully");
             return Ok(());
@@ -160,11 +177,16 @@ impl CommandHandler {
         // Get audio transcription mode for this guild
         let is_dm = msg.guild_id.is_none();
         let audio_mode = if let Some(gid) = guild_id_opt {
-            let feature_enabled = self.database.is_feature_enabled("audio_transcription", None, Some(gid)).await?;
+            let feature_enabled = self
+                .database
+                .is_feature_enabled("audio_transcription", None, Some(gid))
+                .await?;
             if !feature_enabled {
                 "disabled".to_string()
             } else {
-                self.database.get_guild_setting(gid, "audio_transcription_mode").await?
+                self.database
+                    .get_guild_setting(gid, "audio_transcription_mode")
+                    .await?
                     .unwrap_or_else(|| "mention_only".to_string())
             }
         } else {
@@ -179,47 +201,81 @@ impl CommandHandler {
         };
 
         let audio_handled = if !msg.attachments.is_empty() && should_transcribe {
-            debug!("[{}] 🎵 Processing {} audio attachments (mode: {})", request_id, msg.attachments.len(), audio_mode);
-            self.handle_audio_attachments(ctx, msg, guild_id_opt).await?
+            debug!(
+                "[{}] 🎵 Processing {} audio attachments (mode: {})",
+                request_id,
+                msg.attachments.len(),
+                audio_mode
+            );
+            self.handle_audio_attachments(ctx, msg, guild_id_opt)
+                .await?
         } else {
             false
         };
 
         let content = msg.content.trim();
-        debug!("[{}] 🔍 Analyzing message content | Length: {} | Is DM: {} | Starts with command: {}",
-               request_id, content.len(), is_dm, content.starts_with('/'));
+        debug!(
+            "[{}] 🔍 Analyzing message content | Length: {} | Is DM: {} | Starts with command: {}",
+            request_id,
+            content.len(),
+            is_dm,
+            content.starts_with('/')
+        );
 
         // Store guild messages FIRST (needed for conflict detection to have data)
         if !is_dm && !content.is_empty() && !content.starts_with('/') {
             debug!("[{request_id}] 💾 Storing guild message for analysis");
-            self.database.store_message(&user_id, &channel_id, "user", content, None).await?;
+            self.database
+                .store_message(&user_id, &channel_id, "user", content, None)
+                .await?;
         }
 
         // Conflict detection - check both env var AND feature flag
         let guild_conflict_enabled = if let Some(gid) = guild_id_opt {
-            self.database.is_feature_enabled("conflict_mediation", None, Some(gid)).await?
+            self.database
+                .is_feature_enabled("conflict_mediation", None, Some(gid))
+                .await?
         } else {
             false // No conflict detection in DMs
         };
 
-        if !is_dm && self.conflict_enabled && guild_conflict_enabled && !content.is_empty() && !content.starts_with('/') {
+        if !is_dm
+            && self.conflict_enabled
+            && guild_conflict_enabled
+            && !content.is_empty()
+            && !content.starts_with('/')
+        {
             debug!("[{request_id}] 🔍 Running conflict detection analysis");
-            if let Err(e) = self.check_and_mediate_conflicts(ctx, msg, &channel_id, guild_id_opt).await {
+            if let Err(e) = self
+                .check_and_mediate_conflicts(ctx, msg, &channel_id, guild_id_opt)
+                .await
+            {
                 warn!("[{request_id}] ⚠️ Conflict detection error: {e}");
                 // Don't fail the whole message processing if conflict detection fails
             }
         }
 
         if content.starts_with('/') {
-            info!("[{}] 🎯 Processing text command: {}", request_id, content.split_whitespace().next().unwrap_or(""));
-            self.handle_text_command_with_id(ctx, msg, request_id).await?;
+            info!(
+                "[{}] 🎯 Processing text command: {}",
+                request_id,
+                content.split_whitespace().next().unwrap_or("")
+            );
+            self.handle_text_command_with_id(ctx, msg, request_id)
+                .await?;
         } else if is_dm && !content.is_empty() && !audio_handled {
             info!("[{request_id}] 💬 Processing DM message (auto-response mode)");
             self.handle_dm_message_with_id(ctx, msg, request_id).await?;
-        } else if !is_dm && !audio_handled && !content.is_empty() && self.is_in_active_debate_thread(msg.channel_id).await {
+        } else if !is_dm
+            && !audio_handled
+            && !content.is_empty()
+            && self.is_in_active_debate_thread(msg.channel_id).await
+        {
             // Check if debate_auto_response is enabled for this guild
             let auto_response_enabled = if let Some(gid) = guild_id_opt {
-                self.database.get_guild_setting(gid, "debate_auto_response").await?
+                self.database
+                    .get_guild_setting(gid, "debate_auto_response")
+                    .await?
                     .map(|v| v == "enabled")
                     .unwrap_or(false) // Default disabled
             } else {
@@ -228,11 +284,16 @@ impl CommandHandler {
 
             if auto_response_enabled {
                 info!("[{request_id}] 🎭 Auto-responding in active debate thread");
-                self.handle_mention_message_with_id(ctx, msg, request_id).await?;
+                self.handle_mention_message_with_id(ctx, msg, request_id)
+                    .await?;
             } else {
                 debug!("[{request_id}] ℹ️ Message in debate thread but auto-response disabled");
             }
-        } else if !is_dm && !audio_handled && !content.is_empty() && self.is_in_active_council_thread(msg.channel_id).await {
+        } else if !is_dm
+            && !audio_handled
+            && !content.is_empty()
+            && self.is_in_active_council_thread(msg.channel_id).await
+        {
             // Council threads respond to mentions by default
             if self.is_bot_mentioned(ctx, msg).await? {
                 info!("[{request_id}] 🏛️ Responding to mention in active council thread");
@@ -240,10 +301,16 @@ impl CommandHandler {
             } else {
                 debug!("[{request_id}] ℹ️ Message in council thread but bot not mentioned");
             }
-        } else if !is_dm && !audio_handled && self.is_bot_mentioned(ctx, msg).await? && !content.is_empty() {
+        } else if !is_dm
+            && !audio_handled
+            && self.is_bot_mentioned(ctx, msg).await?
+            && !content.is_empty()
+        {
             // Check mention_responses guild setting
             let mention_enabled = if let Some(gid) = guild_id_opt {
-                self.database.get_guild_setting(gid, "mention_responses").await?
+                self.database
+                    .get_guild_setting(gid, "mention_responses")
+                    .await?
                     .map(|v| v == "enabled")
                     .unwrap_or(true) // Default enabled
             } else {
@@ -252,7 +319,8 @@ impl CommandHandler {
 
             if mention_enabled {
                 info!("[{request_id}] 🏷️ Bot mentioned in channel - responding");
-                self.handle_mention_message_with_id(ctx, msg, request_id).await?;
+                self.handle_mention_message_with_id(ctx, msg, request_id)
+                    .await?;
             } else {
                 debug!("[{request_id}] ℹ️ Bot mentioned but mention_responses disabled for guild");
             }
@@ -278,7 +346,10 @@ impl CommandHandler {
     }
 
     /// Check if the channel has an active council (for follow-up questions)
-    async fn is_in_active_council_thread(&self, channel_id: serenity::model::id::ChannelId) -> bool {
+    async fn is_in_active_council_thread(
+        &self,
+        channel_id: serenity::model::id::ChannelId,
+    ) -> bool {
         get_active_councils().contains_key(&channel_id.0)
     }
 
@@ -287,25 +358,38 @@ impl CommandHandler {
 
         // Fetch the channel to check its type
         match ctx.http.get_channel(msg.channel_id.0).await {
-            Ok(Channel::Guild(guild_channel)) => {
-                Ok(matches!(guild_channel.kind,
-                    ChannelType::PublicThread | ChannelType::PrivateThread))
-            }
+            Ok(Channel::Guild(guild_channel)) => Ok(matches!(
+                guild_channel.kind,
+                ChannelType::PublicThread | ChannelType::PrivateThread
+            )),
             _ => Ok(false),
         }
     }
 
-    async fn fetch_thread_messages(&self, ctx: &Context, msg: &Message, limit: u8, request_id: Uuid) -> Result<Vec<(String, String)>> {
+    async fn fetch_thread_messages(
+        &self,
+        ctx: &Context,
+        msg: &Message,
+        limit: u8,
+        request_id: Uuid,
+    ) -> Result<Vec<(String, String)>> {
         use serenity::builder::GetMessages;
 
         debug!("[{request_id}] 🧵 Fetching up to {limit} messages from thread");
 
         // Fetch messages from the thread (Discord API limit is 100)
-        let messages = msg.channel_id.messages(&ctx.http, |builder: &mut GetMessages| {
-            builder.limit(limit as u64)
-        }).await?;
+        let messages = msg
+            .channel_id
+            .messages(&ctx.http, |builder: &mut GetMessages| {
+                builder.limit(limit as u64)
+            })
+            .await?;
 
-        debug!("[{}] 🧵 Retrieved {} messages from thread", request_id, messages.len());
+        debug!(
+            "[{}] 🧵 Retrieved {} messages from thread",
+            request_id,
+            messages.len()
+        );
 
         // Get bot's user ID to identify bot messages
         let current_user = ctx.http.get_current_user().await?;
@@ -328,7 +412,11 @@ impl CommandHandler {
             })
             .collect();
 
-        debug!("[{}] 🧵 Processed {} non-empty messages from thread", request_id, conversation.len());
+        debug!(
+            "[{}] 🧵 Processed {} non-empty messages from thread",
+            request_id,
+            conversation.len()
+        );
 
         Ok(conversation)
     }
@@ -346,11 +434,15 @@ impl CommandHandler {
         debug!("[{request_id}] 🎭 Fetching thread history for tag-team debate");
 
         // Fetch up to 100 messages (Discord API limit)
-        let messages = channel_id.messages(&ctx.http, |builder: &mut GetMessages| {
-            builder.limit(100)
-        }).await?;
+        let messages = channel_id
+            .messages(&ctx.http, |builder: &mut GetMessages| builder.limit(100))
+            .await?;
 
-        debug!("[{}] 🎭 Retrieved {} messages from debate thread", request_id, messages.len());
+        debug!(
+            "[{}] 🎭 Retrieved {} messages from debate thread",
+            request_id,
+            messages.len()
+        );
 
         // Get bot's user ID to identify bot messages
         let current_user = ctx.http.get_current_user().await?;
@@ -387,23 +479,35 @@ impl CommandHandler {
 
         debug!(
             "[{}] 🎭 Processed {} entries from debate thread for tag-team context",
-            request_id, history.len()
+            request_id,
+            history.len()
         );
 
         Ok(history)
     }
 
-    async fn handle_dm_message_with_id(&self, ctx: &Context, msg: &Message, request_id: Uuid) -> Result<()> {
+    async fn handle_dm_message_with_id(
+        &self,
+        ctx: &Context,
+        msg: &Message,
+        request_id: Uuid,
+    ) -> Result<()> {
         let start_time = Instant::now();
         let user_id = msg.author.id.to_string();
         let channel_id = msg.channel_id.to_string();
         let user_message = msg.content.trim();
 
-        debug!("[{}] 💬 Processing DM auto-response | User: {} | Message: '{}'",
-               request_id, user_id, user_message.chars().take(100).collect::<String>());
+        debug!(
+            "[{}] 💬 Processing DM auto-response | User: {} | Message: '{}'",
+            request_id,
+            user_id,
+            user_message.chars().take(100).collect::<String>()
+        );
 
         // Get or create DM session
-        let session_id = self.interaction_tracker.get_or_create_session(&user_id, &channel_id);
+        let session_id = self
+            .interaction_tracker
+            .get_or_create_session(&user_id, &channel_id);
         debug!("[{request_id}] 📊 DM session: {session_id}");
 
         // Track message received
@@ -424,7 +528,10 @@ impl CommandHandler {
         let enhanced_message = if attachment_context.is_empty() {
             user_message.to_string()
         } else {
-            info!("[{request_id}] 📎 Including {} text attachment(s) in context", text_attachments.len());
+            info!(
+                "[{request_id}] 📎 Including {} text attachment(s) in context",
+                text_attachments.len()
+            );
             format!("{}{}", attachment_context, user_message)
         };
 
@@ -435,13 +542,28 @@ impl CommandHandler {
 
         // Store user message in conversation history (store original message, not enhanced)
         debug!("[{request_id}] 💾 Storing user message to conversation history");
-        self.database.store_message(&user_id, &channel_id, "user", user_message, Some(&user_persona)).await?;
+        self.database
+            .store_message(
+                &user_id,
+                &channel_id,
+                "user",
+                user_message,
+                Some(&user_persona),
+            )
+            .await?;
         debug!("[{request_id}] ✅ User message stored successfully");
 
         // Retrieve conversation history (last 40 messages = ~20 exchanges)
         debug!("[{request_id}] 📚 Retrieving conversation history");
-        let conversation_history = self.database.get_conversation_history(&user_id, &channel_id, 40).await?;
-        info!("[{}] 📚 Retrieved {} historical messages", request_id, conversation_history.len());
+        let conversation_history = self
+            .database
+            .get_conversation_history(&user_id, &channel_id, 40)
+            .await?;
+        info!(
+            "[{}] 📚 Retrieved {} historical messages",
+            request_id,
+            conversation_history.len()
+        );
 
         // Show typing indicator while processing
         debug!("[{request_id}] ⌨️ Starting typing indicator");
@@ -450,24 +572,43 @@ impl CommandHandler {
         // Build system prompt without modifier (conversational mode)
         debug!("[{request_id}] 📝 Building system prompt | Persona: {user_persona}");
         let system_prompt = self.persona_manager.get_system_prompt(&user_persona, None);
-        debug!("[{}] ✅ System prompt generated | Length: {} chars", request_id, system_prompt.len());
+        debug!(
+            "[{}] ✅ System prompt generated | Length: {} chars",
+            request_id,
+            system_prompt.len()
+        );
 
         // Log usage
         debug!("[{request_id}] 📊 Logging usage to database");
-        self.database.log_usage(&user_id, "dm_chat", Some(&user_persona)).await?;
+        self.database
+            .log_usage(&user_id, "dm_chat", Some(&user_persona))
+            .await?;
         debug!("[{request_id}] ✅ Usage logged successfully");
 
         // Get AI response with conversation history (use enhanced message with attachments)
         info!("[{request_id}] 🚀 Calling OpenAI API for DM response");
-        let api_call_result = self.get_ai_response_with_context(&system_prompt, &enhanced_message, conversation_history, request_id, Some(&user_id), None, Some(&channel_id)).await;
+        let api_call_result = self
+            .get_ai_response_with_context(
+                &system_prompt,
+                &enhanced_message,
+                conversation_history,
+                request_id,
+                Some(&user_id),
+                None,
+                Some(&channel_id),
+            )
+            .await;
 
         // Track API call (estimate cost from usage tracker's pricing)
         // This will be more accurate if we can access the actual usage data, but for now we'll track it after response
 
         match api_call_result {
             Ok(ai_response) => {
-                info!("[{}] ✅ OpenAI response received | Response length: {}",
-                      request_id, ai_response.len());
+                info!(
+                    "[{}] ✅ OpenAI response received | Response length: {}",
+                    request_id,
+                    ai_response.len()
+                );
 
                 // Stop typing
                 typing.stop();
@@ -479,17 +620,27 @@ impl CommandHandler {
                 // Send response as embed (handle long messages - embed description limit is 4096)
                 if ai_response.len() > 4096 {
                     debug!("[{request_id}] 📄 Response too long for single embed, splitting into chunks");
-                    let chunks: Vec<&str> = ai_response.as_bytes()
+                    let chunks: Vec<&str> = ai_response
+                        .as_bytes()
                         .chunks(4096)
                         .map(|chunk| std::str::from_utf8(chunk).unwrap_or(""))
                         .collect();
 
-                    debug!("[{}] 📄 Split response into {} embed chunks", request_id, chunks.len());
+                    debug!(
+                        "[{}] 📄 Split response into {} embed chunks",
+                        request_id,
+                        chunks.len()
+                    );
 
                     for (i, chunk) in chunks.iter().enumerate() {
                         if !chunk.trim().is_empty() {
-                            debug!("[{}] 📤 Sending embed chunk {} of {} ({} chars)",
-                                   request_id, i + 1, chunks.len(), chunk.len());
+                            debug!(
+                                "[{}] 📤 Sending embed chunk {} of {} ({} chars)",
+                                request_id,
+                                i + 1,
+                                chunks.len(),
+                                chunk.len()
+                            );
 
                             if let Some(p) = persona {
                                 // First chunk gets full embed with author, rest are continuation
@@ -498,20 +649,32 @@ impl CommandHandler {
                                 } else {
                                     Self::build_continuation_embed(p, chunk)
                                 };
-                                msg.channel_id.send_message(&ctx.http, |m| m.set_embed(embed)).await?;
+                                msg.channel_id
+                                    .send_message(&ctx.http, |m| m.set_embed(embed))
+                                    .await?;
                             } else {
                                 // Fallback to plain text if persona not found
                                 msg.channel_id.say(&ctx.http, chunk).await?;
                             }
-                            debug!("[{}] ✅ Embed chunk {} sent successfully", request_id, i + 1);
+                            debug!(
+                                "[{}] ✅ Embed chunk {} sent successfully",
+                                request_id,
+                                i + 1
+                            );
                         }
                     }
                     info!("[{request_id}] ✅ All DM embed response chunks sent successfully");
                 } else {
-                    debug!("[{}] 📤 Sending DM embed response ({} chars)", request_id, ai_response.len());
+                    debug!(
+                        "[{}] 📤 Sending DM embed response ({} chars)",
+                        request_id,
+                        ai_response.len()
+                    );
                     if let Some(p) = persona {
                         let embed = Self::build_persona_embed(p, &ai_response);
-                        msg.channel_id.send_message(&ctx.http, |m| m.set_embed(embed)).await?;
+                        msg.channel_id
+                            .send_message(&ctx.http, |m| m.set_embed(embed))
+                            .await?;
                     } else {
                         // Fallback to plain text if persona not found
                         msg.channel_id.say(&ctx.http, &ai_response).await?;
@@ -521,7 +684,15 @@ impl CommandHandler {
 
                 // Store assistant response in conversation history
                 debug!("[{request_id}] 💾 Storing assistant response to conversation history");
-                self.database.store_message(&user_id, &channel_id, "assistant", &ai_response, Some(&user_persona)).await?;
+                self.database
+                    .store_message(
+                        &user_id,
+                        &channel_id,
+                        "assistant",
+                        &ai_response,
+                        Some(&user_persona),
+                    )
+                    .await?;
                 debug!("[{request_id}] ✅ Assistant response stored successfully");
 
                 // Track message sent with response time
@@ -534,7 +705,10 @@ impl CommandHandler {
                     ai_response.len(),
                     response_time_ms,
                 );
-                debug!("[{request_id}] 📊 Tracked message sent (response time: {}ms)", response_time_ms);
+                debug!(
+                    "[{request_id}] 📊 Tracked message sent (response time: {}ms)",
+                    response_time_ms
+                );
             }
             Err(e) => {
                 typing.stop();
@@ -557,28 +731,43 @@ impl CommandHandler {
         Ok(())
     }
 
-    async fn handle_mention_message_with_id(&self, ctx: &Context, msg: &Message, request_id: Uuid) -> Result<()> {
+    async fn handle_mention_message_with_id(
+        &self,
+        ctx: &Context,
+        msg: &Message,
+        request_id: Uuid,
+    ) -> Result<()> {
         let user_id = msg.author.id.to_string();
         let channel_id = msg.channel_id.to_string();
         let guild_id = msg.guild_id.map(|id| id.to_string());
         let guild_id_opt = guild_id.as_deref();
         let user_message = msg.content.trim();
 
-        debug!("[{}] 🏷️ Processing mention in channel | User: {} | Message: '{}'",
-               request_id, user_id, user_message.chars().take(100).collect::<String>());
+        debug!(
+            "[{}] 🏷️ Processing mention in channel | User: {} | Message: '{}'",
+            request_id,
+            user_id,
+            user_message.chars().take(100).collect::<String>()
+        );
 
         // Get user's persona with channel override -> user -> guild default cascade
         debug!("[{request_id}] 🎭 Fetching user persona from database");
         let user_persona = if let Some(gid) = guild_id_opt {
-            self.database.get_persona_with_channel(&user_id, gid, &channel_id).await?
+            self.database
+                .get_persona_with_channel(&user_id, gid, &channel_id)
+                .await?
         } else {
-            self.database.get_user_persona_with_guild(&user_id, None).await?
+            self.database
+                .get_user_persona_with_guild(&user_id, None)
+                .await?
         };
         debug!("[{request_id}] 🎭 User persona: {user_persona}");
 
         // Get max_context_messages from guild settings
         let max_context = if let Some(gid) = guild_id_opt {
-            self.database.get_guild_setting(gid, "max_context_messages").await?
+            self.database
+                .get_guild_setting(gid, "max_context_messages")
+                .await?
                 .and_then(|v| v.parse::<i64>().ok())
                 .unwrap_or(40)
         } else {
@@ -594,8 +783,12 @@ impl CommandHandler {
 
         // If in a thread and user seems to be asking about files, fetch thread attachments
         if is_thread && self.seems_like_file_question(user_message) && all_attachments.is_empty() {
-            info!("[{request_id}] 📎 User asking about files in thread, fetching thread attachments");
-            let thread_attachments = self.fetch_thread_attachments(ctx, msg.channel_id, 20, request_id).await?;
+            info!(
+                "[{request_id}] 📎 User asking about files in thread, fetching thread attachments"
+            );
+            let thread_attachments = self
+                .fetch_thread_attachments(ctx, msg.channel_id, 20, request_id)
+                .await?;
             all_attachments.extend(thread_attachments);
         }
 
@@ -606,7 +799,10 @@ impl CommandHandler {
         let enhanced_message = if attachment_context.is_empty() {
             user_message.to_string()
         } else {
-            info!("[{request_id}] 📎 Including {} text attachment(s) in context", all_attachments.len());
+            info!(
+                "[{request_id}] 📎 Including {} text attachment(s) in context",
+                all_attachments.len()
+            );
             format!("{}{}", attachment_context, user_message)
         };
 
@@ -614,20 +810,35 @@ impl CommandHandler {
         let conversation_history = if is_thread {
             // Thread context: Fetch messages from Discord
             info!("[{request_id}] 🧵 Fetching thread context from Discord");
-            self.fetch_thread_messages(ctx, msg, max_context as u8, request_id).await?
+            self.fetch_thread_messages(ctx, msg, max_context as u8, request_id)
+                .await?
         } else {
             // Channel context: Use database history
             info!("[{request_id}] 📚 Fetching channel context from database");
 
             // Store user message in conversation history for channels (store original, not enhanced)
             debug!("[{request_id}] 💾 Storing user message to conversation history");
-            self.database.store_message(&user_id, &channel_id, "user", user_message, Some(&user_persona)).await?;
+            self.database
+                .store_message(
+                    &user_id,
+                    &channel_id,
+                    "user",
+                    user_message,
+                    Some(&user_persona),
+                )
+                .await?;
             debug!("[{request_id}] ✅ User message stored successfully");
 
-            self.database.get_conversation_history(&user_id, &channel_id, max_context).await?
+            self.database
+                .get_conversation_history(&user_id, &channel_id, max_context)
+                .await?
         };
 
-        info!("[{}] 📚 Retrieved {} historical messages for context", request_id, conversation_history.len());
+        info!(
+            "[{}] 📚 Retrieved {} historical messages for context",
+            request_id,
+            conversation_history.len()
+        );
 
         // Show typing indicator while processing
         debug!("[{request_id}] ⌨️ Starting typing indicator");
@@ -635,27 +846,51 @@ impl CommandHandler {
 
         // Get channel verbosity for guild channels
         let verbosity = if let Some(guild_id) = msg.guild_id {
-            self.database.get_channel_verbosity(&guild_id.to_string(), &channel_id).await?
+            self.database
+                .get_channel_verbosity(&guild_id.to_string(), &channel_id)
+                .await?
         } else {
             "concise".to_string()
         };
 
         // Build system prompt without modifier (conversational mode), with verbosity
         debug!("[{request_id}] 📝 Building system prompt | Persona: {user_persona} | Verbosity: {verbosity}");
-        let system_prompt = self.persona_manager.get_system_prompt_with_verbosity(&user_persona, None, &verbosity);
-        debug!("[{}] ✅ System prompt generated | Length: {} chars", request_id, system_prompt.len());
+        let system_prompt =
+            self.persona_manager
+                .get_system_prompt_with_verbosity(&user_persona, None, &verbosity);
+        debug!(
+            "[{}] ✅ System prompt generated | Length: {} chars",
+            request_id,
+            system_prompt.len()
+        );
 
         // Log usage
         debug!("[{request_id}] 📊 Logging usage to database");
-        self.database.log_usage(&user_id, "mention_chat", Some(&user_persona)).await?;
+        self.database
+            .log_usage(&user_id, "mention_chat", Some(&user_persona))
+            .await?;
         debug!("[{request_id}] ✅ Usage logged successfully");
 
         // Get AI response with conversation history (use enhanced message with attachments)
         info!("[{request_id}] 🚀 Calling OpenAI API for mention response");
-        match self.get_ai_response_with_context(&system_prompt, &enhanced_message, conversation_history, request_id, Some(&user_id), guild_id_opt, Some(&channel_id)).await {
+        match self
+            .get_ai_response_with_context(
+                &system_prompt,
+                &enhanced_message,
+                conversation_history,
+                request_id,
+                Some(&user_id),
+                guild_id_opt,
+                Some(&channel_id),
+            )
+            .await
+        {
             Ok(ai_response) => {
-                info!("[{}] ✅ OpenAI response received | Response length: {}",
-                      request_id, ai_response.len());
+                info!(
+                    "[{}] ✅ OpenAI response received | Response length: {}",
+                    request_id,
+                    ai_response.len()
+                );
 
                 // Stop typing
                 typing.stop();
@@ -663,7 +898,9 @@ impl CommandHandler {
 
                 // Check if embeds are enabled for this guild
                 let use_embeds = if let Some(gid) = guild_id_opt {
-                    self.database.get_guild_setting(gid, "response_embeds").await
+                    self.database
+                        .get_guild_setting(gid, "response_embeds")
+                        .await
                         .unwrap_or(None)
                         .map(|v| v != "disabled")
                         .unwrap_or(true) // Default to enabled
@@ -681,17 +918,27 @@ impl CommandHandler {
                     // Embed description limit is 4096
                     if ai_response.len() > 4096 {
                         debug!("[{request_id}] 📄 Response too long for single embed, splitting into chunks");
-                        let chunks: Vec<&str> = ai_response.as_bytes()
+                        let chunks: Vec<&str> = ai_response
+                            .as_bytes()
                             .chunks(4096)
                             .map(|chunk| std::str::from_utf8(chunk).unwrap_or(""))
                             .collect();
 
-                        debug!("[{}] 📄 Split response into {} embed chunks", request_id, chunks.len());
+                        debug!(
+                            "[{}] 📄 Split response into {} embed chunks",
+                            request_id,
+                            chunks.len()
+                        );
 
                         for (i, chunk) in chunks.iter().enumerate() {
                             if !chunk.trim().is_empty() {
-                                debug!("[{}] 📤 Sending embed chunk {} of {} ({} chars)",
-                                       request_id, i + 1, chunks.len(), chunk.len());
+                                debug!(
+                                    "[{}] 📤 Sending embed chunk {} of {} ({} chars)",
+                                    request_id,
+                                    i + 1,
+                                    chunks.len(),
+                                    chunk.len()
+                                );
 
                                 // First chunk gets full embed with author, rest are continuation
                                 let embed = if i == 0 {
@@ -699,32 +946,55 @@ impl CommandHandler {
                                 } else {
                                     Self::build_continuation_embed(p, chunk)
                                 };
-                                msg.channel_id.send_message(&ctx.http, |m| m.set_embed(embed)).await?;
-                                debug!("[{}] ✅ Embed chunk {} sent successfully", request_id, i + 1);
+                                msg.channel_id
+                                    .send_message(&ctx.http, |m| m.set_embed(embed))
+                                    .await?;
+                                debug!(
+                                    "[{}] ✅ Embed chunk {} sent successfully",
+                                    request_id,
+                                    i + 1
+                                );
                             }
                         }
-                        info!("[{request_id}] ✅ All mention embed response chunks sent successfully");
+                        info!(
+                            "[{request_id}] ✅ All mention embed response chunks sent successfully"
+                        );
                     } else {
-                        debug!("[{}] 📤 Sending mention embed response ({} chars)", request_id, ai_response.len());
+                        debug!(
+                            "[{}] 📤 Sending mention embed response ({} chars)",
+                            request_id,
+                            ai_response.len()
+                        );
                         let embed = Self::build_persona_embed(p, &ai_response);
-                        msg.channel_id.send_message(&ctx.http, |m| m.set_embed(embed)).await?;
+                        msg.channel_id
+                            .send_message(&ctx.http, |m| m.set_embed(embed))
+                            .await?;
                         info!("[{request_id}] ✅ Mention embed response sent successfully");
                     }
                 } else {
                     // Plain text fallback (legacy behavior or embeds disabled)
                     if ai_response.len() > 2000 {
                         debug!("[{request_id}] 📄 Response too long, splitting into chunks");
-                        let chunks: Vec<&str> = ai_response.as_bytes()
+                        let chunks: Vec<&str> = ai_response
+                            .as_bytes()
                             .chunks(2000)
                             .map(|chunk| std::str::from_utf8(chunk).unwrap_or(""))
                             .collect();
 
-                        debug!("[{}] 📄 Split response into {} chunks", request_id, chunks.len());
+                        debug!(
+                            "[{}] 📄 Split response into {} chunks",
+                            request_id,
+                            chunks.len()
+                        );
 
                         // First chunk as threaded reply
                         if let Some(first_chunk) = chunks.first() {
                             if !first_chunk.trim().is_empty() {
-                                debug!("[{}] 📤 Sending first chunk as reply ({} chars)", request_id, first_chunk.len());
+                                debug!(
+                                    "[{}] 📤 Sending first chunk as reply ({} chars)",
+                                    request_id,
+                                    first_chunk.len()
+                                );
                                 msg.reply(&ctx.http, first_chunk).await?;
                                 debug!("[{request_id}] ✅ First chunk sent as reply");
                             }
@@ -733,15 +1003,24 @@ impl CommandHandler {
                         // Remaining chunks as regular messages in the thread
                         for (i, chunk) in chunks.iter().skip(1).enumerate() {
                             if !chunk.trim().is_empty() {
-                                debug!("[{}] 📤 Sending chunk {} of {} ({} chars)",
-                                       request_id, i + 2, chunks.len(), chunk.len());
+                                debug!(
+                                    "[{}] 📤 Sending chunk {} of {} ({} chars)",
+                                    request_id,
+                                    i + 2,
+                                    chunks.len(),
+                                    chunk.len()
+                                );
                                 msg.channel_id.say(&ctx.http, chunk).await?;
                                 debug!("[{}] ✅ Chunk {} sent successfully", request_id, i + 2);
                             }
                         }
                         info!("[{request_id}] ✅ All mention response chunks sent successfully");
                     } else {
-                        debug!("[{}] 📤 Sending mention response as reply ({} chars)", request_id, ai_response.len());
+                        debug!(
+                            "[{}] 📤 Sending mention response as reply ({} chars)",
+                            request_id,
+                            ai_response.len()
+                        );
                         msg.reply(&ctx.http, &ai_response).await?;
                         info!("[{request_id}] ✅ Mention response sent successfully");
                     }
@@ -750,7 +1029,15 @@ impl CommandHandler {
                 // Store assistant response in conversation history (only for channels, not threads)
                 if !is_thread {
                     debug!("[{request_id}] 💾 Storing assistant response to conversation history");
-                    self.database.store_message(&user_id, &channel_id, "assistant", &ai_response, Some(&user_persona)).await?;
+                    self.database
+                        .store_message(
+                            &user_id,
+                            &channel_id,
+                            "assistant",
+                            &ai_response,
+                            Some(&user_persona),
+                        )
+                        .await?;
                     debug!("[{request_id}] ✅ Assistant response stored successfully");
                 } else {
                     debug!("[{request_id}] 🧵 Skipping database storage for thread (will fetch from Discord next time)");
@@ -777,15 +1064,24 @@ impl CommandHandler {
         Ok(())
     }
 
-    pub async fn handle_slash_command(&self, ctx: &Context, command: &ApplicationCommandInteraction) -> Result<()> {
+    pub async fn handle_slash_command(
+        &self,
+        ctx: &Context,
+        command: &ApplicationCommandInteraction,
+    ) -> Result<()> {
         let request_id = Uuid::new_v4();
         let user_id = command.user.id.to_string();
         let channel_id = command.channel_id.to_string();
-        let guild_id = command.guild_id.map(|id| id.to_string()).unwrap_or_else(|| "DM".to_string());
-        
-        info!("[{}] 📥 Slash command received | Command: {} | User: {} | Channel: {} | Guild: {}", 
-              request_id, command.data.name, user_id, channel_id, guild_id);
-        
+        let guild_id = command
+            .guild_id
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| "DM".to_string());
+
+        info!(
+            "[{}] 📥 Slash command received | Command: {} | User: {} | Channel: {} | Guild: {}",
+            request_id, command.data.name, user_id, channel_id, guild_id
+        );
+
         debug!("[{request_id}] 🔍 Checking rate limit for user: {user_id}");
         if !self.rate_limiter.wait_for_rate_limit(&user_id).await {
             warn!("[{request_id}] 🚫 Rate limit exceeded for user: {user_id} in slash command");
@@ -804,20 +1100,26 @@ impl CommandHandler {
         }
         debug!("[{request_id}] ✅ Rate limit check passed");
 
-        info!("[{}] 🎯 Processing slash command: {} from user: {}", request_id, command.data.name, user_id);
+        info!(
+            "[{}] 🎯 Processing slash command: {} from user: {}",
+            request_id, command.data.name, user_id
+        );
 
         match command.data.name.as_str() {
             "ping" => {
                 debug!("[{request_id}] 🏓 Handling ping command");
-                self.handle_slash_ping_with_id(ctx, command, request_id).await?;
+                self.handle_slash_ping_with_id(ctx, command, request_id)
+                    .await?;
             }
             "help" => {
                 debug!("[{request_id}] 📚 Handling help command");
-                self.handle_slash_help_with_id(ctx, command, request_id).await?;
+                self.handle_slash_help_with_id(ctx, command, request_id)
+                    .await?;
             }
             "personas" => {
                 debug!("[{request_id}] 🎭 Handling personas command");
-                self.handle_slash_personas_with_id(ctx, command, request_id).await?;
+                self.handle_slash_personas_with_id(ctx, command, request_id)
+                    .await?;
             }
             "set_user" => {
                 debug!("[{request_id}] ⚙️ Handling set_user command");
@@ -825,23 +1127,34 @@ impl CommandHandler {
             }
             "forget" => {
                 debug!("[{request_id}] 🧹 Handling forget command");
-                self.handle_slash_forget_with_id(ctx, command, request_id).await?;
+                self.handle_slash_forget_with_id(ctx, command, request_id)
+                    .await?;
             }
             "hey" | "explain" | "simple" | "steps" | "recipe" => {
-                debug!("[{}] 🤖 Handling AI command: {}", request_id, command.data.name);
-                self.handle_slash_ai_command_with_id(ctx, command, request_id).await?;
+                debug!(
+                    "[{}] 🤖 Handling AI command: {}",
+                    request_id, command.data.name
+                );
+                self.handle_slash_ai_command_with_id(ctx, command, request_id)
+                    .await?;
             }
             "imagine" => {
                 debug!("[{request_id}] 🎨 Handling imagine command");
-                self.handle_slash_imagine_with_id(ctx, command, request_id).await?;
+                self.handle_slash_imagine_with_id(ctx, command, request_id)
+                    .await?;
             }
             "Analyze Message" | "Explain Message" => {
-                debug!("[{}] 🔍 Handling context menu message command: {}", request_id, command.data.name);
-                self.handle_context_menu_message_with_id(ctx, command, request_id).await?;
+                debug!(
+                    "[{}] 🔍 Handling context menu message command: {}",
+                    request_id, command.data.name
+                );
+                self.handle_context_menu_message_with_id(ctx, command, request_id)
+                    .await?;
             }
             "Analyze User" => {
                 debug!("[{request_id}] 👤 Handling context menu user command");
-                self.handle_context_menu_user_with_id(ctx, command, request_id).await?;
+                self.handle_context_menu_user_with_id(ctx, command, request_id)
+                    .await?;
             }
             // Admin commands
             "set_channel" => {
@@ -913,7 +1226,8 @@ impl CommandHandler {
             }
             "session_history" => {
                 debug!("[{request_id}] 📜 Handling session_history command");
-                self.handle_slash_session_history(ctx, command, request_id).await?;
+                self.handle_slash_session_history(ctx, command, request_id)
+                    .await?;
             }
             "debate" => {
                 debug!("[{request_id}] 🎭 Handling debate command");
@@ -927,12 +1241,28 @@ impl CommandHandler {
                 debug!("[{request_id}] 🏛️ Handling council command");
                 self.handle_slash_council(ctx, command, request_id).await?;
             }
+            "conclude" => {
+                debug!("[{request_id}] 🔚 Handling conclude command");
+                self.handle_slash_conclude(ctx, command, request_id).await?;
+            }
             cmd_name => {
                 // Check if this is a plugin command
                 if let Some(ref pm) = self.plugin_manager {
-                    if let Some(plugin) = pm.config.plugins.iter().find(|p| p.enabled && p.command.name == cmd_name) {
+                    if let Some(plugin) = pm
+                        .config
+                        .plugins
+                        .iter()
+                        .find(|p| p.enabled && p.command.name == cmd_name)
+                    {
                         debug!("[{}] 🔌 Handling plugin command: {}", request_id, cmd_name);
-                        self.handle_plugin_command(ctx, command, plugin.clone(), pm.clone(), request_id).await?;
+                        self.handle_plugin_command(
+                            ctx,
+                            command,
+                            plugin.clone(),
+                            pm.clone(),
+                            request_id,
+                        )
+                        .await?;
                     } else {
                         warn!("[{}] ❓ Unknown slash command: {}", request_id, cmd_name);
                         debug!("[{request_id}] 📤 Sending unknown command response to Discord");
@@ -982,8 +1312,10 @@ impl CommandHandler {
         let user_id = command.user.id.to_string();
         let guild_id = command.guild_id.map(|id| id.to_string());
 
-        info!("[{}] 🔌 Processing plugin command: {} | User: {} | Plugin: {}",
-              request_id, plugin.command.name, user_id, plugin.name);
+        info!(
+            "[{}] 🔌 Processing plugin command: {} | User: {} | Plugin: {}",
+            request_id, plugin.command.name, user_id, plugin.name
+        );
 
         // Check guild_only restriction
         if plugin.security.guild_only && guild_id.is_none() {
@@ -992,7 +1324,8 @@ impl CommandHandler {
                     response
                         .kind(InteractionResponseType::ChannelMessageWithSource)
                         .interaction_response_data(|message| {
-                            message.content("This command can only be used in a server, not in DMs.")
+                            message
+                                .content("This command can only be used in a server, not in DMs.")
                                 .ephemeral(true)
                         })
                 })
@@ -1002,17 +1335,22 @@ impl CommandHandler {
 
         // Check cooldown
         if plugin.security.cooldown_seconds > 0 {
-            if !plugin_manager.job_manager.check_cooldown(&user_id, &plugin.name, plugin.security.cooldown_seconds) {
+            if !plugin_manager.job_manager.check_cooldown(
+                &user_id,
+                &plugin.name,
+                plugin.security.cooldown_seconds,
+            ) {
                 command
                     .create_interaction_response(&ctx.http, |response| {
                         response
                             .kind(InteractionResponseType::ChannelMessageWithSource)
                             .interaction_response_data(|message| {
-                                message.content(format!(
+                                message
+                                    .content(format!(
                                     "Please wait before using `{}` again. Cooldown: {} seconds.",
                                     plugin.command.name, plugin.security.cooldown_seconds
                                 ))
-                                .ephemeral(true)
+                                    .ephemeral(true)
                             })
                     })
                     .await?;
@@ -1109,7 +1447,11 @@ impl CommandHandler {
                         response
                             .kind(InteractionResponseType::ChannelMessageWithSource)
                             .interaction_response_data(|message| {
-                                message.content(format!("Missing required parameter: `{}`.", opt_def.name))
+                                message
+                                    .content(format!(
+                                        "Missing required parameter: `{}`.",
+                                        opt_def.name
+                                    ))
                                     .ephemeral(true)
                             })
                     })
@@ -1120,14 +1462,18 @@ impl CommandHandler {
 
         // Check if plugins feature is enabled for this guild
         if let Some(ref gid) = guild_id {
-            let enabled = self.database.is_feature_enabled("plugins", None, Some(gid)).await?;
+            let enabled = self
+                .database
+                .is_feature_enabled("plugins", None, Some(gid))
+                .await?;
             if !enabled {
                 command
                     .create_interaction_response(&ctx.http, |response| {
                         response
                             .kind(InteractionResponseType::ChannelMessageWithSource)
                             .interaction_response_data(|message| {
-                                message.content("Plugin commands are disabled in this server.")
+                                message
+                                    .content("Plugin commands are disabled in this server.")
                                     .ephemeral(true)
                             })
                     })
@@ -1138,8 +1484,21 @@ impl CommandHandler {
 
         // Handle virtual plugins (no CLI execution, handled internally)
         if plugin.is_virtual() {
-            info!("[{}] 🔧 Handling virtual plugin: {}", request_id, plugin.command.name);
-            return self.handle_virtual_plugin(ctx, command, &plugin, &plugin_manager, &params, &user_id, request_id).await;
+            info!(
+                "[{}] 🔧 Handling virtual plugin: {}",
+                request_id, plugin.command.name
+            );
+            return self
+                .handle_virtual_plugin(
+                    ctx,
+                    command,
+                    &plugin,
+                    &plugin_manager,
+                    &params,
+                    &user_id,
+                    request_id,
+                )
+                .await;
         }
 
         // Defer the response (command will take a while)
@@ -1152,7 +1511,10 @@ impl CommandHandler {
             })
             .await?;
 
-        info!("[{}] ⏳ Deferred response for plugin command: {}", request_id, plugin.command.name);
+        info!(
+            "[{}] ⏳ Deferred response for plugin command: {}",
+            request_id, plugin.command.name
+        );
 
         // Clone values needed for the background task
         let http = ctx.http.clone();
@@ -1180,10 +1542,12 @@ impl CommandHandler {
         tokio::spawn(async move {
             // Check if this should use chunked transcription
             let use_chunking = plugin_manager.should_use_chunking(&plugin);
-            let is_youtube = params.get("url")
+            let is_youtube = params
+                .get("url")
                 .map(|u| u.contains("youtube.com") || u.contains("youtu.be"))
                 .unwrap_or(false);
-            let is_playlist = params.get("url")
+            let is_playlist = params
+                .get("url")
                 .map(|u| u.contains("playlist?list=") || u.contains("&list="))
                 .unwrap_or(false);
 
@@ -1194,41 +1558,54 @@ impl CommandHandler {
                     .await
                     .unwrap_or_else(|| "Video".to_string());
 
-                info!("[{}] 📦 Using chunked transcription for: {}", request_id, video_title);
+                info!(
+                    "[{}] 📦 Using chunked transcription for: {}",
+                    request_id, video_title
+                );
 
-                plugin_manager.execute_chunked_transcription(
-                    http,
-                    plugin.clone(),
-                    url,
-                    video_title,
-                    params,
-                    user_id_owned,
-                    guild_id_owned,
-                    discord_channel_id,
-                    interaction_info,
-                    is_thread,
-                ).await
+                plugin_manager
+                    .execute_chunked_transcription(
+                        http,
+                        plugin.clone(),
+                        url,
+                        video_title,
+                        params,
+                        user_id_owned,
+                        guild_id_owned,
+                        discord_channel_id,
+                        interaction_info,
+                        is_thread,
+                    )
+                    .await
             } else {
                 // Use regular execution
-                plugin_manager.execute_plugin(
-                    http,
-                    plugin.clone(),
-                    params,
-                    user_id_owned,
-                    guild_id_owned,
-                    discord_channel_id,
-                    interaction_info,
-                    is_thread,
-                ).await
+                plugin_manager
+                    .execute_plugin(
+                        http,
+                        plugin.clone(),
+                        params,
+                        user_id_owned,
+                        guild_id_owned,
+                        discord_channel_id,
+                        interaction_info,
+                        is_thread,
+                    )
+                    .await
             };
 
             match result {
                 Ok(job_id) => {
-                    info!("[{}] ✅ Plugin job started: {} (job_id: {})", request_id, plugin.name, job_id);
+                    info!(
+                        "[{}] ✅ Plugin job started: {} (job_id: {})",
+                        request_id, plugin.name, job_id
+                    );
                     // Note: execute_plugin/execute_chunked_transcription handles editing the interaction response
                 }
                 Err(e) => {
-                    error!("[{}] ❌ Plugin execution failed: {} - {}", request_id, plugin.name, e);
+                    error!(
+                        "[{}] ❌ Plugin execution failed: {} - {}",
+                        request_id, plugin.name, e
+                    );
 
                     // Edit the deferred response with error
                     let edit_url = format!(
@@ -1267,20 +1644,33 @@ impl CommandHandler {
 
         match plugin.command.name.as_str() {
             "transcribe_cancel" => {
-                self.handle_transcribe_cancel(ctx, command, plugin_manager, params, user_id, request_id).await
+                self.handle_transcribe_cancel(
+                    ctx,
+                    command,
+                    plugin_manager,
+                    params,
+                    user_id,
+                    request_id,
+                )
+                .await
             }
             "transcribe_status" => {
-                self.handle_transcribe_status(ctx, command, plugin_manager, user_id, request_id).await
+                self.handle_transcribe_status(ctx, command, plugin_manager, user_id, request_id)
+                    .await
             }
             _ => {
                 // Unknown virtual plugin
-                warn!("[{}] ❓ Unknown virtual plugin: {}", request_id, plugin.command.name);
+                warn!(
+                    "[{}] ❓ Unknown virtual plugin: {}",
+                    request_id, plugin.command.name
+                );
                 command
                     .create_interaction_response(&ctx.http, |response| {
                         response
                             .kind(InteractionResponseType::ChannelMessageWithSource)
                             .interaction_response_data(|message| {
-                                message.content("This command is not yet implemented.")
+                                message
+                                    .content("This command is not yet implemented.")
                                     .ephemeral(true)
                             })
                     })
@@ -1300,10 +1690,13 @@ impl CommandHandler {
         user_id: &str,
         request_id: Uuid,
     ) -> Result<()> {
-        use serenity::model::application::interaction::InteractionResponseType;
         use crate::features::plugins::short_job_id;
+        use serenity::model::application::interaction::InteractionResponseType;
 
-        info!("[{}] 🛑 Processing transcribe_cancel for user {}", request_id, user_id);
+        info!(
+            "[{}] 🛑 Processing transcribe_cancel for user {}",
+            request_id, user_id
+        );
 
         // Get optional job_id parameter
         let job_id_param = params.get("job_id").cloned();
@@ -1312,37 +1705,54 @@ impl CommandHandler {
         let job_to_cancel = if let Some(job_id) = job_id_param {
             // User specified a job ID - look for it
             // Try to find by full ID or short ID prefix
-            let active_jobs = plugin_manager.job_manager.get_user_active_playlist_jobs(user_id);
-            active_jobs.into_iter().find(|j| j.id == job_id || j.id.starts_with(&job_id))
+            let active_jobs = plugin_manager
+                .job_manager
+                .get_user_active_playlist_jobs(user_id);
+            active_jobs
+                .into_iter()
+                .find(|j| j.id == job_id || j.id.starts_with(&job_id))
         } else {
             // No job ID specified - get user's most recent active job
-            let active_jobs = plugin_manager.job_manager.get_user_active_playlist_jobs(user_id);
+            let active_jobs = plugin_manager
+                .job_manager
+                .get_user_active_playlist_jobs(user_id);
             active_jobs.into_iter().next()
         };
 
         match job_to_cancel {
             Some(job) => {
                 let job_id = job.id.clone();
-                let job_title = job.playlist_title.clone().unwrap_or_else(|| "Untitled".to_string());
+                let job_title = job
+                    .playlist_title
+                    .clone()
+                    .unwrap_or_else(|| "Untitled".to_string());
 
                 // Cancel the job
-                match plugin_manager.job_manager.cancel_playlist_job(&job_id, user_id).await {
+                match plugin_manager
+                    .job_manager
+                    .cancel_playlist_job(&job_id, user_id)
+                    .await
+                {
                     Ok(true) => {
-                        info!("[{}] ✅ Cancelled playlist job {} for user {}", request_id, job_id, user_id);
+                        info!(
+                            "[{}] ✅ Cancelled playlist job {} for user {}",
+                            request_id, job_id, user_id
+                        );
                         command
                             .create_interaction_response(&ctx.http, |response| {
                                 response
                                     .kind(InteractionResponseType::ChannelMessageWithSource)
                                     .interaction_response_data(|message| {
-                                        message.content(format!(
-                                            "✅ Cancelled transcription job `{}` ({})\n\
+                                        message
+                                            .content(format!(
+                                                "✅ Cancelled transcription job `{}` ({})\n\
                                              Progress: {}/{} videos completed",
-                                            short_job_id(&job_id),
-                                            job_title,
-                                            job.completed_videos,
-                                            job.total_videos
-                                        ))
-                                        .ephemeral(true)
+                                                short_job_id(&job_id),
+                                                job_title,
+                                                job.completed_videos,
+                                                job.total_videos
+                                            ))
+                                            .ephemeral(true)
                                     })
                             })
                             .await?;
@@ -1354,12 +1764,13 @@ impl CommandHandler {
                                 response
                                     .kind(InteractionResponseType::ChannelMessageWithSource)
                                     .interaction_response_data(|message| {
-                                        message.content(format!(
-                                            "⚠️ Job `{}` is no longer active (status: {})",
-                                            short_job_id(&job_id),
-                                            job.status
-                                        ))
-                                        .ephemeral(true)
+                                        message
+                                            .content(format!(
+                                                "⚠️ Job `{}` is no longer active (status: {})",
+                                                short_job_id(&job_id),
+                                                job.status
+                                            ))
+                                            .ephemeral(true)
                                     })
                             })
                             .await?;
@@ -1371,7 +1782,8 @@ impl CommandHandler {
                                 response
                                     .kind(InteractionResponseType::ChannelMessageWithSource)
                                     .interaction_response_data(|message| {
-                                        message.content(format!("❌ Failed to cancel job: {}", e))
+                                        message
+                                            .content(format!("❌ Failed to cancel job: {}", e))
                                             .ephemeral(true)
                                     })
                             })
@@ -1386,8 +1798,11 @@ impl CommandHandler {
                         response
                             .kind(InteractionResponseType::ChannelMessageWithSource)
                             .interaction_response_data(|message| {
-                                message.content("❌ No active transcription job found to cancel.\n\
-                                                 Use `/transcribe_status` to view your jobs.")
+                                message
+                                    .content(
+                                        "❌ No active transcription job found to cancel.\n\
+                                                 Use `/transcribe_status` to view your jobs.",
+                                    )
                                     .ephemeral(true)
                             })
                     })
@@ -1407,18 +1822,30 @@ impl CommandHandler {
         user_id: &str,
         request_id: Uuid,
     ) -> Result<()> {
-        use serenity::model::application::interaction::InteractionResponseType;
         use crate::features::plugins::short_job_id;
+        use serenity::model::application::interaction::InteractionResponseType;
 
-        info!("[{}] 📊 Processing transcribe_status for user {}", request_id, user_id);
+        info!(
+            "[{}] 📊 Processing transcribe_status for user {}",
+            request_id, user_id
+        );
 
         // Get user's active playlist jobs
-        let active_jobs = plugin_manager.job_manager.get_user_active_playlist_jobs(user_id);
+        let active_jobs = plugin_manager
+            .job_manager
+            .get_user_active_playlist_jobs(user_id);
 
         // Get user's regular (single video) jobs
         let all_jobs = plugin_manager.job_manager.get_user_jobs(user_id);
-        let active_video_jobs: Vec<_> = all_jobs.into_iter()
-            .filter(|j| matches!(j.status, crate::features::plugins::JobStatus::Running | crate::features::plugins::JobStatus::Pending))
+        let active_video_jobs: Vec<_> = all_jobs
+            .into_iter()
+            .filter(|j| {
+                matches!(
+                    j.status,
+                    crate::features::plugins::JobStatus::Running
+                        | crate::features::plugins::JobStatus::Pending
+                )
+            })
             .collect();
 
         if active_jobs.is_empty() && active_video_jobs.is_empty() {
@@ -1427,8 +1854,11 @@ impl CommandHandler {
                     response
                         .kind(InteractionResponseType::ChannelMessageWithSource)
                         .interaction_response_data(|message| {
-                            message.content("📭 You have no active transcription jobs.\n\
-                                            Use `/transcribe <url>` to start a transcription.")
+                            message
+                                .content(
+                                    "📭 You have no active transcription jobs.\n\
+                                            Use `/transcribe <url>` to start a transcription.",
+                                )
                                 .ephemeral(true)
                         })
                 })
@@ -1463,15 +1893,28 @@ impl CommandHandler {
         if !active_video_jobs.is_empty() {
             status_lines.push("\n**Video Jobs:**".to_string());
             for job in &active_video_jobs {
-                let url = job.params.get("url").map(|u| {
-                    if u.len() > 50 { format!("{}...", &u[..47]) } else { u.clone() }
-                }).unwrap_or_else(|| "Unknown".to_string());
+                let url = job
+                    .params
+                    .get("url")
+                    .map(|u| {
+                        if u.len() > 50 {
+                            format!("{}...", &u[..47])
+                        } else {
+                            u.clone()
+                        }
+                    })
+                    .unwrap_or_else(|| "Unknown".to_string());
                 let status = match job.status {
                     crate::features::plugins::JobStatus::Running => "🔄 Running",
                     crate::features::plugins::JobStatus::Pending => "⏳ Pending",
                     _ => "❓ Unknown",
                 };
-                status_lines.push(format!("• `{}` {} - {}", short_job_id(&job.id), url, status));
+                status_lines.push(format!(
+                    "• `{}` {} - {}",
+                    short_job_id(&job.id),
+                    url,
+                    status
+                ));
             }
         }
 
@@ -1482,8 +1925,7 @@ impl CommandHandler {
                 response
                     .kind(InteractionResponseType::ChannelMessageWithSource)
                     .interaction_response_data(|message| {
-                        message.content(status_lines.join("\n"))
-                            .ephemeral(true)
+                        message.content(status_lines.join("\n")).ephemeral(true)
                     })
             })
             .await?;
@@ -1491,7 +1933,12 @@ impl CommandHandler {
         Ok(())
     }
 
-    async fn handle_text_command_with_id(&self, ctx: &Context, msg: &Message, request_id: Uuid) -> Result<()> {
+    async fn handle_text_command_with_id(
+        &self,
+        ctx: &Context,
+        msg: &Message,
+        request_id: Uuid,
+    ) -> Result<()> {
         let user_id = msg.author.id.to_string();
         let parts: Vec<&str> = msg.content.split_whitespace().collect();
 
@@ -1503,31 +1950,43 @@ impl CommandHandler {
         let command = parts[0];
         let args = &parts[1..];
 
-        info!("[{}] 🎯 Processing text command: {} | Args: {} | User: {}",
-              request_id, command, args.len(), user_id);
+        info!(
+            "[{}] 🎯 Processing text command: {} | Args: {} | User: {}",
+            request_id,
+            command,
+            args.len(),
+            user_id
+        );
 
         match command {
             "/help" => {
                 debug!("[{request_id}] 📚 Processing help command");
-                self.handle_help_command_with_id(ctx, msg, request_id).await?;
+                self.handle_help_command_with_id(ctx, msg, request_id)
+                    .await?;
             }
             "/personas" => {
                 debug!("[{request_id}] 🎭 Processing personas command");
-                self.handle_personas_command_with_id(ctx, msg, request_id).await?;
+                self.handle_personas_command_with_id(ctx, msg, request_id)
+                    .await?;
             }
             "/set_persona" => {
                 debug!("[{request_id}] ⚙️ Processing set_persona command");
-                self.handle_set_persona_command_with_id(ctx, msg, args, request_id).await?;
+                self.handle_set_persona_command_with_id(ctx, msg, args, request_id)
+                    .await?;
             }
             "/hey" | "/explain" | "/simple" | "/steps" | "/recipe" => {
                 debug!("[{request_id}] 🤖 Processing AI command: {command}");
-                self.handle_ai_command_with_id(ctx, msg, command, args, request_id).await?;
+                self.handle_ai_command_with_id(ctx, msg, command, args, request_id)
+                    .await?;
             }
             _ => {
                 debug!("[{request_id}] ❓ Unknown command: {command}");
                 debug!("[{request_id}] 📤 Sending unknown command response to Discord");
                 msg.channel_id
-                    .say(&ctx.http, "Unknown command. Use `/help` to see available commands.")
+                    .say(
+                        &ctx.http,
+                        "Unknown command. Use `/help` to see available commands.",
+                    )
                     .await?;
                 info!("[{request_id}] ✅ Unknown command response sent successfully");
             }
@@ -1536,10 +1995,14 @@ impl CommandHandler {
         Ok(())
     }
 
-    async fn handle_slash_ping(&self, ctx: &Context, command: &ApplicationCommandInteraction) -> Result<()> {
+    async fn handle_slash_ping(
+        &self,
+        ctx: &Context,
+        command: &ApplicationCommandInteraction,
+    ) -> Result<()> {
         let user_id = command.user.id.to_string();
         self.database.log_usage(&user_id, "ping", None).await?;
-        
+
         command
             .create_interaction_response(&ctx.http, |response| {
                 response
@@ -1552,7 +2015,11 @@ impl CommandHandler {
         Ok(())
     }
 
-    async fn handle_slash_help(&self, ctx: &Context, command: &ApplicationCommandInteraction) -> Result<()> {
+    async fn handle_slash_help(
+        &self,
+        ctx: &Context,
+        command: &ApplicationCommandInteraction,
+    ) -> Result<()> {
         let help_text = r#"**Available Slash Commands:**
 `/ping` - Test bot responsiveness
 `/help` - Show this help message
@@ -1587,19 +2054,23 @@ Use the buttons below for more help or to try custom prompts!"#;
         Ok(())
     }
 
-    async fn handle_slash_personas(&self, ctx: &Context, command: &ApplicationCommandInteraction) -> Result<()> {
+    async fn handle_slash_personas(
+        &self,
+        ctx: &Context,
+        command: &ApplicationCommandInteraction,
+    ) -> Result<()> {
         let personas = self.persona_manager.list_personas();
         let mut response = "**Available Personas:**\n".to_string();
-        
+
         for (name, persona) in personas {
             response.push_str(&format!("• `{}` - {}\n", name, persona.description));
         }
-        
+
         let user_id = command.user.id.to_string();
         let current_persona = self.database.get_user_persona(&user_id).await?;
         response.push_str(&format!("\nYour current persona: `{current_persona}`"));
         response.push_str("\n\n**Quick Switch:**\nUse the dropdown below to change your persona!");
-        
+
         command
             .create_interaction_response(&ctx.http, |response_builder| {
                 response_builder
@@ -1669,11 +2140,19 @@ Use the buttons below for more help or to try custom prompts!"#;
         Ok(())
     }
 
-    async fn handle_slash_ai_command_with_id(&self, ctx: &Context, command: &ApplicationCommandInteraction, request_id: Uuid) -> Result<()> {
+    async fn handle_slash_ai_command_with_id(
+        &self,
+        ctx: &Context,
+        command: &ApplicationCommandInteraction,
+        request_id: Uuid,
+    ) -> Result<()> {
         let start_time = Instant::now();
-        
-        debug!("[{}] 🤖 Starting AI slash command processing | Command: {}", request_id, command.data.name);
-        
+
+        debug!(
+            "[{}] 🤖 Starting AI slash command processing | Command: {}",
+            request_id, command.data.name
+        );
+
         let option_name = match command.data.name.as_str() {
             "hey" => "message",
             "explain" => "topic",
@@ -1689,13 +2168,19 @@ Use the buttons below for more help or to try custom prompts!"#;
 
         let user_id = command.user.id.to_string();
         let channel_id = command.channel_id.to_string();
-        debug!("[{}] 👤 Processing for user: {} | Message: '{}'",
-               request_id, user_id, user_message.chars().take(100).collect::<String>());
+        debug!(
+            "[{}] 👤 Processing for user: {} | Message: '{}'",
+            request_id,
+            user_id,
+            user_message.chars().take(100).collect::<String>()
+        );
 
         // Get user's persona with channel override -> user -> guild default cascade
         debug!("[{request_id}] 🔍 Getting user persona from database");
         let user_persona = if let Some(guild_id) = command.guild_id {
-            self.database.get_persona_with_channel(&user_id, &guild_id.to_string(), &channel_id).await?
+            self.database
+                .get_persona_with_channel(&user_id, &guild_id.to_string(), &channel_id)
+                .await?
         } else {
             self.database.get_user_persona(&user_id).await?
         };
@@ -1711,17 +2196,29 @@ Use the buttons below for more help or to try custom prompts!"#;
 
         // Get channel verbosity (only for guild channels)
         let verbosity = if let Some(guild_id) = command.guild_id {
-            self.database.get_channel_verbosity(&guild_id.to_string(), &channel_id).await?
+            self.database
+                .get_channel_verbosity(&guild_id.to_string(), &channel_id)
+                .await?
         } else {
             "concise".to_string() // Default to concise for DMs
         };
 
         debug!("[{request_id}] 📝 Building system prompt | Persona: {user_persona} | Modifier: {modifier:?} | Verbosity: {verbosity}");
-        let system_prompt = self.persona_manager.get_system_prompt_with_verbosity(&user_persona, modifier, &verbosity);
-        debug!("[{}] ✅ System prompt generated | Length: {} chars", request_id, system_prompt.len());
+        let system_prompt = self.persona_manager.get_system_prompt_with_verbosity(
+            &user_persona,
+            modifier,
+            &verbosity,
+        );
+        debug!(
+            "[{}] ✅ System prompt generated | Length: {} chars",
+            request_id,
+            system_prompt.len()
+        );
 
         debug!("[{request_id}] 📊 Logging usage to database");
-        self.database.log_usage(&user_id, &command.data.name, Some(&user_persona)).await?;
+        self.database
+            .log_usage(&user_id, &command.data.name, Some(&user_persona))
+            .await?;
         debug!("[{request_id}] ✅ Usage logged successfully");
 
         // Immediately defer the interaction to prevent timeout (required within 3 seconds)
@@ -1742,7 +2239,18 @@ Use the buttons below for more help or to try custom prompts!"#;
         let guild_id_str = command.guild_id.map(|id| id.to_string());
         let channel_id_str = command.channel_id.to_string();
         info!("[{request_id}] 🚀 Calling OpenAI API");
-        match self.get_ai_response_with_context(&system_prompt, &user_message, Vec::new(), request_id, Some(&user_id), guild_id_str.as_deref(), Some(&channel_id_str)).await {
+        match self
+            .get_ai_response_with_context(
+                &system_prompt,
+                &user_message,
+                Vec::new(),
+                request_id,
+                Some(&user_id),
+                guild_id_str.as_deref(),
+                Some(&channel_id_str),
+            )
+            .await
+        {
             Ok(ai_response) => {
                 let processing_time = start_time.elapsed();
                 info!("[{}] ✅ OpenAI response received | Processing time: {:?} | Response length: {}",
@@ -1750,7 +2258,9 @@ Use the buttons below for more help or to try custom prompts!"#;
 
                 // Check if embeds are enabled for this guild
                 let use_embeds = if let Some(gid) = guild_id_str.as_deref() {
-                    self.database.get_guild_setting(gid, "response_embeds").await
+                    self.database
+                        .get_guild_setting(gid, "response_embeds")
+                        .await
                         .unwrap_or(None)
                         .map(|v| v != "disabled")
                         .unwrap_or(true) // Default to enabled
@@ -1767,12 +2277,17 @@ Use the buttons below for more help or to try custom prompts!"#;
                     // Embed description limit is 4096
                     if ai_response.len() > 4096 {
                         debug!("[{request_id}] 📄 Response too long for single embed, splitting into chunks");
-                        let chunks: Vec<&str> = ai_response.as_bytes()
+                        let chunks: Vec<&str> = ai_response
+                            .as_bytes()
                             .chunks(4096)
                             .map(|chunk| std::str::from_utf8(chunk).unwrap_or(""))
                             .collect();
 
-                        debug!("[{}] 📄 Split response into {} embed chunks", request_id, chunks.len());
+                        debug!(
+                            "[{}] 📄 Split response into {} embed chunks",
+                            request_id,
+                            chunks.len()
+                        );
 
                         if let Some(first_chunk) = chunks.first() {
                             debug!("[{}] 📤 Editing original interaction response with first embed chunk ({} chars)",
@@ -1793,8 +2308,13 @@ Use the buttons below for more help or to try custom prompts!"#;
                         // Send remaining chunks as follow-up embeds
                         for (i, chunk) in chunks.iter().skip(1).enumerate() {
                             if !chunk.trim().is_empty() {
-                                debug!("[{}] 📤 Sending follow-up embed {} of {} ({} chars)",
-                                       request_id, i + 2, chunks.len(), chunk.len());
+                                debug!(
+                                    "[{}] 📤 Sending follow-up embed {} of {} ({} chars)",
+                                    request_id,
+                                    i + 2,
+                                    chunks.len(),
+                                    chunk.len()
+                                );
                                 let embed = Self::build_continuation_embed(p, chunk);
                                 command
                                     .create_followup_message(&ctx.http, |message| {
@@ -1802,16 +2322,28 @@ Use the buttons below for more help or to try custom prompts!"#;
                                     })
                                     .await
                                     .map_err(|e| {
-                                        error!("[{}] ❌ Failed to send follow-up embed {}: {}", request_id, i + 2, e);
+                                        error!(
+                                            "[{}] ❌ Failed to send follow-up embed {}: {}",
+                                            request_id,
+                                            i + 2,
+                                            e
+                                        );
                                         anyhow::anyhow!("Failed to send follow-up message: {}", e)
                                     })?;
-                                debug!("[{}] ✅ Follow-up embed {} sent successfully", request_id, i + 2);
+                                debug!(
+                                    "[{}] ✅ Follow-up embed {} sent successfully",
+                                    request_id,
+                                    i + 2
+                                );
                             }
                         }
                         info!("[{request_id}] ✅ All embed response chunks sent successfully");
                     } else {
-                        debug!("[{}] 📤 Editing original interaction response with embed ({} chars)",
-                               request_id, ai_response.len());
+                        debug!(
+                            "[{}] 📤 Editing original interaction response with embed ({} chars)",
+                            request_id,
+                            ai_response.len()
+                        );
                         let embed = Self::build_persona_embed(p, &ai_response);
                         command
                             .edit_original_interaction_response(&ctx.http, |response| {
@@ -1828,12 +2360,17 @@ Use the buttons below for more help or to try custom prompts!"#;
                     // Plain text fallback (legacy behavior or embeds disabled)
                     if ai_response.len() > 2000 {
                         debug!("[{request_id}] 📄 Response too long, splitting into chunks");
-                        let chunks: Vec<&str> = ai_response.as_bytes()
+                        let chunks: Vec<&str> = ai_response
+                            .as_bytes()
                             .chunks(2000)
                             .map(|chunk| std::str::from_utf8(chunk).unwrap_or(""))
                             .collect();
 
-                        debug!("[{}] 📄 Split response into {} chunks", request_id, chunks.len());
+                        debug!(
+                            "[{}] 📄 Split response into {} chunks",
+                            request_id,
+                            chunks.len()
+                        );
 
                         if let Some(first_chunk) = chunks.first() {
                             debug!("[{}] 📤 Editing original interaction response with first chunk ({} chars)",
@@ -1853,18 +2390,32 @@ Use the buttons below for more help or to try custom prompts!"#;
                         // Send remaining chunks as follow-up messages
                         for (i, chunk) in chunks.iter().skip(1).enumerate() {
                             if !chunk.trim().is_empty() {
-                                debug!("[{}] 📤 Sending follow-up message {} of {} ({} chars)",
-                                       request_id, i + 2, chunks.len(), chunk.len());
+                                debug!(
+                                    "[{}] 📤 Sending follow-up message {} of {} ({} chars)",
+                                    request_id,
+                                    i + 2,
+                                    chunks.len(),
+                                    chunk.len()
+                                );
                                 command
                                     .create_followup_message(&ctx.http, |message| {
                                         message.content(chunk)
                                     })
                                     .await
                                     .map_err(|e| {
-                                        error!("[{}] ❌ Failed to send follow-up message {}: {}", request_id, i + 2, e);
+                                        error!(
+                                            "[{}] ❌ Failed to send follow-up message {}: {}",
+                                            request_id,
+                                            i + 2,
+                                            e
+                                        );
                                         anyhow::anyhow!("Failed to send follow-up message: {}", e)
                                     })?;
-                                debug!("[{}] ✅ Follow-up message {} sent successfully", request_id, i + 2);
+                                debug!(
+                                    "[{}] ✅ Follow-up message {} sent successfully",
+                                    request_id,
+                                    i + 2
+                                );
                             }
                         }
                         info!("[{request_id}] ✅ All response chunks sent successfully");
@@ -1880,7 +2431,9 @@ Use the buttons below for more help or to try custom prompts!"#;
                                 error!("[{request_id}] ❌ Failed to edit original interaction response: {e}");
                                 anyhow::anyhow!("Failed to edit original response: {}", e)
                             })?;
-                        info!("[{request_id}] ✅ Original interaction response edited successfully");
+                        info!(
+                            "[{request_id}] ✅ Original interaction response edited successfully"
+                        );
                     }
                 }
 
@@ -1890,7 +2443,7 @@ Use the buttons below for more help or to try custom prompts!"#;
             Err(e) => {
                 let processing_time = start_time.elapsed();
                 error!("[{request_id}] ❌ OpenAI API error after {processing_time:?}: {e}");
-                
+
                 let error_message = if e.to_string().contains("timed out") {
                     debug!("[{request_id}] ⏱️ Error type: timeout");
                     "⏱️ **Request timed out** - The AI service is taking too long to respond. Please try again with a shorter message or try again later."
@@ -1901,7 +2454,7 @@ Use the buttons below for more help or to try custom prompts!"#;
                     debug!("[{request_id}] ❓ Error type: unknown - {e}");
                     "❌ **Error processing request** - Something went wrong. Please try again later."
                 };
-                
+
                 debug!("[{request_id}] 📤 Sending error message to Discord: '{error_message}'");
                 command
                     .edit_original_interaction_response(&ctx.http, |response| {
@@ -1913,7 +2466,7 @@ Use the buttons below for more help or to try custom prompts!"#;
                         anyhow::anyhow!("Failed to send error response: {}", discord_err)
                     })?;
                 info!("[{request_id}] ✅ Error message sent to Discord successfully");
-                
+
                 let total_time = start_time.elapsed();
                 error!("[{request_id}] 💥 AI command failed | Total time: {total_time:?}");
             }
@@ -1922,7 +2475,12 @@ Use the buttons below for more help or to try custom prompts!"#;
         Ok(())
     }
 
-    async fn handle_slash_imagine_with_id(&self, ctx: &Context, command: &ApplicationCommandInteraction, request_id: Uuid) -> Result<()> {
+    async fn handle_slash_imagine_with_id(
+        &self,
+        ctx: &Context,
+        command: &ApplicationCommandInteraction,
+        request_id: Uuid,
+    ) -> Result<()> {
         let start_time = Instant::now();
         let user_id = command.user.id.to_string();
 
@@ -1930,7 +2488,9 @@ Use the buttons below for more help or to try custom prompts!"#;
         let guild_id = command.guild_id.map(|id| id.to_string());
         let guild_id_opt = guild_id.as_deref();
         let image_gen_enabled = if let Some(gid) = guild_id_opt {
-            self.database.is_feature_enabled("image_generation", None, Some(gid)).await?
+            self.database
+                .is_feature_enabled("image_generation", None, Some(gid))
+                .await?
         } else {
             true // Always enabled in DMs
         };
@@ -1964,9 +2524,14 @@ Use the buttons below for more help or to try custom prompts!"#;
             .and_then(|s| ImageStyle::parse(&s))
             .unwrap_or(ImageStyle::Vivid);
 
-        info!("[{}] 🎨 Generating image | User: {} | Size: {} | Style: {} | Prompt: '{}'",
-              request_id, user_id, size.as_str(), style.as_str(),
-              prompt.chars().take(100).collect::<String>());
+        info!(
+            "[{}] 🎨 Generating image | User: {} | Size: {} | Style: {} | Prompt: '{}'",
+            request_id,
+            user_id,
+            size.as_str(),
+            style.as_str(),
+            prompt.chars().take(100).collect::<String>()
+        );
 
         // Log usage
         self.database.log_usage(&user_id, "imagine", None).await?;
@@ -1985,7 +2550,11 @@ Use the buttons below for more help or to try custom prompts!"#;
 
         // Generate the image
         let channel_id_str = command.channel_id.to_string();
-        match self.image_generator.generate_image(&prompt, size.clone(), style).await {
+        match self
+            .image_generator
+            .generate_image(&prompt, size.clone(), style)
+            .await
+        {
             Ok(generated_image) => {
                 let generation_time = start_time.elapsed();
                 info!("[{request_id}] ✅ Image generated | Time: {generation_time:?}");
@@ -2001,15 +2570,24 @@ Use the buttons below for more help or to try custom prompts!"#;
                 );
 
                 // Download the image
-                match self.image_generator.download_image(&generated_image.url).await {
+                match self
+                    .image_generator
+                    .download_image(&generated_image.url)
+                    .await
+                {
                     Ok(image_bytes) => {
-                        debug!("[{}] 📥 Image downloaded | Size: {} bytes", request_id, image_bytes.len());
+                        debug!(
+                            "[{}] 📥 Image downloaded | Size: {} bytes",
+                            request_id,
+                            image_bytes.len()
+                        );
 
                         // Build the response message
                         let mut response_text = format!("🎨 **Generated Image**\n> {prompt}");
                         if let Some(revised) = &generated_image.revised_prompt {
                             if revised != &prompt {
-                                response_text.push_str(&format!("\n\n*DALL-E revised prompt:* _{revised}_"));
+                                response_text
+                                    .push_str(&format!("\n\n*DALL-E revised prompt:* _{revised}_"));
                             }
                         }
 
@@ -2020,7 +2598,9 @@ Use the buttons below for more help or to try custom prompts!"#;
                             })
                             .await
                             .map_err(|e| {
-                                error!("[{request_id}] ❌ Failed to edit interaction response: {e}");
+                                error!(
+                                    "[{request_id}] ❌ Failed to edit interaction response: {e}"
+                                );
                                 anyhow::anyhow!("Failed to edit response: {}", e)
                             })?;
 
@@ -2055,7 +2635,9 @@ Use the buttons below for more help or to try custom prompts!"#;
                 let processing_time = start_time.elapsed();
                 error!("[{request_id}] ❌ DALL-E error after {processing_time:?}: {e}");
 
-                let error_message = if e.to_string().contains("content_policy") || e.to_string().contains("safety") {
+                let error_message = if e.to_string().contains("content_policy")
+                    || e.to_string().contains("safety")
+                {
                     "🚫 **Content Policy Violation** - Your prompt was rejected by DALL-E's safety system. Please try a different prompt."
                 } else if e.to_string().contains("rate") || e.to_string().contains("limit") {
                     "⏱️ **Rate Limited** - Too many image requests. Please wait a moment and try again."
@@ -2077,22 +2659,42 @@ Use the buttons below for more help or to try custom prompts!"#;
     }
 
     // Placeholder methods with basic logging - can be enhanced later
-    async fn handle_slash_ping_with_id(&self, ctx: &Context, command: &ApplicationCommandInteraction, request_id: Uuid) -> Result<()> {
+    async fn handle_slash_ping_with_id(
+        &self,
+        ctx: &Context,
+        command: &ApplicationCommandInteraction,
+        request_id: Uuid,
+    ) -> Result<()> {
         debug!("[{request_id}] 🏓 Processing ping slash command");
         self.handle_slash_ping(ctx, command).await
     }
 
-    async fn handle_slash_help_with_id(&self, ctx: &Context, command: &ApplicationCommandInteraction, request_id: Uuid) -> Result<()> {
+    async fn handle_slash_help_with_id(
+        &self,
+        ctx: &Context,
+        command: &ApplicationCommandInteraction,
+        request_id: Uuid,
+    ) -> Result<()> {
         debug!("[{request_id}] 📚 Processing help slash command");
         self.handle_slash_help(ctx, command).await
     }
 
-    async fn handle_slash_personas_with_id(&self, ctx: &Context, command: &ApplicationCommandInteraction, request_id: Uuid) -> Result<()> {
+    async fn handle_slash_personas_with_id(
+        &self,
+        ctx: &Context,
+        command: &ApplicationCommandInteraction,
+        request_id: Uuid,
+    ) -> Result<()> {
         debug!("[{request_id}] 🎭 Processing personas slash command");
         self.handle_slash_personas(ctx, command).await
     }
 
-    async fn handle_slash_forget_with_id(&self, ctx: &Context, command: &ApplicationCommandInteraction, request_id: Uuid) -> Result<()> {
+    async fn handle_slash_forget_with_id(
+        &self,
+        ctx: &Context,
+        command: &ApplicationCommandInteraction,
+        request_id: Uuid,
+    ) -> Result<()> {
         let user_id = command.user.id.to_string();
         let channel_id = command.channel_id.to_string();
 
@@ -2100,7 +2702,9 @@ Use the buttons below for more help or to try custom prompts!"#;
 
         // Clear conversation history
         info!("[{request_id}] 🗑️ Clearing conversation history");
-        self.database.clear_conversation_history(&user_id, &channel_id).await?;
+        self.database
+            .clear_conversation_history(&user_id, &channel_id)
+            .await?;
         info!("[{request_id}] ✅ Conversation history cleared successfully");
 
         // Send confirmation response
@@ -2119,58 +2723,97 @@ Use the buttons below for more help or to try custom prompts!"#;
         Ok(())
     }
 
-    async fn handle_context_menu_message_with_id(&self, ctx: &Context, command: &ApplicationCommandInteraction, request_id: Uuid) -> Result<()> {
+    async fn handle_context_menu_message_with_id(
+        &self,
+        ctx: &Context,
+        command: &ApplicationCommandInteraction,
+        request_id: Uuid,
+    ) -> Result<()> {
         debug!("[{request_id}] 🔍 Processing context menu message command");
         self.handle_context_menu_message(ctx, command).await
     }
 
-    async fn handle_context_menu_user_with_id(&self, ctx: &Context, command: &ApplicationCommandInteraction, request_id: Uuid) -> Result<()> {
+    async fn handle_context_menu_user_with_id(
+        &self,
+        ctx: &Context,
+        command: &ApplicationCommandInteraction,
+        request_id: Uuid,
+    ) -> Result<()> {
         debug!("[{request_id}] 👤 Processing context menu user command");
         self.handle_context_menu_user(ctx, command).await
     }
 
-    async fn handle_help_command_with_id(&self, ctx: &Context, msg: &Message, request_id: Uuid) -> Result<()> {
+    async fn handle_help_command_with_id(
+        &self,
+        ctx: &Context,
+        msg: &Message,
+        request_id: Uuid,
+    ) -> Result<()> {
         debug!("[{request_id}] 📚 Processing help text command");
         self.handle_help_command(ctx, msg).await
     }
 
-    async fn handle_personas_command_with_id(&self, ctx: &Context, msg: &Message, request_id: Uuid) -> Result<()> {
+    async fn handle_personas_command_with_id(
+        &self,
+        ctx: &Context,
+        msg: &Message,
+        request_id: Uuid,
+    ) -> Result<()> {
         debug!("[{request_id}] 🎭 Processing personas text command");
         self.handle_personas_command(ctx, msg).await
     }
 
-    async fn handle_set_persona_command_with_id(&self, ctx: &Context, msg: &Message, args: &[&str], request_id: Uuid) -> Result<()> {
+    async fn handle_set_persona_command_with_id(
+        &self,
+        ctx: &Context,
+        msg: &Message,
+        args: &[&str],
+        request_id: Uuid,
+    ) -> Result<()> {
         debug!("[{request_id}] ⚙️ Processing set_persona text command");
         self.handle_set_persona_command(ctx, msg, args).await
     }
 
-    async fn handle_ai_command_with_id(&self, ctx: &Context, msg: &Message, command: &str, args: &[&str], request_id: Uuid) -> Result<()> {
+    async fn handle_ai_command_with_id(
+        &self,
+        ctx: &Context,
+        msg: &Message,
+        command: &str,
+        args: &[&str],
+        request_id: Uuid,
+    ) -> Result<()> {
         debug!("[{request_id}] 🤖 Processing AI text command: {command}");
         self.handle_ai_command(ctx, msg, command, args).await
     }
 
-    async fn handle_context_menu_message(&self, ctx: &Context, command: &ApplicationCommandInteraction) -> Result<()> {
+    async fn handle_context_menu_message(
+        &self,
+        ctx: &Context,
+        command: &ApplicationCommandInteraction,
+    ) -> Result<()> {
         let user_id = command.user.id.to_string();
-        
+
         // Get the message data from the interaction
         // For now, we'll use a placeholder since resolved data structure varies by version
         let message_content = "Message content will be analyzed".to_string();
 
         let user_persona = self.database.get_user_persona(&user_id).await?;
-        
+
         let system_prompt = match command.data.name.as_str() {
-            "Analyze Message" => {
-                self.persona_manager.get_system_prompt(&user_persona, Some("steps"))
-            }
-            "Explain Message" => {
-                self.persona_manager.get_system_prompt(&user_persona, Some("explain"))
-            }
-            _ => self.persona_manager.get_system_prompt(&user_persona, None)
+            "Analyze Message" => self
+                .persona_manager
+                .get_system_prompt(&user_persona, Some("steps")),
+            "Explain Message" => self
+                .persona_manager
+                .get_system_prompt(&user_persona, Some("explain")),
+            _ => self.persona_manager.get_system_prompt(&user_persona, None),
         };
 
         let prompt = format!("Please analyze this message: \"{message_content}\"");
-        
-        self.database.log_usage(&user_id, &command.data.name, Some(&user_persona)).await?;
+
+        self.database
+            .log_usage(&user_id, &command.data.name, Some(&user_persona))
+            .await?;
 
         // Immediately defer the interaction to prevent timeout
         command
@@ -2196,7 +2839,7 @@ Use the buttons below for more help or to try custom prompts!"#;
                 } else {
                     "❌ **Error analyzing message** - Something went wrong. Please try again later."
                 };
-                
+
                 command
                     .edit_original_interaction_response(&ctx.http, |response| {
                         response.content(error_message)
@@ -2208,19 +2851,27 @@ Use the buttons below for more help or to try custom prompts!"#;
         Ok(())
     }
 
-    async fn handle_context_menu_user(&self, ctx: &Context, command: &ApplicationCommandInteraction) -> Result<()> {
+    async fn handle_context_menu_user(
+        &self,
+        ctx: &Context,
+        command: &ApplicationCommandInteraction,
+    ) -> Result<()> {
         let user_id = command.user.id.to_string();
-        
+
         // Get the user data from the interaction
         // For now, we'll use a placeholder since resolved data structure varies by version
         let target_user = "Discord User".to_string();
 
         let user_persona = self.database.get_user_persona(&user_id).await?;
-        let system_prompt = self.persona_manager.get_system_prompt(&user_persona, Some("explain"));
-        
+        let system_prompt = self
+            .persona_manager
+            .get_system_prompt(&user_persona, Some("explain"));
+
         let prompt = format!("Please provide general information about Discord users and their roles in communities. The user being analyzed is: {target_user}");
-        
-        self.database.log_usage(&user_id, "analyze_user", Some(&user_persona)).await?;
+
+        self.database
+            .log_usage(&user_id, "analyze_user", Some(&user_persona))
+            .await?;
 
         // Immediately defer the interaction to prevent timeout
         command
@@ -2246,7 +2897,7 @@ Use the buttons below for more help or to try custom prompts!"#;
                 } else {
                     "❌ **Error analyzing user** - Something went wrong. Please try again later."
                 };
-                
+
                 command
                     .edit_original_interaction_response(&ctx.http, |response| {
                         response.content(error_message)
@@ -2283,23 +2934,31 @@ Use the buttons below for more help or to try custom prompts!"#;
     async fn handle_personas_command(&self, ctx: &Context, msg: &Message) -> Result<()> {
         let personas = self.persona_manager.list_personas();
         let mut response = "**Available Personas:**\n".to_string();
-        
+
         for (name, persona) in personas {
             response.push_str(&format!("• `{}` - {}\n", name, persona.description));
         }
-        
+
         let user_id = msg.author.id.to_string();
         let current_persona = self.database.get_user_persona(&user_id).await?;
         response.push_str(&format!("\nYour current persona: `{current_persona}`"));
-        
+
         msg.channel_id.say(&ctx.http, response).await?;
         Ok(())
     }
 
-    async fn handle_set_persona_command(&self, ctx: &Context, msg: &Message, args: &[&str]) -> Result<()> {
+    async fn handle_set_persona_command(
+        &self,
+        ctx: &Context,
+        msg: &Message,
+        args: &[&str],
+    ) -> Result<()> {
         if args.is_empty() {
             msg.channel_id
-                .say(&ctx.http, "Please specify a persona. Use `/personas` to see available options.")
+                .say(
+                    &ctx.http,
+                    "Please specify a persona. Use `/personas` to see available options.",
+                )
                 .await?;
             return Ok(());
         }
@@ -2307,21 +2966,35 @@ Use the buttons below for more help or to try custom prompts!"#;
         let persona_name = args[0];
         if self.persona_manager.get_persona(persona_name).is_none() {
             msg.channel_id
-                .say(&ctx.http, "Invalid persona. Use `/personas` to see available options.")
+                .say(
+                    &ctx.http,
+                    "Invalid persona. Use `/personas` to see available options.",
+                )
                 .await?;
             return Ok(());
         }
 
         let user_id = msg.author.id.to_string();
-        self.database.set_user_persona(&user_id, persona_name).await?;
-        
+        self.database
+            .set_user_persona(&user_id, persona_name)
+            .await?;
+
         msg.channel_id
-            .say(&ctx.http, &format!("Your persona has been set to: `{persona_name}`"))
+            .say(
+                &ctx.http,
+                &format!("Your persona has been set to: `{persona_name}`"),
+            )
             .await?;
         Ok(())
     }
 
-    async fn handle_ai_command(&self, ctx: &Context, msg: &Message, command: &str, args: &[&str]) -> Result<()> {
+    async fn handle_ai_command(
+        &self,
+        ctx: &Context,
+        msg: &Message,
+        command: &str,
+        args: &[&str],
+    ) -> Result<()> {
         if args.is_empty() {
             msg.channel_id
                 .say(&ctx.http, "Please provide a message to process.")
@@ -2331,7 +3004,7 @@ Use the buttons below for more help or to try custom prompts!"#;
 
         let user_id = msg.author.id.to_string();
         let user_persona = self.database.get_user_persona(&user_id).await?;
-        
+
         let modifier = match command {
             "/explain" => Some("explain"),
             "/simple" => Some("simple"),
@@ -2340,19 +3013,24 @@ Use the buttons below for more help or to try custom prompts!"#;
             _ => None,
         };
 
-        let system_prompt = self.persona_manager.get_system_prompt(&user_persona, modifier);
+        let system_prompt = self
+            .persona_manager
+            .get_system_prompt(&user_persona, modifier);
         let user_message = args.join(" ");
 
-        self.database.log_usage(&user_id, command, Some(&user_persona)).await?;
+        self.database
+            .log_usage(&user_id, command, Some(&user_persona))
+            .await?;
 
         match self.get_ai_response(&system_prompt, &user_message).await {
             Ok(response) => {
                 if response.len() > 2000 {
-                    let chunks: Vec<&str> = response.as_bytes()
+                    let chunks: Vec<&str> = response
+                        .as_bytes()
                         .chunks(2000)
                         .map(|chunk| std::str::from_utf8(chunk).unwrap_or(""))
                         .collect();
-                    
+
                     for chunk in chunks {
                         if !chunk.trim().is_empty() {
                             msg.channel_id.say(&ctx.http, chunk).await?;
@@ -2371,7 +3049,7 @@ Use the buttons below for more help or to try custom prompts!"#;
                 } else {
                     "❌ **Error processing request** - Something went wrong. Please try again later."
                 };
-                
+
                 msg.channel_id.say(&ctx.http, error_message).await?;
             }
         }
@@ -2380,11 +3058,35 @@ Use the buttons below for more help or to try custom prompts!"#;
     }
 
     pub async fn get_ai_response(&self, system_prompt: &str, user_message: &str) -> Result<String> {
-        self.get_ai_response_with_context(system_prompt, user_message, Vec::new(), Uuid::new_v4(), None, None, None).await
+        self.get_ai_response_with_context(
+            system_prompt,
+            user_message,
+            Vec::new(),
+            Uuid::new_v4(),
+            None,
+            None,
+            None,
+        )
+        .await
     }
 
-    pub async fn get_ai_response_with_id(&self, system_prompt: &str, user_message: &str, conversation_history: Vec<(String, String)>, request_id: Uuid) -> Result<String> {
-        self.get_ai_response_with_context(system_prompt, user_message, conversation_history, request_id, None, None, None).await
+    pub async fn get_ai_response_with_id(
+        &self,
+        system_prompt: &str,
+        user_message: &str,
+        conversation_history: Vec<(String, String)>,
+        request_id: Uuid,
+    ) -> Result<String> {
+        self.get_ai_response_with_context(
+            system_prompt,
+            user_message,
+            conversation_history,
+            request_id,
+            None,
+            None,
+            None,
+        )
+        .await
     }
 
     /// Get AI response with full context for usage tracking
@@ -2401,23 +3103,33 @@ Use the buttons below for more help or to try custom prompts!"#;
     ) -> Result<String> {
         let start_time = Instant::now();
 
-        info!("[{}] 🤖 Starting OpenAI API request | Model: {} | History messages: {}", request_id, self.openai_model, conversation_history.len());
-        debug!("[{}] 📝 System prompt length: {} chars | User message length: {} chars",
-               request_id, system_prompt.len(), user_message.len());
-        debug!("[{}] 📝 User message preview: '{}'",
-               request_id, user_message.chars().take(100).collect::<String>());
+        info!(
+            "[{}] 🤖 Starting OpenAI API request | Model: {} | History messages: {}",
+            request_id,
+            self.openai_model,
+            conversation_history.len()
+        );
+        debug!(
+            "[{}] 📝 System prompt length: {} chars | User message length: {} chars",
+            request_id,
+            system_prompt.len(),
+            user_message.len()
+        );
+        debug!(
+            "[{}] 📝 User message preview: '{}'",
+            request_id,
+            user_message.chars().take(100).collect::<String>()
+        );
 
         debug!("[{request_id}] 🔨 Building OpenAI message objects");
-        let mut messages = vec![
-            ChatCompletionMessage {
-                role: ChatCompletionMessageRole::System,
-                content: Some(system_prompt.to_string()),
-                name: None,
-                function_call: None,
-                tool_call_id: None,
-                tool_calls: None,
-            },
-        ];
+        let mut messages = vec![ChatCompletionMessage {
+            role: ChatCompletionMessageRole::System,
+            content: Some(system_prompt.to_string()),
+            name: None,
+            function_call: None,
+            tool_call_id: None,
+            tool_calls: None,
+        }];
 
         // Add conversation history
         for (role, content) in conversation_history {
@@ -2446,13 +3158,16 @@ Use the buttons below for more help or to try custom prompts!"#;
             tool_calls: None,
         });
 
-        debug!("[{}] ✅ OpenAI message objects built successfully | Message count: {}", request_id, messages.len());
+        debug!(
+            "[{}] ✅ OpenAI message objects built successfully | Message count: {}",
+            request_id,
+            messages.len()
+        );
 
         // Add timeout to the OpenAI API call (45 seconds)
         debug!("[{request_id}] 🚀 Initiating OpenAI API call with 45-second timeout");
-        let chat_completion_future = ChatCompletion::builder(&self.openai_model, messages)
-            .create();
-        
+        let chat_completion_future = ChatCompletion::builder(&self.openai_model, messages).create();
+
         info!("[{request_id}] ⏰ Waiting for OpenAI API response (timeout: 45s)");
         let chat_completion = timeout(TokioDuration::from_secs(45), chat_completion_future)
             .await
@@ -2472,8 +3187,10 @@ Use the buttons below for more help or to try custom prompts!"#;
 
         // Log usage if we have context
         if let (Some(uid), Some(usage)) = (user_id, &chat_completion.usage) {
-            debug!("[{request_id}] 📊 Token usage - Prompt: {}, Completion: {}, Total: {}",
-                   usage.prompt_tokens, usage.completion_tokens, usage.total_tokens);
+            debug!(
+                "[{request_id}] 📊 Token usage - Prompt: {}, Completion: {}, Total: {}",
+                usage.prompt_tokens, usage.completion_tokens, usage.total_tokens
+            );
             self.usage_tracker.log_chat(
                 &self.openai_model,
                 usage.prompt_tokens,
@@ -2487,7 +3204,11 @@ Use the buttons below for more help or to try custom prompts!"#;
         }
 
         debug!("[{request_id}] 🔍 Parsing OpenAI API response");
-        debug!("[{}] 📊 Response choices count: {}", request_id, chat_completion.choices.len());
+        debug!(
+            "[{}] 📊 Response choices count: {}",
+            request_id,
+            chat_completion.choices.len()
+        );
 
         let response = chat_completion
             .choices
@@ -2499,21 +3220,31 @@ Use the buttons below for more help or to try custom prompts!"#;
             })?;
 
         let trimmed_response = response.trim().to_string();
-        info!("[{}] ✅ OpenAI response processed | Length: {} chars | First 100 chars: '{}'",
-              request_id, trimmed_response.len(),
-              trimmed_response.chars().take(100).collect::<String>());
+        info!(
+            "[{}] ✅ OpenAI response processed | Length: {} chars | First 100 chars: '{}'",
+            request_id,
+            trimmed_response.len(),
+            trimmed_response.chars().take(100).collect::<String>()
+        );
 
         Ok(trimmed_response)
     }
 
     /// Handle audio attachments, returns true if any audio was processed
-    async fn handle_audio_attachments(&self, ctx: &Context, msg: &Message, guild_id_opt: Option<&str>) -> Result<bool> {
+    async fn handle_audio_attachments(
+        &self,
+        ctx: &Context,
+        msg: &Message,
+        guild_id_opt: Option<&str>,
+    ) -> Result<bool> {
         let user_id = msg.author.id.to_string();
         let mut audio_processed = false;
 
         // Get output mode setting (transcription_only or with_commentary)
         let output_mode = if let Some(gid) = guild_id_opt {
-            self.database.get_guild_setting(gid, "audio_transcription_output").await?
+            self.database
+                .get_guild_setting(gid, "audio_transcription_output")
+                .await?
                 .unwrap_or_else(|| "transcription_only".to_string())
         } else {
             "transcription_only".to_string() // Default for DMs
@@ -2552,7 +3283,8 @@ Use the buttons below for more help or to try custom prompts!"#;
                             let response = format!("📝 **Transcription:**\n{transcription}");
 
                             if response.len() > 2000 {
-                                let chunks: Vec<&str> = response.as_bytes()
+                                let chunks: Vec<&str> = response
+                                    .as_bytes()
                                     .chunks(2000)
                                     .map(|chunk| std::str::from_utf8(chunk).unwrap_or(""))
                                     .collect();
@@ -2569,10 +3301,17 @@ Use the buttons below for more help or to try custom prompts!"#;
                             // Only generate AI commentary if output mode is "with_commentary"
                             if output_mode == "with_commentary" && !msg.content.trim().is_empty() {
                                 let user_persona = self.database.get_user_persona(&user_id).await?;
-                                let system_prompt = self.persona_manager.get_system_prompt(&user_persona, None);
-                                let combined_message = format!("Based on this transcription: '{}', {}", transcription, msg.content);
+                                let system_prompt =
+                                    self.persona_manager.get_system_prompt(&user_persona, None);
+                                let combined_message = format!(
+                                    "Based on this transcription: '{}', {}",
+                                    transcription, msg.content
+                                );
 
-                                match self.get_ai_response(&system_prompt, &combined_message).await {
+                                match self
+                                    .get_ai_response(&system_prompt, &combined_message)
+                                    .await
+                                {
                                     Ok(ai_response) => {
                                         msg.channel_id.say(&ctx.http, &ai_response).await?;
                                     }
@@ -2583,7 +3322,9 @@ Use the buttons below for more help or to try custom prompts!"#;
                             }
                         }
 
-                        self.database.log_usage(&user_id, "audio_transcription", None).await?;
+                        self.database
+                            .log_usage(&user_id, "audio_transcription", None)
+                            .await?;
                     }
                     Err(e) => {
                         error!("Transcription error: {e}");
@@ -2607,40 +3348,80 @@ Use the buttons below for more help or to try custom prompts!"#;
         ];
 
         let filename_lower = filename.to_lowercase();
-        audio_extensions.iter().any(|ext| filename_lower.ends_with(ext))
+        audio_extensions
+            .iter()
+            .any(|ext| filename_lower.ends_with(ext))
     }
 
     /// Check if an attachment is a text-based file that can be read
     fn is_text_attachment(&self, filename: &str) -> bool {
         let text_extensions = [
             // Plain text
-            ".txt", ".md", ".markdown",
+            ".txt",
+            ".md",
+            ".markdown",
             // Data formats
-            ".json", ".xml", ".yaml", ".yml", ".toml", ".csv",
+            ".json",
+            ".xml",
+            ".yaml",
+            ".yml",
+            ".toml",
+            ".csv",
             // Config files
-            ".ini", ".cfg", ".conf", ".env",
+            ".ini",
+            ".cfg",
+            ".conf",
+            ".env",
             // Code files
-            ".rs", ".py", ".js", ".ts", ".jsx", ".tsx", ".html", ".css",
-            ".sh", ".bat", ".ps1", ".sql", ".rb", ".go", ".java", ".c",
-            ".cpp", ".h", ".hpp", ".cs", ".php", ".swift", ".kt",
+            ".rs",
+            ".py",
+            ".js",
+            ".ts",
+            ".jsx",
+            ".tsx",
+            ".html",
+            ".css",
+            ".sh",
+            ".bat",
+            ".ps1",
+            ".sql",
+            ".rb",
+            ".go",
+            ".java",
+            ".c",
+            ".cpp",
+            ".h",
+            ".hpp",
+            ".cs",
+            ".php",
+            ".swift",
+            ".kt",
             // Log files
             ".log",
         ];
 
         let filename_lower = filename.to_lowercase();
-        text_extensions.iter().any(|ext| filename_lower.ends_with(ext))
+        text_extensions
+            .iter()
+            .any(|ext| filename_lower.ends_with(ext))
     }
 
     /// Read a text attachment and return (filename, content) if successful
     /// Returns None if the file couldn't be read, or a truncation message if too large
-    async fn read_text_attachment(&self, attachment: &serenity::model::channel::Attachment) -> Result<Option<(String, String)>> {
+    async fn read_text_attachment(
+        &self,
+        attachment: &serenity::model::channel::Attachment,
+    ) -> Result<Option<(String, String)>> {
         const MAX_TEXT_SIZE: u64 = 100_000; // ~100KB limit
 
         // Check file size first
         if attachment.size > MAX_TEXT_SIZE {
             return Ok(Some((
                 attachment.filename.clone(),
-                format!("[File too large: {} bytes, max {} bytes]", attachment.size, MAX_TEXT_SIZE)
+                format!(
+                    "[File too large: {} bytes, max {} bytes]",
+                    attachment.size, MAX_TEXT_SIZE
+                ),
             )));
         }
 
@@ -2649,7 +3430,10 @@ Use the buttons below for more help or to try custom prompts!"#;
         let response = match client.get(&attachment.url).send().await {
             Ok(resp) => resp,
             Err(e) => {
-                warn!("Failed to download text attachment {}: {}", attachment.filename, e);
+                warn!(
+                    "Failed to download text attachment {}: {}",
+                    attachment.filename, e
+                );
                 return Ok(None);
             }
         };
@@ -2657,7 +3441,10 @@ Use the buttons below for more help or to try custom prompts!"#;
         let bytes = match response.bytes().await {
             Ok(b) => b,
             Err(e) => {
-                warn!("Failed to read text attachment bytes {}: {}", attachment.filename, e);
+                warn!(
+                    "Failed to read text attachment bytes {}: {}",
+                    attachment.filename, e
+                );
                 return Ok(None);
             }
         };
@@ -2695,24 +3482,34 @@ Use the buttons below for more help or to try custom prompts!"#;
         debug!("[{request_id}] 📎 Fetching text attachments from thread (limit: {limit})");
 
         // Fetch messages from the thread
-        let messages = channel_id.messages(&ctx.http, |builder: &mut GetMessages| {
-            builder.limit(limit as u64)
-        }).await?;
+        let messages = channel_id
+            .messages(&ctx.http, |builder: &mut GetMessages| {
+                builder.limit(limit as u64)
+            })
+            .await?;
 
         let mut attachments = Vec::new();
 
         for message in messages.iter() {
             for attachment in &message.attachments {
                 if self.is_text_attachment(&attachment.filename) {
-                    debug!("[{request_id}] 📄 Found text attachment: {}", attachment.filename);
-                    if let Ok(Some((filename, content))) = self.read_text_attachment(attachment).await {
+                    debug!(
+                        "[{request_id}] 📄 Found text attachment: {}",
+                        attachment.filename
+                    );
+                    if let Ok(Some((filename, content))) =
+                        self.read_text_attachment(attachment).await
+                    {
                         attachments.push((filename, content));
                     }
                 }
             }
         }
 
-        debug!("[{request_id}] 📎 Found {} text attachments in thread", attachments.len());
+        debug!(
+            "[{request_id}] 📎 Found {} text attachments in thread",
+            attachments.len()
+        );
         Ok(attachments)
     }
 
@@ -2720,30 +3517,57 @@ Use the buttons below for more help or to try custom prompts!"#;
     fn seems_like_file_question(&self, message: &str) -> bool {
         let lower = message.to_lowercase();
         let file_keywords = [
-            "file", "transcript", "attachment", "uploaded", "document",
-            "what's in", "what is in", "read the", "show me the",
-            "contents of", "the .txt", "the .md", "the .json", "the .log",
-            "summary of", "summarize the", "analyze the", "in the file",
+            "file",
+            "transcript",
+            "attachment",
+            "uploaded",
+            "document",
+            "what's in",
+            "what is in",
+            "read the",
+            "show me the",
+            "contents of",
+            "the .txt",
+            "the .md",
+            "the .json",
+            "the .log",
+            "summary of",
+            "summarize the",
+            "analyze the",
+            "in the file",
         ];
         file_keywords.iter().any(|kw| lower.contains(kw))
     }
 
     /// Read text attachments from current message and format them for AI context
-    async fn get_text_attachments_context(&self, msg: &Message, request_id: Uuid) -> Vec<(String, String)> {
+    async fn get_text_attachments_context(
+        &self,
+        msg: &Message,
+        request_id: Uuid,
+    ) -> Vec<(String, String)> {
         let mut attachments = Vec::new();
 
         for attachment in &msg.attachments {
             if self.is_text_attachment(&attachment.filename) {
-                debug!("[{request_id}] 📄 Reading text attachment from message: {}", attachment.filename);
+                debug!(
+                    "[{request_id}] 📄 Reading text attachment from message: {}",
+                    attachment.filename
+                );
                 match self.read_text_attachment(attachment).await {
                     Ok(Some((filename, content))) => {
                         attachments.push((filename, content));
                     }
                     Ok(None) => {
-                        debug!("[{request_id}] ⚠️ Could not read attachment: {}", attachment.filename);
+                        debug!(
+                            "[{request_id}] ⚠️ Could not read attachment: {}",
+                            attachment.filename
+                        );
                     }
                     Err(e) => {
-                        warn!("[{request_id}] ❌ Error reading attachment {}: {}", attachment.filename, e);
+                        warn!(
+                            "[{request_id}] ❌ Error reading attachment {}: {}",
+                            attachment.filename, e
+                        );
                     }
                 }
             }
@@ -2777,7 +3601,10 @@ Use the buttons below for more help or to try custom prompts!"#;
     ) -> Result<()> {
         // Get guild-specific conflict sensitivity
         let sensitivity_threshold = if let Some(gid) = guild_id {
-            let sensitivity = self.database.get_guild_setting(gid, "conflict_sensitivity").await?
+            let sensitivity = self
+                .database
+                .get_guild_setting(gid, "conflict_sensitivity")
+                .await?
                 .unwrap_or_else(|| "medium".to_string());
             match sensitivity.as_str() {
                 "low" => 0.7,
@@ -2791,7 +3618,9 @@ Use the buttons below for more help or to try custom prompts!"#;
 
         // Get guild-specific mediation cooldown
         let cooldown_minutes = if let Some(gid) = guild_id {
-            self.database.get_guild_setting(gid, "mediation_cooldown").await?
+            self.database
+                .get_guild_setting(gid, "mediation_cooldown")
+                .await?
                 .and_then(|v| v.parse::<u64>().ok())
                 .unwrap_or(5) // Default 5 minutes
         } else {
@@ -2799,19 +3628,29 @@ Use the buttons below for more help or to try custom prompts!"#;
         };
 
         // Get the timestamp of the last mediation to avoid re-analyzing same messages
-        let last_mediation_ts = self.database.get_last_mediation_timestamp(channel_id).await?;
+        let last_mediation_ts = self
+            .database
+            .get_last_mediation_timestamp(channel_id)
+            .await?;
 
         // Get recent messages, optionally filtering to only new messages since last mediation
         let recent_messages = if let Some(last_ts) = last_mediation_ts {
             info!("🔍 Getting messages since last mediation at timestamp {last_ts}");
-            self.database.get_recent_channel_messages_since(channel_id, last_ts, 10).await?
+            self.database
+                .get_recent_channel_messages_since(channel_id, last_ts, 10)
+                .await?
         } else {
             info!("🔍 No previous mediation found, getting all recent messages");
-            self.database.get_recent_channel_messages(channel_id, 10).await?
+            self.database
+                .get_recent_channel_messages(channel_id, 10)
+                .await?
         };
 
-        info!("🔍 Conflict check: Found {} recent messages in channel {} (after last mediation)",
-              recent_messages.len(), channel_id);
+        info!(
+            "🔍 Conflict check: Found {} recent messages in channel {} (after last mediation)",
+            recent_messages.len(),
+            channel_id
+        );
 
         if recent_messages.is_empty() {
             info!("⏭️ Skipping conflict detection: No messages found");
@@ -2819,7 +3658,8 @@ Use the buttons below for more help or to try custom prompts!"#;
         }
 
         // Log message samples for debugging
-        let unique_users: std::collections::HashSet<_> = recent_messages.iter()
+        let unique_users: std::collections::HashSet<_> = recent_messages
+            .iter()
             .map(|(user_id, _, _)| user_id.clone())
             .collect();
         info!("👥 Messages from {} unique users", unique_users.len());
@@ -2829,8 +3669,9 @@ Use the buttons below for more help or to try custom prompts!"#;
         }
 
         // Detect conflicts in recent messages
-        let (is_conflict, confidence, conflict_type) =
-            self.conflict_detector.detect_heated_argument(&recent_messages, 120);
+        let (is_conflict, confidence, conflict_type) = self
+            .conflict_detector
+            .detect_heated_argument(&recent_messages, 120);
 
         info!("📊 Detection result: conflict={is_conflict} | confidence={confidence:.2} | threshold={sensitivity_threshold:.2} | type='{conflict_type}' | cooldown={cooldown_minutes}min");
 
@@ -2845,8 +3686,11 @@ Use the buttons below for more help or to try custom prompts!"#;
                     .unwrap_or(0);
                 let cooldown_secs = (cooldown_minutes * 60) as i64;
                 if now - last_ts < cooldown_secs {
-                    info!("⏸️ Mediation on cooldown for channel {} ({}s remaining)",
-                          channel_id, cooldown_secs - (now - last_ts));
+                    info!(
+                        "⏸️ Mediation on cooldown for channel {} ({}s remaining)",
+                        channel_id,
+                        cooldown_secs - (now - last_ts)
+                    );
                     return Ok(());
                 }
             }
@@ -2874,25 +3718,38 @@ Use the buttons below for more help or to try custom prompts!"#;
 
             // Record the conflict in database
             let participants_json = serde_json::to_string(&participants)?;
-            let conflict_id = self.database.record_conflict_detection(
-                channel_id,
-                guild_id,
-                &participants_json,
-                &conflict_type,
-                confidence,
-                &msg.id.to_string(),
-            ).await?;
+            let conflict_id = self
+                .database
+                .record_conflict_detection(
+                    channel_id,
+                    guild_id,
+                    &participants_json,
+                    &conflict_type,
+                    confidence,
+                    &msg.id.to_string(),
+                )
+                .await?;
 
             // Generate context-aware mediation response using OpenAI
             info!("🤖 Generating context-aware mediation response with OpenAI...");
-            let mediation_text = match self.generate_mediation_response(&recent_messages, &conflict_type, confidence, guild_id, channel_id).await {
+            let mediation_text = match self
+                .generate_mediation_response(
+                    &recent_messages,
+                    &conflict_type,
+                    confidence,
+                    guild_id,
+                    channel_id,
+                )
+                .await
+            {
                 Ok(response) => {
                     info!("✅ OpenAI mediation response generated successfully");
                     response
-                },
+                }
                 Err(e) => {
                     warn!("⚠️ Failed to generate AI mediation response: {e}. Using fallback.");
-                    self.conflict_mediator.get_mediation_response(&conflict_type, confidence)
+                    self.conflict_mediator
+                        .get_mediation_response(&conflict_type, confidence)
                 }
             };
 
@@ -2905,9 +3762,13 @@ Use the buttons below for more help or to try custom prompts!"#;
                     self.conflict_mediator.record_intervention(channel_id);
 
                     // Record in database
-                    self.database.mark_mediation_triggered(conflict_id, &mediation_msg.id.to_string()).await?;
-                    self.database.record_mediation(conflict_id, channel_id, &mediation_text).await?;
-                },
+                    self.database
+                        .mark_mediation_triggered(conflict_id, &mediation_msg.id.to_string())
+                        .await?;
+                    self.database
+                        .record_mediation(conflict_id, channel_id, &mediation_text)
+                        .await?;
+                }
                 Err(e) => {
                     warn!("⚠️ Failed to send mediation message to Discord: {e}. Recording intervention to prevent spam.");
 
@@ -2915,7 +3776,11 @@ Use the buttons below for more help or to try custom prompts!"#;
                     self.conflict_mediator.record_intervention(channel_id);
 
                     // Try to record in database with no message ID
-                    if let Err(db_err) = self.database.record_mediation(conflict_id, channel_id, &mediation_text).await {
+                    if let Err(db_err) = self
+                        .database
+                        .record_mediation(conflict_id, channel_id, &mediation_text)
+                        .await
+                    {
                         warn!("⚠️ Failed to record mediation in database: {db_err}");
                     }
                 }
@@ -2925,7 +3790,9 @@ Use the buttons below for more help or to try custom prompts!"#;
             if participants.len() == 2 {
                 let user_a = &participants[0];
                 let user_b = &participants[1];
-                self.database.update_user_interaction_pattern(user_a, user_b, channel_id, true).await?;
+                self.database
+                    .update_user_interaction_pattern(user_a, user_b, channel_id, true)
+                    .await?;
             }
         }
 
@@ -2987,26 +3854,40 @@ Use the buttons below for more help or to try custom prompts!"#;
         // Apply the setting
         let response_message = match setting.as_str() {
             "verbosity" => {
-                self.database.set_channel_verbosity(&guild_id, &target_channel_id, &value).await?;
+                self.database
+                    .set_channel_verbosity(&guild_id, &target_channel_id, &value)
+                    .await?;
                 info!("[{request_id}] Set verbosity for channel {target_channel_id} to {value}");
                 format!("✅ Verbosity for <#{target_channel_id}> set to **{value}**")
             }
             "persona" => {
                 if value == "clear" {
-                    self.database.set_channel_persona(&guild_id, &target_channel_id, None).await?;
-                    info!("[{request_id}] Cleared persona override for channel {target_channel_id}");
+                    self.database
+                        .set_channel_persona(&guild_id, &target_channel_id, None)
+                        .await?;
+                    info!(
+                        "[{request_id}] Cleared persona override for channel {target_channel_id}"
+                    );
                     format!("✅ Persona override cleared for <#{target_channel_id}>. Users will use their own personas.")
                 } else {
-                    self.database.set_channel_persona(&guild_id, &target_channel_id, Some(&value)).await?;
+                    self.database
+                        .set_channel_persona(&guild_id, &target_channel_id, Some(&value))
+                        .await?;
                     info!("[{request_id}] Set persona for channel {target_channel_id} to {value}");
                     format!("✅ Persona for <#{target_channel_id}> set to **{value}**. All users in this channel will use this persona.")
                 }
             }
             "conflict_mediation" => {
                 let enabled = value == "enabled";
-                self.database.set_channel_conflict_enabled(&guild_id, &target_channel_id, enabled).await?;
+                self.database
+                    .set_channel_conflict_enabled(&guild_id, &target_channel_id, enabled)
+                    .await?;
                 info!("[{request_id}] Set conflict_mediation for channel {target_channel_id} to {value}");
-                let status = if enabled { "Enabled ✅" } else { "Disabled ❌" };
+                let status = if enabled {
+                    "Enabled ✅"
+                } else {
+                    "Disabled ❌"
+                };
                 format!("✅ Conflict mediation for <#{target_channel_id}> is now **{status}**")
             }
             _ => {
@@ -3077,8 +3958,11 @@ Use the buttons below for more help or to try custom prompts!"#;
         // Check if this is a global bot setting or a guild setting
         let is_global_setting = matches!(
             setting.as_str(),
-            "startup_notification" | "startup_notify_owner_id" | "startup_notify_channel_id"
-            | "startup_dm_commit_count" | "startup_channel_commit_count"
+            "startup_notification"
+                | "startup_notify_owner_id"
+                | "startup_notify_channel_id"
+                | "startup_dm_commit_count"
+                | "startup_channel_commit_count"
         );
 
         if is_global_setting {
@@ -3086,7 +3970,9 @@ Use the buttons below for more help or to try custom prompts!"#;
             self.database.set_bot_setting(&setting, &value).await?;
         } else {
             info!("[{request_id}] Setting guild {guild_id} setting '{setting}' to '{value}'");
-            self.database.set_guild_setting(&guild_id, &setting, &value).await?;
+            self.database
+                .set_guild_setting(&guild_id, &setting, &value)
+                .await?;
         }
 
         let scope = if is_global_setting { "Global" } else { "Guild" };
@@ -3131,37 +4017,76 @@ Use the buttons below for more help or to try custom prompts!"#;
         let channel_id = command.channel_id.to_string();
 
         // Get channel settings (verbosity, conflict_enabled, persona)
-        let (channel_verbosity, conflict_enabled, channel_persona) = self.database.get_channel_settings(&guild_id, &channel_id).await?;
+        let (channel_verbosity, conflict_enabled, channel_persona) = self
+            .database
+            .get_channel_settings(&guild_id, &channel_id)
+            .await?;
         let channel_persona_display = channel_persona
             .map(|p| format!("`{p}` (override)"))
             .unwrap_or_else(|| "Not set (uses user/guild default)".to_string());
 
         // Get guild settings with defaults
-        let guild_default_verbosity = self.database.get_guild_setting(&guild_id, "default_verbosity").await?
+        let guild_default_verbosity = self
+            .database
+            .get_guild_setting(&guild_id, "default_verbosity")
+            .await?
             .unwrap_or_else(|| "concise".to_string());
-        let guild_default_persona = self.database.get_guild_setting(&guild_id, "default_persona").await?
+        let guild_default_persona = self
+            .database
+            .get_guild_setting(&guild_id, "default_persona")
+            .await?
             .unwrap_or_else(|| "obi".to_string());
-        let guild_conflict_mediation = self.database.get_guild_setting(&guild_id, "conflict_mediation").await?
+        let guild_conflict_mediation = self
+            .database
+            .get_guild_setting(&guild_id, "conflict_mediation")
+            .await?
             .unwrap_or_else(|| "enabled".to_string());
-        let guild_conflict_sensitivity = self.database.get_guild_setting(&guild_id, "conflict_sensitivity").await?
+        let guild_conflict_sensitivity = self
+            .database
+            .get_guild_setting(&guild_id, "conflict_sensitivity")
+            .await?
             .unwrap_or_else(|| "medium".to_string());
-        let guild_mediation_cooldown = self.database.get_guild_setting(&guild_id, "mediation_cooldown").await?
+        let guild_mediation_cooldown = self
+            .database
+            .get_guild_setting(&guild_id, "mediation_cooldown")
+            .await?
             .unwrap_or_else(|| "5".to_string());
-        let guild_max_context = self.database.get_guild_setting(&guild_id, "max_context_messages").await?
+        let guild_max_context = self
+            .database
+            .get_guild_setting(&guild_id, "max_context_messages")
+            .await?
             .unwrap_or_else(|| "40".to_string());
-        let guild_audio_transcription = self.database.get_guild_setting(&guild_id, "audio_transcription").await?
+        let guild_audio_transcription = self
+            .database
+            .get_guild_setting(&guild_id, "audio_transcription")
+            .await?
             .unwrap_or_else(|| "enabled".to_string());
-        let guild_audio_mode = self.database.get_guild_setting(&guild_id, "audio_transcription_mode").await?
+        let guild_audio_mode = self
+            .database
+            .get_guild_setting(&guild_id, "audio_transcription_mode")
+            .await?
             .unwrap_or_else(|| "mention_only".to_string());
-        let guild_audio_output = self.database.get_guild_setting(&guild_id, "audio_transcription_output").await?
+        let guild_audio_output = self
+            .database
+            .get_guild_setting(&guild_id, "audio_transcription_output")
+            .await?
             .unwrap_or_else(|| "transcription_only".to_string());
-        let guild_mention_responses = self.database.get_guild_setting(&guild_id, "mention_responses").await?
+        let guild_mention_responses = self
+            .database
+            .get_guild_setting(&guild_id, "mention_responses")
+            .await?
             .unwrap_or_else(|| "enabled".to_string());
-        let guild_debate_auto_response = self.database.get_guild_setting(&guild_id, "debate_auto_response").await?
+        let guild_debate_auto_response = self
+            .database
+            .get_guild_setting(&guild_id, "debate_auto_response")
+            .await?
             .unwrap_or_else(|| "disabled".to_string());
 
         // Get bot admin role
-        let admin_role = self.database.get_guild_setting(&guild_id, "bot_admin_role").await?;
+        let admin_role = self
+            .database
+            .get_guild_setting(&guild_id, "bot_admin_role")
+            .await?;
         let admin_role_display = match admin_role {
             Some(role_id) => format!("<@&{role_id}>"),
             None => "Not set (Discord admins only)".to_string(),
@@ -3189,7 +4114,11 @@ Use the buttons below for more help or to try custom prompts!"#;
             channel_id,
             channel_verbosity,
             channel_persona_display,
-            if conflict_enabled { "Enabled ✅" } else { "Disabled ❌" },
+            if conflict_enabled {
+                "Enabled ✅"
+            } else {
+                "Disabled ❌"
+            },
             guild_default_verbosity,
             guild_default_persona,
             guild_conflict_mediation,
@@ -3248,7 +4177,9 @@ Use the buttons below for more help or to try custom prompts!"#;
         info!("[{request_id}] Setting bot admin role for guild {guild_id} to {role_id}");
 
         // Set the bot admin role
-        self.database.set_guild_setting(&guild_id, "bot_admin_role", &role_id.to_string()).await?;
+        self.database
+            .set_guild_setting(&guild_id, "bot_admin_role", &role_id.to_string())
+            .await?;
 
         command
             .create_interaction_response(&ctx.http, |response| {
@@ -3308,7 +4239,13 @@ Use the buttons below for more help or to try custom prompts!"#;
             let hours = seconds / 3600;
             let mins = (seconds % 3600) / 60;
             if mins > 0 {
-                format!("{} hour{} {} minute{}", hours, if hours == 1 { "" } else { "s" }, mins, if mins == 1 { "" } else { "s" })
+                format!(
+                    "{} hour{} {} minute{}",
+                    hours,
+                    if hours == 1 { "" } else { "s" },
+                    mins,
+                    if mins == 1 { "" } else { "s" }
+                )
             } else {
                 format!("{} hour{}", hours, if hours == 1 { "" } else { "s" })
             }
@@ -3316,7 +4253,13 @@ Use the buttons below for more help or to try custom prompts!"#;
             let days = seconds / 86400;
             let hours = (seconds % 86400) / 3600;
             if hours > 0 {
-                format!("{} day{} {} hour{}", days, if days == 1 { "" } else { "s" }, hours, if hours == 1 { "" } else { "s" })
+                format!(
+                    "{} day{} {} hour{}",
+                    days,
+                    if days == 1 { "" } else { "s" },
+                    hours,
+                    if hours == 1 { "" } else { "s" }
+                )
             } else {
                 format!("{} day{}", days, if days == 1 { "" } else { "s" })
             }
@@ -3337,7 +4280,9 @@ Use the buttons below for more help or to try custom prompts!"#;
         let guild_id = command.guild_id.map(|id| id.to_string());
         let guild_id_opt = guild_id.as_deref();
         let reminders_enabled = if let Some(gid) = guild_id_opt {
-            self.database.is_feature_enabled("reminders", None, Some(gid)).await?
+            self.database
+                .is_feature_enabled("reminders", None, Some(gid))
+                .await?
         } else {
             true // Always enabled in DMs
         };
@@ -3382,10 +4327,19 @@ Use the buttons below for more help or to try custom prompts!"#;
         let remind_at_str = remind_at.format("%Y-%m-%d %H:%M:%S").to_string();
 
         // Store the reminder
-        let reminder_id = self.database.add_reminder(&user_id, &channel_id, &message, &remind_at_str).await?;
+        let reminder_id = self
+            .database
+            .add_reminder(&user_id, &channel_id, &message, &remind_at_str)
+            .await?;
 
-        info!("[{}] ⏰ Created reminder {} for user {} in {} ({})",
-              request_id, reminder_id, user_id, self.format_duration(duration_seconds), remind_at_str);
+        info!(
+            "[{}] ⏰ Created reminder {} for user {} in {} ({})",
+            request_id,
+            reminder_id,
+            user_id,
+            self.format_duration(duration_seconds),
+            remind_at_str
+        );
 
         // Log usage
         self.database.log_usage(&user_id, "remind", None).await?;
@@ -3419,7 +4373,9 @@ Use the buttons below for more help or to try custom prompts!"#;
         let guild_id = command.guild_id.map(|id| id.to_string());
         let guild_id_opt = guild_id.as_deref();
         let reminders_enabled = if let Some(gid) = guild_id_opt {
-            self.database.is_feature_enabled("reminders", None, Some(gid)).await?
+            self.database
+                .is_feature_enabled("reminders", None, Some(gid))
+                .await?
         } else {
             true // Always enabled in DMs
         };
@@ -3500,9 +4456,15 @@ Use the buttons below for more help or to try custom prompts!"#;
 
                     for (id, _channel_id, text, remind_at) in &reminders {
                         // Parse remind_at to show relative time
-                        let remind_time = chrono::NaiveDateTime::parse_from_str(remind_at, "%Y-%m-%d %H:%M:%S")
-                            .map(|dt| chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(dt, chrono::Utc))
-                            .ok();
+                        let remind_time =
+                            chrono::NaiveDateTime::parse_from_str(remind_at, "%Y-%m-%d %H:%M:%S")
+                                .map(|dt| {
+                                    chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(
+                                        dt,
+                                        chrono::Utc,
+                                    )
+                                })
+                                .ok();
 
                         let time_display = if let Some(dt) = remind_time {
                             let now = chrono::Utc::now();
@@ -3516,7 +4478,9 @@ Use the buttons below for more help or to try custom prompts!"#;
                             remind_at.clone()
                         };
 
-                        reminder_list.push_str(&format!("**#{id}** - {time_display} ({remind_at})\n> {text}\n\n"));
+                        reminder_list.push_str(&format!(
+                            "**#{id}** - {time_display} ({remind_at})\n> {text}\n\n"
+                        ));
                     }
 
                     reminder_list.push_str("*Use `/reminders cancel <id>` to cancel a reminder.*");
@@ -3552,7 +4516,9 @@ Use the buttons below for more help or to try custom prompts!"#;
         let component = get_string_option(&command.data.options, "component")
             .ok_or_else(|| anyhow::anyhow!("Missing component parameter"))?;
 
-        info!("[{request_id}] 🔍 Introspect requested for component: {component} by user: {user_id}");
+        info!(
+            "[{request_id}] 🔍 Introspect requested for component: {component} by user: {user_id}"
+        );
 
         // Defer response - AI generation takes time
         command
@@ -3563,7 +4529,9 @@ Use the buttons below for more help or to try custom prompts!"#;
 
         // Get user's persona with channel override -> user -> guild default cascade
         let persona_name = if let Some(gid) = &guild_id {
-            self.database.get_persona_with_channel(&user_id, gid, &channel_id).await?
+            self.database
+                .get_persona_with_channel(&user_id, gid, &channel_id)
+                .await?
         } else {
             self.database.get_user_persona(&user_id).await?
         };
@@ -3590,24 +4558,29 @@ Use the buttons below for more help or to try custom prompts!"#;
         );
 
         // Call OpenAI
-        let chat_completion = ChatCompletion::builder(&self.openai_model, vec![
-            ChatCompletionMessage {
-                role: ChatCompletionMessageRole::System,
-                content: Some(introspection_prompt),
-                name: None,
-                function_call: None,
-                tool_call_id: None,
-                tool_calls: None,
-            },
-            ChatCompletionMessage {
-                role: ChatCompletionMessageRole::User,
-                content: Some(format!("Explain how your {component_title} system works, in your own words.")),
-                name: None,
-                function_call: None,
-                tool_call_id: None,
-                tool_calls: None,
-            },
-        ])
+        let chat_completion = ChatCompletion::builder(
+            &self.openai_model,
+            vec![
+                ChatCompletionMessage {
+                    role: ChatCompletionMessageRole::System,
+                    content: Some(introspection_prompt),
+                    name: None,
+                    function_call: None,
+                    tool_call_id: None,
+                    tool_calls: None,
+                },
+                ChatCompletionMessage {
+                    role: ChatCompletionMessageRole::User,
+                    content: Some(format!(
+                        "Explain how your {component_title} system works, in your own words."
+                    )),
+                    name: None,
+                    function_call: None,
+                    tool_call_id: None,
+                    tool_calls: None,
+                },
+            ],
+        )
         .create()
         .await;
 
@@ -3631,22 +4604,30 @@ Use the buttons below for more help or to try custom prompts!"#;
                     .choices
                     .first()
                     .and_then(|choice| choice.message.content.clone())
-                    .unwrap_or_else(|| "I seem to be having trouble reflecting on myself right now.".to_string())
+                    .unwrap_or_else(|| {
+                        "I seem to be having trouble reflecting on myself right now.".to_string()
+                    })
             }
             Err(e) => {
                 warn!("[{request_id}] ⚠️ OpenAI error during introspection: {e}");
-                format!("I encountered an error while attempting to explain my {component} system: {e}")
+                format!(
+                    "I encountered an error while attempting to explain my {component} system: {e}"
+                )
             }
         };
 
         // Edit the deferred response
         command
             .edit_original_interaction_response(&ctx.http, |msg| {
-                msg.content(format!("## 🔍 Introspection: {component_title}\n\n{response}"))
+                msg.content(format!(
+                    "## 🔍 Introspection: {component_title}\n\n{response}"
+                ))
             })
             .await?;
 
-        self.database.log_usage(&user_id, "introspect", Some(&persona_name)).await?;
+        self.database
+            .log_usage(&user_id, "introspect", Some(&persona_name))
+            .await?;
 
         info!("[{request_id}] ✅ Introspection complete for component: {component}");
         Ok(())
@@ -3698,7 +4679,10 @@ Use the buttons below for more help or to try custom prompts!"#;
     ) -> Result<()> {
         let user_id = command.user.id.to_string();
 
-        let mut output = format!("**Persona Bot v{}**\n\n", crate::features::get_bot_version());
+        let mut output = format!(
+            "**Persona Bot v{}**\n\n",
+            crate::features::get_bot_version()
+        );
         output.push_str("**Feature Versions:**\n");
 
         for feature in crate::features::get_features() {
@@ -3764,15 +4748,16 @@ Use the buttons below for more help or to try custom prompts!"#;
         command: &ApplicationCommandInteraction,
         request_id: Uuid,
     ) -> Result<()> {
-        use crate::features::startup::notification::{format_commit_for_thread, get_detailed_commits, get_github_repo_url};
+        use crate::features::startup::notification::{
+            format_commit_for_thread, get_detailed_commits, get_github_repo_url,
+        };
         use serenity::model::application::interaction::InteractionResponseType;
         use serenity::model::channel::ChannelType;
 
         let user_id = command.user.id.to_string();
         let is_dm = command.guild_id.is_none();
 
-        let count = get_integer_option(&command.data.options, "count")
-            .unwrap_or(1) as usize;
+        let count = get_integer_option(&command.data.options, "count").unwrap_or(1) as usize;
         let count = count.clamp(1, 10);
 
         let commits = get_detailed_commits(count).await;
@@ -3849,7 +4834,10 @@ Use the buttons below for more help or to try custom prompts!"#;
                         }
                     }
                     Err(e) => {
-                        warn!("[{request_id}] Failed to create thread for commit details: {}", e);
+                        warn!(
+                            "[{request_id}] Failed to create thread for commit details: {}",
+                            e
+                        );
                     }
                 }
             }
@@ -3872,12 +4860,18 @@ Use the buttons below for more help or to try custom prompts!"#;
 
         // Get feature flags for this guild
         let flags = if let Some(ref gid) = guild_id {
-            self.database.get_guild_feature_flags(gid).await.unwrap_or_default()
+            self.database
+                .get_guild_feature_flags(gid)
+                .await
+                .unwrap_or_default()
         } else {
             std::collections::HashMap::new()
         };
 
-        let mut output = format!("📦 **Bot Features** (v{})\n\n", crate::features::get_bot_version());
+        let mut output = format!(
+            "📦 **Bot Features** (v{})\n\n",
+            crate::features::get_bot_version()
+        );
         output.push_str("```\n");
         output.push_str("Feature              Version  Status  Toggleable\n");
         output.push_str("─────────────────────────────────────────────────\n");
@@ -3940,22 +4934,33 @@ Use the buttons below for more help or to try custom prompts!"#;
 
         // Get current status
         let guild_id_str = guild_id.as_deref().unwrap_or("");
-        let current_enabled = self.database.is_feature_enabled(&feature_id, None, Some(guild_id_str)).await?;
+        let current_enabled = self
+            .database
+            .is_feature_enabled(&feature_id, None, Some(guild_id_str))
+            .await?;
 
         // Toggle it
         let new_enabled = !current_enabled;
-        self.database.set_feature_flag(&feature_id, new_enabled, None, Some(guild_id_str)).await?;
+        self.database
+            .set_feature_flag(&feature_id, new_enabled, None, Some(guild_id_str))
+            .await?;
 
         // Record in audit trail
-        self.database.record_feature_toggle(
-            &feature_id,
-            feature.version,
-            Some(guild_id_str),
-            &user_id,
-            new_enabled,
-        ).await?;
+        self.database
+            .record_feature_toggle(
+                &feature_id,
+                feature.version,
+                Some(guild_id_str),
+                &user_id,
+                new_enabled,
+            )
+            .await?;
 
-        let status = if new_enabled { "✅ enabled" } else { "❌ disabled" };
+        let status = if new_enabled {
+            "✅ enabled"
+        } else {
+            "❌ disabled"
+        };
         let response = format!(
             "**{}** has been {}.\n\nFeature: {} v{}",
             feature.name, status, feature.id, feature.version
@@ -3980,7 +4985,9 @@ Use the buttons below for more help or to try custom prompts!"#;
         command: &ApplicationCommandInteraction,
         request_id: Uuid,
     ) -> Result<()> {
-        use crate::features::analytics::system_info::{CurrentMetrics, HistoricalSummary, format_history};
+        use crate::features::analytics::system_info::{
+            format_history, CurrentMetrics, HistoricalSummary,
+        };
 
         let user_id = command.user.id.to_string();
 
@@ -4003,10 +5010,22 @@ Use the buttons below for more help or to try custom prompts!"#;
                 let period_label = if view == "history_24h" { "24h" } else { "7d" };
 
                 // Fetch historical data
-                let db_size_data = self.database.get_metrics_history("db_size_bytes", hours).await?;
-                let bot_memory_data = self.database.get_metrics_history("bot_memory_bytes", hours).await?;
-                let system_memory_data = self.database.get_metrics_history("system_memory_percent", hours).await?;
-                let system_cpu_data = self.database.get_metrics_history("system_cpu_percent", hours).await?;
+                let db_size_data = self
+                    .database
+                    .get_metrics_history("db_size_bytes", hours)
+                    .await?;
+                let bot_memory_data = self
+                    .database
+                    .get_metrics_history("bot_memory_bytes", hours)
+                    .await?;
+                let system_memory_data = self
+                    .database
+                    .get_metrics_history("system_memory_percent", hours)
+                    .await?;
+                let system_cpu_data = self
+                    .database
+                    .get_metrics_history("system_cpu_percent", hours)
+                    .await?;
 
                 // Build summaries
                 let db_size = HistoricalSummary::from_data(&db_size_data);
@@ -4030,11 +5049,12 @@ Use the buttons below for more help or to try custom prompts!"#;
                     sys.refresh_processes_specifics(
                         sysinfo::ProcessesToUpdate::Some(&[pid]),
                         true,
-                        sysinfo::ProcessRefreshKind::new().with_memory()
+                        sysinfo::ProcessRefreshKind::new().with_memory(),
                     );
                 }
 
-                let db_path = std::env::var("DATABASE_PATH").unwrap_or_else(|_| "persona.db".to_string());
+                let db_path =
+                    std::env::var("DATABASE_PATH").unwrap_or_else(|_| "persona.db".to_string());
                 let metrics = CurrentMetrics::gather(&sys, &db_path);
                 let bot_uptime_secs = self.start_time.elapsed().as_secs();
 
@@ -4044,9 +5064,7 @@ Use the buttons below for more help or to try custom prompts!"#;
 
         // Edit the deferred response
         command
-            .edit_original_interaction_response(&ctx.http, |msg| {
-                msg.content(response)
-            })
+            .edit_original_interaction_response(&ctx.http, |msg| msg.content(response))
             .await?;
 
         self.database.log_usage(&user_id, "sysinfo", None).await?;
@@ -4104,7 +5122,10 @@ Use the buttons below for more help or to try custom prompts!"#;
             }
             "top_users" => {
                 if let Some(gid) = &guild_id {
-                    let top_users = self.database.get_guild_top_users_by_cost(gid, 7, 10).await?;
+                    let top_users = self
+                        .database
+                        .get_guild_top_users_by_cost(gid, 7, 10)
+                        .await?;
                     Self::format_top_users("Top Users by Cost (7 days)", &top_users)
                 } else {
                     "Top users is only available in guild channels.".to_string()
@@ -4115,9 +5136,7 @@ Use the buttons below for more help or to try custom prompts!"#;
 
         // Edit the deferred response
         command
-            .edit_original_interaction_response(&ctx.http, |msg| {
-                msg.content(response)
-            })
+            .edit_original_interaction_response(&ctx.http, |msg| msg.content(response))
             .await?;
 
         self.database.log_usage(&user_id, "usage", None).await?;
@@ -4150,16 +5169,25 @@ Use the buttons below for more help or to try custom prompts!"#;
             let details = match service_type.as_str() {
                 "chat" => {
                     total_tokens += tokens;
-                    format!("**Chat (GPT)**: {} requests, {} tokens, ${:.4}", requests, tokens, cost)
+                    format!(
+                        "**Chat (GPT)**: {} requests, {} tokens, ${:.4}",
+                        requests, tokens, cost
+                    )
                 }
                 "whisper" => {
                     total_audio_secs += audio_secs;
                     let mins = audio_secs / 60.0;
-                    format!("**Audio (Whisper)**: {} requests, {:.1} minutes, ${:.4}", requests, mins, cost)
+                    format!(
+                        "**Audio (Whisper)**: {} requests, {:.1} minutes, ${:.4}",
+                        requests, mins, cost
+                    )
                 }
                 "dalle" => {
                     total_images += images;
-                    format!("**Images (DALL-E)**: {} requests, {} images, ${:.4}", requests, images, cost)
+                    format!(
+                        "**Images (DALL-E)**: {} requests, {} images, ${:.4}",
+                        requests, images, cost
+                    )
                 }
                 _ => format!("**{}**: {} requests, ${:.4}", service_type, requests, cost),
             };
@@ -4167,13 +5195,19 @@ Use the buttons below for more help or to try custom prompts!"#;
         }
 
         lines.push(String::new());
-        lines.push(format!("**Total**: {} requests, ${:.4} estimated cost", total_requests, total_cost));
+        lines.push(format!(
+            "**Total**: {} requests, ${:.4} estimated cost",
+            total_requests, total_cost
+        ));
 
         if total_tokens > 0 {
             lines.push(format!("📝 {} total tokens", total_tokens));
         }
         if total_audio_secs > 0.0 {
-            lines.push(format!("🎤 {:.1} minutes transcribed", total_audio_secs / 60.0));
+            lines.push(format!(
+                "🎤 {:.1} minutes transcribed",
+                total_audio_secs / 60.0
+            ));
         }
         if total_images > 0 {
             lines.push(format!("🎨 {} images generated", total_images));
@@ -4197,7 +5231,10 @@ Use the buttons below for more help or to try custom prompts!"#;
                 2 => "🥉",
                 _ => "  ",
             };
-            lines.push(format!("{} <@{}>: {} requests, ${:.4}", medal, user_id, requests, cost));
+            lines.push(format!(
+                "{} <@{}>: {} requests, ${:.4}",
+                medal, user_id, requests, cost
+            ));
         }
 
         lines.join("\n")
@@ -4237,16 +5274,17 @@ Use the buttons below for more help or to try custom prompts!"#;
         );
 
         // Call OpenAI (API key set at startup)
-        let chat_completion = ChatCompletion::builder(&self.openai_model, vec![
-            ChatCompletionMessage {
+        let chat_completion = ChatCompletion::builder(
+            &self.openai_model,
+            vec![ChatCompletionMessage {
                 role: ChatCompletionMessageRole::System,
                 content: Some(mediation_prompt),
                 name: None,
                 function_call: None,
                 tool_call_id: None,
                 tool_calls: None,
-            },
-        ])
+            }],
+        )
         .create()
         .await?;
 
@@ -4268,7 +5306,10 @@ Use the buttons below for more help or to try custom prompts!"#;
             .choices
             .first()
             .and_then(|choice| choice.message.content.clone())
-            .unwrap_or_else(|| "I sense tension here. Perhaps a moment of calm reflection would serve us all well.".to_string());
+            .unwrap_or_else(|| {
+                "I sense tension here. Perhaps a moment of calm reflection would serve us all well."
+                    .to_string()
+            });
 
         Ok(response)
     }
@@ -4302,12 +5343,18 @@ Use the buttons below for more help or to try custom prompts!"#;
             _ => "This Week",
         };
 
-        debug!("[{request_id}] Fetching DM stats for user {} (period: {}, days: {})", user_id, period, days);
+        debug!(
+            "[{request_id}] Fetching DM stats for user {} (period: {}, days: {})",
+            user_id, period, days
+        );
 
         match self.database.get_user_dm_stats(&user_id, days).await {
             Ok(stats) => {
                 let response = if stats.session_count == 0 {
-                    format!("You don't have any DM sessions recorded for {}.", period_display.to_lowercase())
+                    format!(
+                        "You don't have any DM sessions recorded for {}.",
+                        period_display.to_lowercase()
+                    )
                 } else {
                     // Format duration
                     let duration_str = if stats.avg_session_duration_min < 1.0 {
@@ -4388,14 +5435,24 @@ Use the buttons below for more help or to try custom prompts!"#;
         let user_id = command.user.id.to_string();
         let limit = get_integer_option(&command.data.options, "limit").unwrap_or(5);
 
-        debug!("[{request_id}] Fetching session history for user {} (limit: {})", user_id, limit);
+        debug!(
+            "[{request_id}] Fetching session history for user {} (limit: {})",
+            user_id, limit
+        );
 
-        match self.database.get_user_recent_sessions(&user_id, limit).await {
+        match self
+            .database
+            .get_user_recent_sessions(&user_id, limit)
+            .await
+        {
             Ok(sessions) => {
                 let resp_text = if sessions.is_empty() {
                     "You don't have any DM sessions recorded yet.".to_string()
                 } else {
-                    let mut output = format!("**Your Recent DM Sessions ({} most recent)**\n\n", sessions.len());
+                    let mut output = format!(
+                        "**Your Recent DM Sessions ({} most recent)**\n\n",
+                        sessions.len()
+                    );
 
                     for (idx, session) in sessions.iter().enumerate() {
                         let status = if session.ended_at.is_some() {
@@ -4404,7 +5461,11 @@ Use the buttons below for more help or to try custom prompts!"#;
                             "Active"
                         };
 
-                        let started = session.started_at.split('T').next().unwrap_or(&session.started_at);
+                        let started = session
+                            .started_at
+                            .split('T')
+                            .next()
+                            .unwrap_or(&session.started_at);
                         let response_time = if session.avg_response_time_ms < 1000 {
                             format!("{}ms", session.avg_response_time_ms)
                         } else {
@@ -4474,6 +5535,12 @@ Use the buttons below for more help or to try custom prompts!"#;
             .unwrap_or(DEFAULT_RESPONSES)
             .clamp(MIN_RESPONSES, MAX_RESPONSES);
 
+        // Extract optional rules parameter
+        let rules = get_string_option(&command.data.options, "rules");
+
+        // Determine if this is opening-only mode (default: 2 rounds = opening statements)
+        let opening_only = rounds <= 2;
+
         // Validate personas are different
         if persona1_id == persona2_id {
             command
@@ -4516,12 +5583,18 @@ Use the buttons below for more help or to try custom prompts!"#;
         let existing_debate = get_active_debates().get(&channel_id.0).map(|d| d.clone());
 
         // Determine if this is a tag-team debate (joining an existing one)
-        let (thread_id, initial_history, previous_debaters) = if let Some(prev_state) = existing_debate {
+        let (thread_id, initial_history, previous_debaters) = if let Some(prev_state) =
+            existing_debate
+        {
             // We're in a thread with an existing debate - this is a tag-team!
-            let prev_p1 = self.persona_manager.get_persona(&prev_state.config.persona1_id)
+            let prev_p1 = self
+                .persona_manager
+                .get_persona(&prev_state.config.persona1_id)
                 .map(|p| p.name.clone())
                 .unwrap_or_else(|| prev_state.config.persona1_id.clone());
-            let prev_p2 = self.persona_manager.get_persona(&prev_state.config.persona2_id)
+            let prev_p2 = self
+                .persona_manager
+                .get_persona(&prev_state.config.persona2_id)
                 .map(|p| p.name.clone())
                 .unwrap_or_else(|| prev_state.config.persona2_id.clone());
 
@@ -4588,14 +5661,20 @@ Use the buttons below for more help or to try custom prompts!"#;
             let message = command.get_interaction_response(&ctx.http).await?;
 
             // Create the debate thread from the message
-            let thread_name = format!("{} vs {} - {}",
-                persona1_name, persona2_name,
-                if topic.len() > 40 { format!("{}...", &topic[..37]) } else { topic.clone() });
+            let thread_name = format!(
+                "{} vs {} - {}",
+                persona1_name,
+                persona2_name,
+                if topic.len() > 40 {
+                    format!("{}...", &topic[..37])
+                } else {
+                    topic.clone()
+                }
+            );
 
             let thread = match channel_id
                 .create_public_thread(&ctx.http, message.id, |t| {
-                    t.name(&thread_name)
-                        .auto_archive_duration(60) // Archive after 1 hour of inactivity
+                    t.name(&thread_name).auto_archive_duration(60) // Archive after 1 hour of inactivity
                 })
                 .await
             {
@@ -4642,23 +5721,32 @@ Use the buttons below for more help or to try custom prompts!"#;
                 .color(0x7289DA) // Discord blurple
                 .to_owned();
 
-            let _ = thread.id.send_message(&ctx.http, |m| {
-                m.set_embed(intro_embed)
-            }).await;
+            let _ = thread
+                .id
+                .send_message(&ctx.http, |m| m.set_embed(intro_embed))
+                .await;
 
             (thread.id, None, None)
         };
 
-        // Create debate config with optional initial history
+        // Check for prior discussion context (interoperability with council)
+        let prior_context = crate::features::detect_thread_context(thread_id.0);
+        let prior_context_text = prior_context
+            .as_ref()
+            .map(|ctx| crate::features::format_prior_context(ctx, &self.persona_manager));
+
+        // Create debate config with optional initial history and rules
         let config = DebateConfig {
             persona1_id: persona1_id.clone(),
             persona2_id: persona2_id.clone(),
             topic: topic.clone(),
-            rounds,
+            rounds: if rounds == 0 { 2 } else { rounds }, // Ensure at least opening statements
             initiator_id: command.user.id.to_string(),
             guild_id: command.guild_id.map(|g| g.to_string()),
             initial_history,
             previous_debaters,
+            rules: rules.clone(),
+            opening_only,
         };
 
         // Clone what we need for the async closure
@@ -4667,13 +5755,17 @@ Use the buttons below for more help or to try custom prompts!"#;
         let user_id = command.user.id.to_string();
         let guild_id = command.guild_id.map(|g| g.to_string());
         let channel_id_str = thread_id.to_string();
+        let _persona_manager_clone = self.persona_manager.clone();
+        let _prior_context_clone = prior_context_text.clone(); // For future use with enhanced orchestrator
 
         // Run the debate (this spawns the orchestrator)
         let ctx_clone = ctx.clone();
 
         tokio::spawn(async move {
             // Create a closure for getting AI responses
-            let get_response = |system_prompt: String, user_message: String, history: Vec<(String, String)>| {
+            let get_response = |system_prompt: String,
+                                user_message: String,
+                                history: Vec<(String, String)>| {
                 let model = openai_model.clone();
                 let tracker = usage_tracker.clone();
                 let uid = user_id.clone();
@@ -4682,16 +5774,14 @@ Use the buttons below for more help or to try custom prompts!"#;
 
                 async move {
                     // Build messages for OpenAI
-                    let mut messages = vec![
-                        openai::chat::ChatCompletionMessage {
-                            role: openai::chat::ChatCompletionMessageRole::System,
-                            content: Some(system_prompt),
-                            name: None,
-                            function_call: None,
-                            tool_call_id: None,
-                            tool_calls: None,
-                        },
-                    ];
+                    let mut messages = vec![openai::chat::ChatCompletionMessage {
+                        role: openai::chat::ChatCompletionMessageRole::System,
+                        content: Some(system_prompt),
+                        name: None,
+                        function_call: None,
+                        tool_call_id: None,
+                        tool_calls: None,
+                    }];
 
                     // Add conversation history
                     for (role, content) in history {
@@ -4749,11 +5839,16 @@ Use the buttons below for more help or to try custom prompts!"#;
                 }
             };
 
-            if let Err(e) = orchestrator.run_debate(&ctx_clone, thread_id, config, get_response).await {
+            if let Err(e) = orchestrator
+                .run_debate(&ctx_clone, thread_id, config, get_response)
+                .await
+            {
                 error!("Debate failed: {e}");
-                let _ = thread_id.send_message(&ctx_clone.http, |m| {
-                    m.content("The debate encountered an error and could not continue.")
-                }).await;
+                let _ = thread_id
+                    .send_message(&ctx_clone.http, |m| {
+                        m.content("The debate encountered an error and could not continue.")
+                    })
+                    .await;
             }
         });
 
@@ -4770,8 +5865,8 @@ Use the buttons below for more help or to try custom prompts!"#;
         command: &ApplicationCommandInteraction,
         request_id: Uuid,
     ) -> Result<()> {
-        use serenity::model::application::interaction::InteractionResponseType;
         use serenity::builder::GetMessages;
+        use serenity::model::application::interaction::InteractionResponseType;
 
         let start_time = Instant::now();
 
@@ -4780,8 +5875,8 @@ Use the buttons below for more help or to try custom prompts!"#;
             .ok_or_else(|| anyhow::anyhow!("Missing persona argument"))?;
         let prompt = get_string_option(&command.data.options, "prompt")
             .ok_or_else(|| anyhow::anyhow!("Missing prompt argument"))?;
-        let ignore_context = get_bool_option(&command.data.options, "ignore_context")
-            .unwrap_or(false);
+        let ignore_context =
+            get_bool_option(&command.data.options, "ignore_context").unwrap_or(false);
 
         let user_id = command.user.id.to_string();
         let channel_id = command.channel_id;
@@ -4981,6 +6076,9 @@ Use the buttons below for more help or to try custom prompts!"#;
         let prompt = get_string_option(&command.data.options, "prompt")
             .ok_or_else(|| anyhow::anyhow!("Missing prompt argument"))?;
 
+        // Extract optional rules parameter
+        let rules = get_string_option(&command.data.options, "rules");
+
         // Collect all selected personas (persona1 and persona2 are required, 3-6 optional)
         let mut persona_ids: Vec<String> = Vec::new();
         for i in 1..=6 {
@@ -5076,8 +6174,7 @@ Use the buttons below for more help or to try custom prompts!"#;
 
         let thread = match channel_id
             .create_public_thread(&ctx.http, message.id, |t| {
-                t.name(&thread_name)
-                    .auto_archive_duration(60) // Archive after 1 hour of inactivity
+                t.name(&thread_name).auto_archive_duration(60) // Archive after 1 hour of inactivity
             })
             .await
         {
@@ -5129,16 +6226,21 @@ Use the buttons below for more help or to try custom prompts!"#;
             .await;
 
         // Log usage
-        self.database
-            .log_usage(&user_id, "council", None)
-            .await?;
+        self.database.log_usage(&user_id, "council", None).await?;
 
-        // Create initial council state and store it
-        let council_state = CouncilState::new(
+        // Check for prior discussion context in this thread (interoperability)
+        let prior_context = crate::features::detect_thread_context(thread.id.0);
+        let prior_context_text = prior_context
+            .as_ref()
+            .map(|ctx| crate::features::format_prior_context(ctx, &self.persona_manager));
+
+        // Create initial council state with rules and store it
+        let council_state = CouncilState::with_rules(
             prompt.clone(),
             persona_ids.clone(),
             user_id.clone(),
             guild_id.clone(),
+            rules.clone(),
         );
         get_active_councils().insert(thread.id.0, council_state);
 
@@ -5151,6 +6253,8 @@ Use the buttons below for more help or to try custom prompts!"#;
         let prompt_clone = prompt.clone();
         let guild_id_clone = guild_id.clone();
         let channel_id_str = channel_id.to_string();
+        let rules_clone = rules.clone();
+        let prior_context_clone = prior_context_text.clone();
 
         // Spawn a task to get responses from each persona
         tokio::spawn(async move {
@@ -5168,12 +6272,24 @@ Use the buttons below for more help or to try custom prompts!"#;
                 // Get system prompt for this persona
                 let system_prompt = persona_manager.get_system_prompt(persona_id, None);
 
+                // Build rules section if provided
+                let rules_section = rules_clone.as_ref().map(|r| format!(
+                    "\n\n## Ground Rules\nThe following rules and definitions apply to this discussion:\n{}\n",
+                    r
+                )).unwrap_or_default();
+
+                // Build prior context section if available
+                let prior_section = prior_context_clone
+                    .as_ref()
+                    .map(|c| format!("\n\n{}\n", c))
+                    .unwrap_or_default();
+
                 // Add context about being part of a council
                 let council_context = format!(
-                    "{}\n\nYou are participating in a council discussion with other personas. \
+                    "{}{}{}\n\nYou are participating in a council discussion with other personas. \
                     Share your unique perspective on the topic. Be concise but thoughtful. \
                     You are speaking as {} - stay true to your character.",
-                    system_prompt, persona.name
+                    system_prompt, rules_section, prior_section, persona.name
                 );
 
                 // Build messages for OpenAI
@@ -5272,21 +6388,38 @@ Use the buttons below for more help or to try custom prompts!"#;
                 }
             }
 
-            // Post closing message with hint about follow-ups
-            let closing_embed = serenity::builder::CreateEmbed::default()
-                .title("Council Adjourned")
+            // Mark opening statements as complete
+            if let Some(mut state) = get_active_councils().get_mut(&thread_id.0) {
+                state.mark_opening_complete();
+            }
+
+            // Post interactive control buttons
+            let control_embed = serenity::builder::CreateEmbed::default()
+                .title("Council Awaiting Direction")
                 .description(
-                    "All council members have shared their perspectives.\n\n\
-                    **Tip:** Mention me with a follow-up question and the council will reconvene!"
+                    "All council members have shared their opening perspectives.\n\n\
+                    **Select a council member** to hear more from them, or:\n\
+                    - **Continue Discussion** - All members respond to what has been said\n\
+                    - **Dismiss Council** - End this council session\n\n\
+                    You can also mention me with a follow-up question!",
                 )
                 .color(0x9B59B6)
                 .to_owned();
 
+            // Build interactive buttons
+            let buttons = crate::features::create_council_buttons(
+                thread_id.0,
+                &persona_ids,
+                &persona_manager,
+            );
+
             let _ = thread_id
-                .send_message(&ctx_clone.http, |m| m.set_embed(closing_embed))
+                .send_message(&ctx_clone.http, |m| {
+                    m.set_embed(control_embed).set_components(buttons)
+                })
                 .await;
 
-            info!("[{request_id}] Council session completed");
+            info!("[{request_id}] Council opening statements completed, awaiting interaction");
         });
 
         Ok(())
@@ -5308,7 +6441,10 @@ Use the buttons below for more help or to try custom prompts!"#;
         let council_state = match get_active_councils().get(&channel_id.0) {
             Some(state) => state.clone(),
             None => {
-                debug!("[{request_id}] No active council found for channel {}", channel_id);
+                debug!(
+                    "[{request_id}] No active council found for channel {}",
+                    channel_id
+                );
                 return Ok(());
             }
         };
@@ -5492,5 +6628,114 @@ Use the buttons below for more help or to try custom prompts!"#;
             .to_string();
 
         Ok(stripped)
+    }
+
+    /// Handle the /conclude slash command
+    ///
+    /// Ends any active council or debate session in the current thread.
+    async fn handle_slash_conclude(
+        &self,
+        ctx: &Context,
+        command: &ApplicationCommandInteraction,
+        request_id: Uuid,
+    ) -> Result<()> {
+        use serenity::model::application::interaction::InteractionResponseType;
+
+        let channel_id = command.channel_id.0;
+
+        info!("[{request_id}] /conclude command in channel {}", channel_id);
+
+        // Check for active council
+        if let Some((_, council_state)) = get_active_councils().remove(&channel_id) {
+            info!(
+                "[{request_id}] Concluding council session on topic: {}",
+                council_state.topic
+            );
+
+            command
+                .create_interaction_response(&ctx.http, |r| {
+                    r.kind(InteractionResponseType::ChannelMessageWithSource)
+                        .interaction_response_data(|m| {
+                            m.embed(|e| {
+                                e.title("Council Concluded")
+                                    .description(format!(
+                                        "**Topic:** {}\n\n\
+                                        **Participants:** {}\n\n\
+                                        This council session has been formally concluded.",
+                                        council_state.topic,
+                                        council_state
+                                            .persona_ids
+                                            .iter()
+                                            .filter_map(|id| self
+                                                .persona_manager
+                                                .get_persona(id)
+                                                .map(|p| p.name.clone()))
+                                            .collect::<Vec<_>>()
+                                            .join(", ")
+                                    ))
+                                    .color(0x9B59B6)
+                            })
+                        })
+                })
+                .await?;
+
+            return Ok(());
+        }
+
+        // Check for active debate
+        if let Some((_, debate_state)) = get_active_debates().remove(&channel_id) {
+            info!(
+                "[{request_id}] Concluding debate session on topic: {}",
+                debate_state.config.topic
+            );
+
+            let p1_name = self
+                .persona_manager
+                .get_persona(&debate_state.config.persona1_id)
+                .map(|p| p.name.clone())
+                .unwrap_or_else(|| debate_state.config.persona1_id.clone());
+            let p2_name = self
+                .persona_manager
+                .get_persona(&debate_state.config.persona2_id)
+                .map(|p| p.name.clone())
+                .unwrap_or_else(|| debate_state.config.persona2_id.clone());
+
+            command
+                .create_interaction_response(&ctx.http, |r| {
+                    r.kind(InteractionResponseType::ChannelMessageWithSource)
+                        .interaction_response_data(|m| {
+                            m.embed(|e| {
+                                e.title("Debate Concluded")
+                                    .description(format!(
+                                        "**Topic:** {}\n\n\
+                                        **Debaters:** {} vs {}\n\
+                                        **Total Rounds:** {}\n\n\
+                                        This debate has been formally concluded.",
+                                        debate_state.config.topic,
+                                        p1_name,
+                                        p2_name,
+                                        debate_state.total_rounds_completed
+                                    ))
+                                    .color(0x7289DA)
+                            })
+                        })
+                })
+                .await?;
+
+            return Ok(());
+        }
+
+        // No active session found
+        command
+            .create_interaction_response(&ctx.http, |r| {
+                r.kind(InteractionResponseType::ChannelMessageWithSource)
+                    .interaction_response_data(|m| {
+                        m.content("No active council or debate session found in this thread.")
+                            .ephemeral(true)
+                    })
+            })
+            .await?;
+
+        Ok(())
     }
 }

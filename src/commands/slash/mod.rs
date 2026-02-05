@@ -12,6 +12,7 @@
 pub mod admin;
 mod ask;
 mod chat;
+pub mod conclude;
 mod context_menu;
 pub mod council;
 pub mod debate;
@@ -73,6 +74,9 @@ pub fn create_slash_commands_with_plugins(plugins: &[Plugin]) -> Vec<CreateAppli
     // Council command
     commands.extend(council::create_commands());
 
+    // Conclude command
+    commands.extend(conclude::create_commands());
+
     // Plugin-generated commands
     commands.extend(create_plugin_commands(plugins));
 
@@ -90,7 +94,10 @@ pub async fn register_global_commands(ctx: &Context) -> Result<()> {
 }
 
 /// Registers all slash commands globally with plugin commands
-pub async fn register_global_commands_with_plugins(ctx: &Context, plugins: &[Plugin]) -> Result<()> {
+pub async fn register_global_commands_with_plugins(
+    ctx: &Context,
+    plugins: &[Plugin],
+) -> Result<()> {
     let slash_commands = create_slash_commands_with_plugins(plugins);
     let context_commands = create_context_menu_commands();
 
@@ -203,18 +210,11 @@ mod tests {
     #[test]
     fn test_create_slash_commands() {
         let commands = create_slash_commands();
-        assert!(commands.len() >= 26, "Should have at least 26 commands");
+        assert!(commands.len() >= 27, "Should have at least 27 commands");
 
         let command_names: Vec<String> = commands
             .iter()
-            .map(|cmd| {
-                cmd.0
-                    .get("name")
-                    .unwrap()
-                    .as_str()
-                    .unwrap()
-                    .to_string()
-            })
+            .map(|cmd| cmd.0.get("name").unwrap().as_str().unwrap().to_string())
             .collect();
 
         let expected_commands = vec![
@@ -250,6 +250,8 @@ mod tests {
             "ask",
             // Council command
             "council",
+            // Conclude command
+            "conclude",
         ];
 
         for expected in expected_commands {

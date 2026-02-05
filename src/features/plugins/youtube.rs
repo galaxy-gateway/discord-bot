@@ -57,16 +57,16 @@ impl YouTubeUrl {
     /// Returns a URL in the format `https://www.youtube.com/watch?v=VIDEO_ID`
     /// This strips out any playlist parameters that might confuse downloaders.
     pub fn video_url(&self) -> Option<String> {
-        self.video_id.as_ref().map(|id| {
-            format!("https://www.youtube.com/watch?v={}", id)
-        })
+        self.video_id
+            .as_ref()
+            .map(|id| format!("https://www.youtube.com/watch?v={}", id))
     }
 
     /// Get the playlist URL for enumeration
     pub fn playlist_url(&self) -> Option<String> {
-        self.playlist_id.as_ref().map(|id| {
-            format!("https://www.youtube.com/playlist?list={}", id)
-        })
+        self.playlist_id
+            .as_ref()
+            .map(|id| format!("https://www.youtube.com/playlist?list={}", id))
     }
 }
 
@@ -167,7 +167,9 @@ pub fn parse_youtube_url(url: &str) -> Result<YouTubeUrl> {
         (Some(_), Some(_)) => YouTubeUrlType::VideoInPlaylist,
         (Some(_), None) => YouTubeUrlType::SingleVideo,
         (None, None) => {
-            return Err(anyhow!("Invalid YouTube URL: could not extract video or playlist ID"));
+            return Err(anyhow!(
+                "Invalid YouTube URL: could not extract video or playlist ID"
+            ));
         }
     };
 
@@ -234,34 +236,40 @@ pub async fn enumerate_playlist(
             .map_err(|e| anyhow!("Failed to parse yt-dlp JSON output: {}", e))?;
 
         // Extract video info
-        let video_id = json.get("id")
+        let video_id = json
+            .get("id")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing video ID in playlist item"))?
             .to_string();
 
-        let title = json.get("title")
+        let title = json
+            .get("title")
             .and_then(|v| v.as_str())
             .unwrap_or("Unknown Title")
             .to_string();
 
-        let duration = json.get("duration")
+        let duration = json
+            .get("duration")
             .and_then(|v| v.as_f64())
             .map(|d| d as u64);
 
         // Get playlist metadata from first item
         if index == 0 {
-            playlist_title = json.get("playlist_title")
+            playlist_title = json
+                .get("playlist_title")
                 .and_then(|v| v.as_str())
                 .unwrap_or("Unknown Playlist")
                 .to_string();
 
-            uploader = json.get("playlist_uploader")
+            uploader = json
+                .get("playlist_uploader")
                 .or_else(|| json.get("uploader"))
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
         }
 
-        let description = json.get("description")
+        let description = json
+            .get("description")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
@@ -351,29 +359,37 @@ pub async fn fetch_video_metadata(url: &str) -> Result<VideoMetadata> {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let json: serde_json::Value = serde_json::from_str(&stdout)
-        .map_err(|e| anyhow!("Failed to parse yt-dlp JSON: {}", e))?;
+    let json: serde_json::Value =
+        serde_json::from_str(&stdout).map_err(|e| anyhow!("Failed to parse yt-dlp JSON: {}", e))?;
 
-    let title = json.get("title")
+    let title = json
+        .get("title")
         .and_then(|v| v.as_str())
         .unwrap_or("Unknown Title")
         .to_string();
 
-    let description = json.get("description")
+    let description = json
+        .get("description")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
-    let duration = json.get("duration")
+    let duration = json
+        .get("duration")
         .and_then(|v| v.as_f64())
         .map(|d| d as u64);
 
-    let uploader = json.get("uploader")
+    let uploader = json
+        .get("uploader")
         .or_else(|| json.get("channel"))
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
-    debug!("Fetched metadata for '{}': duration={:?}, has_description={}",
-           title, duration, description.is_some());
+    debug!(
+        "Fetched metadata for '{}': duration={:?}, has_description={}",
+        title,
+        duration,
+        description.is_some()
+    );
 
     Ok(VideoMetadata {
         title,
@@ -402,9 +418,7 @@ pub fn format_description_preview(description: &str, max_lines: usize) -> String
 pub fn estimate_transcription_time(items: &[PlaylistItem]) -> std::time::Duration {
     // Rough estimate: transcription takes about 1.5x real-time on average
     // Plus ~30 seconds overhead per video for download, processing, etc.
-    let total_duration: u64 = items.iter()
-        .filter_map(|item| item.duration)
-        .sum();
+    let total_duration: u64 = items.iter().filter_map(|item| item.duration).sum();
 
     let estimated_seconds = (total_duration as f64 * 1.5) as u64 + (items.len() as u64 * 30);
     std::time::Duration::from_secs(estimated_seconds)
@@ -465,23 +479,33 @@ mod tests {
         let parsed = parse_youtube_url(url).unwrap();
 
         assert_eq!(parsed.video_id, None);
-        assert_eq!(parsed.playlist_id, Some("PLrAXtmErZgOeiKm4sgNOknGvNjby9efdf".to_string()));
+        assert_eq!(
+            parsed.playlist_id,
+            Some("PLrAXtmErZgOeiKm4sgNOknGvNjby9efdf".to_string())
+        );
         assert_eq!(parsed.url_type, YouTubeUrlType::Playlist);
         assert!(parsed.has_playlist());
     }
 
     #[test]
     fn test_parse_video_in_playlist() {
-        let url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=PLrAXtmErZgOeiKm4sgNOknGvNjby9efdf";
+        let url =
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=PLrAXtmErZgOeiKm4sgNOknGvNjby9efdf";
         let parsed = parse_youtube_url(url).unwrap();
 
         assert_eq!(parsed.video_id, Some("dQw4w9WgXcQ".to_string()));
-        assert_eq!(parsed.playlist_id, Some("PLrAXtmErZgOeiKm4sgNOknGvNjby9efdf".to_string()));
+        assert_eq!(
+            parsed.playlist_id,
+            Some("PLrAXtmErZgOeiKm4sgNOknGvNjby9efdf".to_string())
+        );
         assert_eq!(parsed.url_type, YouTubeUrlType::VideoInPlaylist);
         assert!(parsed.has_playlist());
         assert!(!parsed.is_single_video());
         // video_url() should return a clean URL without playlist parameter
-        assert_eq!(parsed.video_url(), Some("https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_string()));
+        assert_eq!(
+            parsed.video_url(),
+            Some("https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_string())
+        );
     }
 
     #[test]
@@ -541,6 +565,9 @@ mod tests {
     fn test_format_duration() {
         assert_eq!(format_duration(std::time::Duration::from_secs(30)), "< 1m");
         assert_eq!(format_duration(std::time::Duration::from_secs(600)), "~10m");
-        assert_eq!(format_duration(std::time::Duration::from_secs(5400)), "~1h 30m");
+        assert_eq!(
+            format_duration(std::time::Duration::from_secs(5400)),
+            "~1h 30m"
+        );
     }
 }

@@ -2,8 +2,8 @@
 //!
 //! Error logs and diagnostics display.
 
-use crate::tui::App;
 use crate::tui::ui::titled_block;
+use crate::tui::App;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
 
@@ -20,9 +20,9 @@ fn render_error_list(frame: &mut Frame, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),   // Header
-            Constraint::Length(6),   // Error summary
-            Constraint::Min(0),      // Error list
+            Constraint::Length(3), // Header
+            Constraint::Length(6), // Error summary
+            Constraint::Min(0),    // Error list
         ])
         .split(area);
 
@@ -55,32 +55,45 @@ fn render_error_list(frame: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
-    let items: Vec<ListItem> = app.errors_state.errors.iter().enumerate().map(|(i, err)| {
-        let is_selected = i == app.errors_state.selected_index;
-        let style = if is_selected {
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(Color::White)
-        };
+    let items: Vec<ListItem> = app
+        .errors_state
+        .errors
+        .iter()
+        .enumerate()
+        .map(|(i, err)| {
+            let is_selected = i == app.errors_state.selected_index;
+            let style = if is_selected {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::White)
+            };
 
-        let prefix = if is_selected { "> " } else { "  " };
-        let timestamp = err.timestamp.format("%m-%d %H:%M:%S").to_string();
+            let prefix = if is_selected { "> " } else { "  " };
+            let timestamp = err.timestamp.format("%m-%d %H:%M:%S").to_string();
 
-        let type_style = match err.error_type.as_str() {
-            "panic" | "critical" => Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-            "warning" => Style::default().fg(Color::Yellow),
-            _ => Style::default().fg(Color::Magenta),
-        };
+            let type_style = match err.error_type.as_str() {
+                "panic" | "critical" => {
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+                }
+                "warning" => Style::default().fg(Color::Yellow),
+                _ => Style::default().fg(Color::Magenta),
+            };
 
-        let line = Line::from(vec![
-            Span::raw(prefix),
-            Span::styled(format!("[{}] ", timestamp), Style::default().fg(Color::DarkGray)),
-            Span::styled(format!("{:<12} ", &err.error_type), type_style),
-            Span::raw(truncate(&err.error_message, 60)),
-        ]);
+            let line = Line::from(vec![
+                Span::raw(prefix),
+                Span::styled(
+                    format!("[{}] ", timestamp),
+                    Style::default().fg(Color::DarkGray),
+                ),
+                Span::styled(format!("{:<12} ", &err.error_type), type_style),
+                Span::raw(truncate(&err.error_message, 60)),
+            ]);
 
-        ListItem::new(line).style(style)
-    }).collect();
+            ListItem::new(line).style(style)
+        })
+        .collect();
 
     let list = List::new(items)
         .block(titled_block("Recent Errors"))
@@ -101,22 +114,27 @@ fn render_error_summary(frame: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
-    let items: Vec<ListItem> = counts.iter().take(3).map(|(error_type, count)| {
-        let bar_width = (*count as f64 / app.errors_state.errors.len().max(1) as f64 * 20.0) as usize;
-        let bar: String = "█".repeat(bar_width);
+    let items: Vec<ListItem> = counts
+        .iter()
+        .take(3)
+        .map(|(error_type, count)| {
+            let bar_width =
+                (*count as f64 / app.errors_state.errors.len().max(1) as f64 * 20.0) as usize;
+            let bar: String = "█".repeat(bar_width);
 
-        let type_style = match error_type.as_str() {
-            "panic" | "critical" => Style::default().fg(Color::Red),
-            "warning" => Style::default().fg(Color::Yellow),
-            _ => Style::default().fg(Color::Magenta),
-        };
+            let type_style = match error_type.as_str() {
+                "panic" | "critical" => Style::default().fg(Color::Red),
+                "warning" => Style::default().fg(Color::Yellow),
+                _ => Style::default().fg(Color::Magenta),
+            };
 
-        ListItem::new(Line::from(vec![
-            Span::styled(format!("{:<15}", error_type), type_style),
-            Span::styled(format!("{:>4} ", count), Style::default().fg(Color::White)),
-            Span::styled(bar, Style::default().fg(Color::Red)),
-        ]))
-    }).collect();
+            ListItem::new(Line::from(vec![
+                Span::styled(format!("{:<15}", error_type), type_style),
+                Span::styled(format!("{:>4} ", count), Style::default().fg(Color::White)),
+                Span::styled(bar, Style::default().fg(Color::Red)),
+            ]))
+        })
+        .collect();
 
     let list = List::new(items)
         .block(titled_block("Error Summary"))
@@ -141,8 +159,8 @@ fn render_error_details(frame: &mut Frame, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(10),  // Error info
-            Constraint::Min(0),      // Stack trace
+            Constraint::Length(10), // Error info
+            Constraint::Min(0),     // Stack trace
         ])
         .split(area);
 
@@ -151,12 +169,18 @@ fn render_error_details(frame: &mut Frame, app: &App, area: Rect) {
 
     lines.push(Line::from(vec![
         Span::styled("Type: ", Style::default().fg(Color::DarkGray)),
-        Span::styled(&err.error_type, Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            &err.error_type,
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        ),
     ]));
 
     lines.push(Line::from(vec![
         Span::styled("Time: ", Style::default().fg(Color::DarkGray)),
-        Span::styled(err.timestamp.format("%Y-%m-%d %H:%M:%S").to_string(), Style::default().fg(Color::White)),
+        Span::styled(
+            err.timestamp.format("%Y-%m-%d %H:%M:%S").to_string(),
+            Style::default().fg(Color::White),
+        ),
     ]));
 
     if let Some(user_id) = &err.user_id {
@@ -181,15 +205,23 @@ fn render_error_details(frame: &mut Frame, app: &App, area: Rect) {
     }
 
     lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled("Message:", Style::default().fg(Color::DarkGray))));
-    lines.push(Line::from(Span::styled(&err.error_message, Style::default().fg(Color::White))));
+    lines.push(Line::from(Span::styled(
+        "Message:",
+        Style::default().fg(Color::DarkGray),
+    )));
+    lines.push(Line::from(Span::styled(
+        &err.error_message,
+        Style::default().fg(Color::White),
+    )));
 
-    let info = Paragraph::new(lines)
-        .block(titled_block("Error Info"));
+    let info = Paragraph::new(lines).block(titled_block("Error Info"));
     frame.render_widget(info, chunks[0]);
 
     // Stack trace
-    let stack_content = err.stack_trace.as_deref().unwrap_or("No stack trace available");
+    let stack_content = err
+        .stack_trace
+        .as_deref()
+        .unwrap_or("No stack trace available");
 
     let stack_lines: Vec<Line> = stack_content
         .lines()

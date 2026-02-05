@@ -2,9 +2,9 @@
 //!
 //! Unix socket client for the TUI to communicate with the bot.
 
-use crate::ipc::protocol::{BotEvent, TuiCommand, encode_message};
 use crate::ipc::get_socket_path;
-use anyhow::{Result, anyhow};
+use crate::ipc::protocol::{encode_message, BotEvent, TuiCommand};
+use anyhow::{anyhow, Result};
 use log::{debug, error, info, warn};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -203,49 +203,69 @@ impl IpcClient {
             request_id: request_id.clone(),
             channel_id,
             content,
-        }).await?;
+        })
+        .await?;
         Ok(request_id)
     }
 
     /// Set a feature enabled/disabled
-    pub async fn set_feature(&self, feature: String, enabled: bool, guild_id: Option<u64>) -> Result<String> {
+    pub async fn set_feature(
+        &self,
+        feature: String,
+        enabled: bool,
+        guild_id: Option<u64>,
+    ) -> Result<String> {
         let request_id = uuid::Uuid::new_v4().to_string();
         self.send(TuiCommand::SetFeature {
             request_id: request_id.clone(),
             feature,
             enabled,
             guild_id,
-        }).await?;
+        })
+        .await?;
         Ok(request_id)
     }
 
     /// Set channel persona
-    pub async fn set_channel_persona(&self, guild_id: u64, channel_id: u64, persona: String) -> Result<String> {
+    pub async fn set_channel_persona(
+        &self,
+        guild_id: u64,
+        channel_id: u64,
+        persona: String,
+    ) -> Result<String> {
         let request_id = uuid::Uuid::new_v4().to_string();
         self.send(TuiCommand::SetChannelPersona {
             request_id: request_id.clone(),
             guild_id,
             channel_id,
             persona,
-        }).await?;
+        })
+        .await?;
         Ok(request_id)
     }
 
     /// Set guild setting
-    pub async fn set_guild_setting(&self, guild_id: u64, key: String, value: String) -> Result<String> {
+    pub async fn set_guild_setting(
+        &self,
+        guild_id: u64,
+        key: String,
+        value: String,
+    ) -> Result<String> {
         let request_id = uuid::Uuid::new_v4().to_string();
         self.send(TuiCommand::SetGuildSetting {
             request_id: request_id.clone(),
             guild_id,
             key,
             value,
-        }).await?;
+        })
+        .await?;
         Ok(request_id)
     }
 
     /// Get channel message history
     pub async fn get_channel_history(&self, channel_id: u64, limit: u32) -> Result<()> {
-        self.send(TuiCommand::GetChannelHistory { channel_id, limit }).await
+        self.send(TuiCommand::GetChannelHistory { channel_id, limit })
+            .await
     }
 
     /// Request usage statistics
@@ -265,7 +285,8 @@ impl IpcClient {
 
     /// Request historical metrics
     pub async fn request_historical_metrics(&self, metric_type: String, hours: u32) -> Result<()> {
-        self.send(TuiCommand::GetHistoricalMetrics { metric_type, hours }).await
+        self.send(TuiCommand::GetHistoricalMetrics { metric_type, hours })
+            .await
     }
 
     /// Request user list with stats
@@ -285,7 +306,8 @@ impl IpcClient {
 
     /// Request DM sessions for a user
     pub async fn request_dm_sessions(&self, user_id: String, limit: u32) -> Result<()> {
-        self.send(TuiCommand::GetDmSessions { user_id, limit }).await
+        self.send(TuiCommand::GetDmSessions { user_id, limit })
+            .await
     }
 
     /// Request feature states (enabled/disabled) for a guild
@@ -295,7 +317,8 @@ impl IpcClient {
 
     /// Request channels with conversation history (for browse mode)
     pub async fn request_channels_with_history(&self, guild_id: Option<u64>) -> Result<()> {
-        self.send(TuiCommand::GetChannelsWithHistory { guild_id }).await
+        self.send(TuiCommand::GetChannelsWithHistory { guild_id })
+            .await
     }
 
     /// Disable auto-reconnect (for clean shutdown)
@@ -311,11 +334,17 @@ pub async fn connect_with_retry(max_attempts: u32, delay: Duration) -> Result<Ip
             Ok(client) => return Ok(client),
             Err(e) => {
                 if attempt < max_attempts {
-                    warn!("Connection attempt {} failed: {}. Retrying in {:?}...",
-                          attempt, e, delay);
+                    warn!(
+                        "Connection attempt {} failed: {}. Retrying in {:?}...",
+                        attempt, e, delay
+                    );
                     tokio::time::sleep(delay).await;
                 } else {
-                    return Err(anyhow!("Failed to connect after {} attempts: {}", max_attempts, e));
+                    return Err(anyhow!(
+                        "Failed to connect after {} attempts: {}",
+                        max_attempts,
+                        e
+                    ));
                 }
             }
         }

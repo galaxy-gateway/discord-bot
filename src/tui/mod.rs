@@ -11,8 +11,8 @@
 
 pub mod app;
 pub mod event;
-pub mod ui;
 pub mod state;
+pub mod ui;
 
 pub use app::{App, Screen};
 pub use event::{Event, EventHandler};

@@ -304,16 +304,16 @@ impl Default for ChunkingConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            chunk_duration_secs: 600,        // 10 minutes
-            chunk_timeout_secs: 300,         // 5 minutes per chunk
-            download_timeout_secs: 300,      // 5 minutes for download
+            chunk_duration_secs: 600,            // 10 minutes
+            chunk_timeout_secs: 300,             // 5 minutes per chunk
+            download_timeout_secs: 300,          // 5 minutes for download
             min_duration_for_chunking_secs: 600, // 10 minutes
             file_command: None,
             file_args: Vec::new(),
             download_command: None,
             download_args: Vec::new(),
-            cumulative_summaries: false,     // off by default
-            cumulative_summary_interval: 1,  // every chunk when enabled
+            cumulative_summaries: false,    // off by default
+            cumulative_summary_interval: 1, // every chunk when enabled
         }
     }
 }

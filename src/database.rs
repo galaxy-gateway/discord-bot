@@ -15,7 +15,7 @@ impl Database {
         let db = Database {
             connection: Arc::new(Mutex::new(connection)),
         };
-        
+
         db.init_tables().await?;
         info!("Database initialized at: {database_path}");
         Ok(db)
@@ -23,7 +23,7 @@ impl Database {
 
     async fn init_tables(&self) -> Result<()> {
         let conn = self.connection.lock().await;
-        
+
         conn.execute(
             "CREATE TABLE IF NOT EXISTS user_preferences (
                 user_id TEXT PRIMARY KEY,
@@ -645,7 +645,8 @@ impl Database {
 
     pub async fn get_user_persona(&self, user_id: &str) -> Result<String> {
         let conn = self.connection.lock().await;
-        let mut statement = conn.prepare("SELECT default_persona FROM user_preferences WHERE user_id = ?")?;
+        let mut statement =
+            conn.prepare("SELECT default_persona FROM user_preferences WHERE user_id = ?")?;
         statement.bind((1, user_id))?;
 
         if let Ok(State::Row) = statement.next() {
@@ -658,11 +659,16 @@ impl Database {
 
     /// Get user persona with guild default fallback
     /// Cascade: user preference -> guild default -> env var -> "obi"
-    pub async fn get_user_persona_with_guild(&self, user_id: &str, guild_id: Option<&str>) -> Result<String> {
+    pub async fn get_user_persona_with_guild(
+        &self,
+        user_id: &str,
+        guild_id: Option<&str>,
+    ) -> Result<String> {
         let conn = self.connection.lock().await;
 
         // First check user preference
-        let mut statement = conn.prepare("SELECT default_persona FROM user_preferences WHERE user_id = ?")?;
+        let mut statement =
+            conn.prepare("SELECT default_persona FROM user_preferences WHERE user_id = ?")?;
         statement.bind((1, user_id))?;
 
         if let Ok(State::Row) = statement.next() {
@@ -687,10 +693,14 @@ impl Database {
     }
 
     /// Get the channel-level persona override if set
-    pub async fn get_channel_persona(&self, guild_id: &str, channel_id: &str) -> Result<Option<String>> {
+    pub async fn get_channel_persona(
+        &self,
+        guild_id: &str,
+        channel_id: &str,
+    ) -> Result<Option<String>> {
         let conn = self.connection.lock().await;
         let mut statement = conn.prepare(
-            "SELECT default_persona FROM channel_settings WHERE guild_id = ? AND channel_id = ?"
+            "SELECT default_persona FROM channel_settings WHERE guild_id = ? AND channel_id = ?",
         )?;
         statement.bind((1, guild_id))?;
         statement.bind((2, channel_id))?;
@@ -705,14 +715,19 @@ impl Database {
 
     /// Set or clear the channel-level persona override
     /// Pass None to clear the override
-    pub async fn set_channel_persona(&self, guild_id: &str, channel_id: &str, persona: Option<&str>) -> Result<()> {
+    pub async fn set_channel_persona(
+        &self,
+        guild_id: &str,
+        channel_id: &str,
+        persona: Option<&str>,
+    ) -> Result<()> {
         let conn = self.connection.lock().await;
         let mut statement = conn.prepare(
             "INSERT INTO channel_settings (guild_id, channel_id, default_persona, updated_at)
              VALUES (?, ?, ?, CURRENT_TIMESTAMP)
              ON CONFLICT(guild_id, channel_id) DO UPDATE SET
              default_persona = excluded.default_persona,
-             updated_at = CURRENT_TIMESTAMP"
+             updated_at = CURRENT_TIMESTAMP",
         )?;
         statement.bind((1, guild_id))?;
         statement.bind((2, channel_id))?;
@@ -726,12 +741,17 @@ impl Database {
     }
 
     /// Get persona with full cascade: channel override -> user preference -> guild default -> env -> "obi"
-    pub async fn get_persona_with_channel(&self, user_id: &str, guild_id: &str, channel_id: &str) -> Result<String> {
+    pub async fn get_persona_with_channel(
+        &self,
+        user_id: &str,
+        guild_id: &str,
+        channel_id: &str,
+    ) -> Result<String> {
         let conn = self.connection.lock().await;
 
         // First check channel override (highest priority)
         let mut channel_stmt = conn.prepare(
-            "SELECT default_persona FROM channel_settings WHERE guild_id = ? AND channel_id = ?"
+            "SELECT default_persona FROM channel_settings WHERE guild_id = ? AND channel_id = ?",
         )?;
         channel_stmt.bind((1, guild_id))?;
         channel_stmt.bind((2, channel_id))?;
@@ -744,7 +764,8 @@ impl Database {
 
         // Check user preference
         drop(channel_stmt);
-        let mut user_stmt = conn.prepare("SELECT default_persona FROM user_preferences WHERE user_id = ?")?;
+        let mut user_stmt =
+            conn.prepare("SELECT default_persona FROM user_preferences WHERE user_id = ?")?;
         user_stmt.bind((1, user_id))?;
 
         if let Ok(State::Row) = user_stmt.next() {
@@ -772,15 +793,15 @@ impl Database {
             "INSERT OR REPLACE INTO user_preferences (user_id, default_persona, updated_at) 
              VALUES (?, ?, CURRENT_TIMESTAMP)",
         )?;
-        
+
         let mut statement = conn.prepare(
             "INSERT OR REPLACE INTO user_preferences (user_id, default_persona, updated_at) 
-             VALUES (?, ?, CURRENT_TIMESTAMP)"
+             VALUES (?, ?, CURRENT_TIMESTAMP)",
         )?;
         statement.bind((1, user_id))?;
         statement.bind((2, persona))?;
         statement.next()?;
-        
+
         info!("Updated persona for user {user_id} to {persona}");
         Ok(())
     }
@@ -817,9 +838,7 @@ impl Database {
     /// Get a cached username by user ID
     pub async fn get_cached_username(&self, user_id: &str) -> Result<Option<String>> {
         let conn = self.connection.lock().await;
-        let mut statement = conn.prepare(
-            "SELECT username FROM user_cache WHERE user_id = ?"
-        )?;
+        let mut statement = conn.prepare("SELECT username FROM user_cache WHERE user_id = ?")?;
         statement.bind((1, user_id))?;
 
         if let Ok(State::Row) = statement.next() {
@@ -829,11 +848,15 @@ impl Database {
         }
     }
 
-    pub async fn log_usage(&self, user_id: &str, command: &str, persona: Option<&str>) -> Result<()> {
+    pub async fn log_usage(
+        &self,
+        user_id: &str,
+        command: &str,
+        persona: Option<&str>,
+    ) -> Result<()> {
         let conn = self.connection.lock().await;
-        let mut statement = conn.prepare(
-            "INSERT INTO usage_stats (user_id, command, persona) VALUES (?, ?, ?)"
-        )?;
+        let mut statement =
+            conn.prepare("INSERT INTO usage_stats (user_id, command, persona) VALUES (?, ?, ?)")?;
         statement.bind((1, user_id))?;
         statement.bind((2, command))?;
         statement.bind((3, persona.unwrap_or("")))?;
@@ -841,7 +864,14 @@ impl Database {
         Ok(())
     }
 
-    pub async fn store_message(&self, user_id: &str, channel_id: &str, role: &str, content: &str, persona: Option<&str>) -> Result<()> {
+    pub async fn store_message(
+        &self,
+        user_id: &str,
+        channel_id: &str,
+        role: &str,
+        content: &str,
+        persona: Option<&str>,
+    ) -> Result<()> {
         let conn = self.connection.lock().await;
         let mut statement = conn.prepare(
             "INSERT INTO conversation_history (user_id, channel_id, role, content, persona) VALUES (?, ?, ?, ?, ?)"
@@ -855,13 +885,18 @@ impl Database {
         Ok(())
     }
 
-    pub async fn get_conversation_history(&self, user_id: &str, channel_id: &str, limit: i64) -> Result<Vec<(String, String)>> {
+    pub async fn get_conversation_history(
+        &self,
+        user_id: &str,
+        channel_id: &str,
+        limit: i64,
+    ) -> Result<Vec<(String, String)>> {
         let conn = self.connection.lock().await;
         let mut statement = conn.prepare(
             "SELECT role, content FROM conversation_history
              WHERE user_id = ? AND channel_id = ?
              ORDER BY timestamp DESC
-             LIMIT ?"
+             LIMIT ?",
         )?;
         statement.bind((1, user_id))?;
         statement.bind((2, channel_id))?;
@@ -881,9 +916,8 @@ impl Database {
 
     pub async fn clear_conversation_history(&self, user_id: &str, channel_id: &str) -> Result<()> {
         let conn = self.connection.lock().await;
-        let mut statement = conn.prepare(
-            "DELETE FROM conversation_history WHERE user_id = ? AND channel_id = ?"
-        )?;
+        let mut statement =
+            conn.prepare("DELETE FROM conversation_history WHERE user_id = ? AND channel_id = ?")?;
         statement.bind((1, user_id))?;
         statement.bind((2, channel_id))?;
         statement.next()?;
@@ -894,7 +928,7 @@ impl Database {
     pub async fn cleanup_old_messages(&self, days: i64) -> Result<()> {
         let conn = self.connection.lock().await;
         let mut statement = conn.prepare(
-            "DELETE FROM conversation_history WHERE timestamp < datetime('now', ? || ' days')"
+            "DELETE FROM conversation_history WHERE timestamp < datetime('now', ? || ' days')",
         )?;
         statement.bind((1, format!("-{days}").as_str()))?;
         statement.next()?;
@@ -927,11 +961,14 @@ impl Database {
         Ok(())
     }
 
-    pub async fn update_message_metadata_reactions(&self, message_id: &str, reactions: &str) -> Result<()> {
+    pub async fn update_message_metadata_reactions(
+        &self,
+        message_id: &str,
+        reactions: &str,
+    ) -> Result<()> {
         let conn = self.connection.lock().await;
-        let mut statement = conn.prepare(
-            "UPDATE message_metadata SET reactions = ? WHERE message_id = ?"
-        )?;
+        let mut statement =
+            conn.prepare("UPDATE message_metadata SET reactions = ? WHERE message_id = ?")?;
         statement.bind((1, reactions))?;
         statement.bind((2, message_id))?;
         statement.next()?;
@@ -941,7 +978,7 @@ impl Database {
     pub async fn mark_message_deleted(&self, message_id: &str) -> Result<()> {
         let conn = self.connection.lock().await;
         let mut statement = conn.prepare(
-            "UPDATE message_metadata SET deleted_at = CURRENT_TIMESTAMP WHERE message_id = ?"
+            "UPDATE message_metadata SET deleted_at = CURRENT_TIMESTAMP WHERE message_id = ?",
         )?;
         statement.bind((1, message_id))?;
         statement.next()?;
@@ -951,7 +988,7 @@ impl Database {
     pub async fn mark_message_edited(&self, message_id: &str) -> Result<()> {
         let conn = self.connection.lock().await;
         let mut statement = conn.prepare(
-            "UPDATE message_metadata SET edited_at = CURRENT_TIMESTAMP WHERE message_id = ?"
+            "UPDATE message_metadata SET edited_at = CURRENT_TIMESTAMP WHERE message_id = ?",
         )?;
         statement.bind((1, message_id))?;
         statement.next()?;
@@ -961,9 +998,8 @@ impl Database {
     // Interaction Session Methods
     pub async fn start_session(&self, user_id: &str, guild_id: Option<&str>) -> Result<i64> {
         let conn = self.connection.lock().await;
-        let mut statement = conn.prepare(
-            "INSERT INTO interaction_sessions (user_id, guild_id) VALUES (?, ?)"
-        )?;
+        let mut statement =
+            conn.prepare("INSERT INTO interaction_sessions (user_id, guild_id) VALUES (?, ?)")?;
         statement.bind((1, user_id))?;
         statement.bind((2, guild_id.unwrap_or("")))?;
         statement.next()?;
@@ -980,7 +1016,7 @@ impl Database {
         let mut statement = conn.prepare(
             "UPDATE interaction_sessions
              SET message_count = message_count + 1, last_activity = CURRENT_TIMESTAMP
-             WHERE id = ?"
+             WHERE id = ?",
         )?;
         statement.bind((1, session_id))?;
         statement.next()?;
@@ -990,7 +1026,7 @@ impl Database {
     pub async fn end_session(&self, session_id: i64) -> Result<()> {
         let conn = self.connection.lock().await;
         let mut statement = conn.prepare(
-            "UPDATE interaction_sessions SET session_end = CURRENT_TIMESTAMP WHERE id = ?"
+            "UPDATE interaction_sessions SET session_end = CURRENT_TIMESTAMP WHERE id = ?",
         )?;
         statement.bind((1, session_id))?;
         statement.next()?;
@@ -1021,12 +1057,15 @@ impl Database {
         Ok(())
     }
 
-    pub async fn get_user_bookmarks(&self, user_id: &str) -> Result<Vec<(String, String, String, String)>> {
+    pub async fn get_user_bookmarks(
+        &self,
+        user_id: &str,
+    ) -> Result<Vec<(String, String, String, String)>> {
         let conn = self.connection.lock().await;
         let mut statement = conn.prepare(
             "SELECT message_id, channel_id, bookmark_name, bookmark_note
              FROM user_bookmarks WHERE user_id = ?
-             ORDER BY created_at DESC"
+             ORDER BY created_at DESC",
         )?;
         statement.bind((1, user_id))?;
 
@@ -1043,9 +1082,8 @@ impl Database {
 
     pub async fn delete_bookmark(&self, user_id: &str, message_id: &str) -> Result<()> {
         let conn = self.connection.lock().await;
-        let mut statement = conn.prepare(
-            "DELETE FROM user_bookmarks WHERE user_id = ? AND message_id = ?"
-        )?;
+        let mut statement =
+            conn.prepare("DELETE FROM user_bookmarks WHERE user_id = ? AND message_id = ?")?;
         statement.bind((1, user_id))?;
         statement.bind((2, message_id))?;
         statement.next()?;
@@ -1063,7 +1101,7 @@ impl Database {
         let conn = self.connection.lock().await;
         let mut statement = conn.prepare(
             "INSERT INTO reminders (user_id, channel_id, reminder_text, remind_at)
-             VALUES (?, ?, ?, ?)"
+             VALUES (?, ?, ?, ?)",
         )?;
         statement.bind((1, user_id))?;
         statement.bind((2, channel_id))?;
@@ -1084,7 +1122,7 @@ impl Database {
             "SELECT id, user_id, channel_id, reminder_text
              FROM reminders
              WHERE completed = 0 AND remind_at <= datetime('now')
-             ORDER BY remind_at ASC"
+             ORDER BY remind_at ASC",
         )?;
 
         let mut reminders = Vec::new();
@@ -1101,20 +1139,23 @@ impl Database {
     pub async fn complete_reminder(&self, reminder_id: i64) -> Result<()> {
         let conn = self.connection.lock().await;
         let mut statement = conn.prepare(
-            "UPDATE reminders SET completed = 1, completed_at = CURRENT_TIMESTAMP WHERE id = ?"
+            "UPDATE reminders SET completed = 1, completed_at = CURRENT_TIMESTAMP WHERE id = ?",
         )?;
         statement.bind((1, reminder_id))?;
         statement.next()?;
         Ok(())
     }
 
-    pub async fn get_user_reminders(&self, user_id: &str) -> Result<Vec<(i64, String, String, String)>> {
+    pub async fn get_user_reminders(
+        &self,
+        user_id: &str,
+    ) -> Result<Vec<(i64, String, String, String)>> {
         let conn = self.connection.lock().await;
         let mut statement = conn.prepare(
             "SELECT id, channel_id, reminder_text, remind_at
              FROM reminders
              WHERE user_id = ? AND completed = 0
-             ORDER BY remind_at ASC"
+             ORDER BY remind_at ASC",
         )?;
         statement.bind((1, user_id))?;
 
@@ -1131,9 +1172,7 @@ impl Database {
 
     pub async fn delete_reminder(&self, reminder_id: i64, user_id: &str) -> Result<bool> {
         let conn = self.connection.lock().await;
-        let mut statement = conn.prepare(
-            "DELETE FROM reminders WHERE id = ? AND user_id = ?"
-        )?;
+        let mut statement = conn.prepare("DELETE FROM reminders WHERE id = ? AND user_id = ?")?;
         statement.bind((1, reminder_id))?;
         statement.bind((2, user_id))?;
         statement.next()?;
@@ -1175,13 +1214,17 @@ impl Database {
         Ok(())
     }
 
-    pub async fn get_custom_command(&self, command_name: &str, guild_id: Option<&str>) -> Result<Option<String>> {
+    pub async fn get_custom_command(
+        &self,
+        command_name: &str,
+        guild_id: Option<&str>,
+    ) -> Result<Option<String>> {
         let conn = self.connection.lock().await;
         let mut statement = conn.prepare(
             "SELECT response_text FROM custom_commands
              WHERE command_name = ? AND (guild_id = ? OR is_global = 1)
              ORDER BY is_global ASC
-             LIMIT 1"
+             LIMIT 1",
         )?;
         statement.bind((1, command_name))?;
         statement.bind((2, guild_id.unwrap_or("")))?;
@@ -1193,11 +1236,14 @@ impl Database {
         }
     }
 
-    pub async fn delete_custom_command(&self, command_name: &str, guild_id: Option<&str>) -> Result<()> {
+    pub async fn delete_custom_command(
+        &self,
+        command_name: &str,
+        guild_id: Option<&str>,
+    ) -> Result<()> {
         let conn = self.connection.lock().await;
-        let mut statement = conn.prepare(
-            "DELETE FROM custom_commands WHERE command_name = ? AND guild_id = ?"
-        )?;
+        let mut statement =
+            conn.prepare("DELETE FROM custom_commands WHERE command_name = ? AND guild_id = ?")?;
         statement.bind((1, command_name))?;
         statement.bind((2, guild_id.unwrap_or("")))?;
         statement.next()?;
@@ -1213,19 +1259,19 @@ impl Database {
             "message" => {
                 conn.execute(
                     "INSERT INTO daily_analytics (date, total_messages) VALUES (?, 1)
-                     ON CONFLICT(date) DO UPDATE SET total_messages = total_messages + 1"
+                     ON CONFLICT(date) DO UPDATE SET total_messages = total_messages + 1",
                 )?;
             }
             "command" => {
                 conn.execute(
                     "INSERT INTO daily_analytics (date, total_commands) VALUES (?, 1)
-                     ON CONFLICT(date) DO UPDATE SET total_commands = total_commands + 1"
+                     ON CONFLICT(date) DO UPDATE SET total_commands = total_commands + 1",
                 )?;
             }
             "error" => {
                 conn.execute(
                     "INSERT INTO daily_analytics (date, total_errors) VALUES (?, 1)
-                     ON CONFLICT(date) DO UPDATE SET total_errors = total_errors + 1"
+                     ON CONFLICT(date) DO UPDATE SET total_errors = total_errors + 1",
                 )?;
             }
             _ => {}
@@ -1233,14 +1279,20 @@ impl Database {
 
         let mut statement = conn.prepare(
             "INSERT INTO daily_analytics (date, total_messages) VALUES (?, 0)
-             ON CONFLICT(date) DO NOTHING"
+             ON CONFLICT(date) DO NOTHING",
         )?;
         statement.bind((1, date.as_str()))?;
         statement.next()?;
         Ok(())
     }
 
-    pub async fn add_performance_metric(&self, metric_type: &str, value: f64, unit: Option<&str>, metadata: Option<&str>) -> Result<()> {
+    pub async fn add_performance_metric(
+        &self,
+        metric_type: &str,
+        value: f64,
+        unit: Option<&str>,
+        metadata: Option<&str>,
+    ) -> Result<()> {
         let conn = self.connection.lock().await;
         let mut statement = conn.prepare(
             "INSERT INTO performance_metrics (metric_type, value, unit, metadata) VALUES (?, ?, ?, ?)"
@@ -1269,13 +1321,17 @@ impl Database {
 
     /// Get historical metrics data for a specific metric type
     /// Returns (unix_timestamp, value) pairs ordered by time ascending
-    pub async fn get_metrics_history(&self, metric_type: &str, hours: i64) -> Result<Vec<(i64, f64)>> {
+    pub async fn get_metrics_history(
+        &self,
+        metric_type: &str,
+        hours: i64,
+    ) -> Result<Vec<(i64, f64)>> {
         let conn = self.connection.lock().await;
         let mut statement = conn.prepare(
             "SELECT strftime('%s', timestamp) as unix_time, value
              FROM performance_metrics
              WHERE metric_type = ? AND timestamp >= datetime('now', ? || ' hours')
-             ORDER BY timestamp ASC"
+             ORDER BY timestamp ASC",
         )?;
         statement.bind((1, metric_type))?;
         statement.bind((2, format!("-{}", hours).as_str()))?;
@@ -1355,12 +1411,17 @@ impl Database {
 
     /// Check if a feature is enabled for a guild
     /// Returns true by default if no record exists (features are enabled unless explicitly disabled)
-    pub async fn is_feature_enabled(&self, feature_name: &str, user_id: Option<&str>, guild_id: Option<&str>) -> Result<bool> {
+    pub async fn is_feature_enabled(
+        &self,
+        feature_name: &str,
+        user_id: Option<&str>,
+        guild_id: Option<&str>,
+    ) -> Result<bool> {
         let conn = self.connection.lock().await;
         let mut statement = conn.prepare(
             "SELECT enabled FROM feature_flags
              WHERE feature_name = ? AND user_id = ? AND guild_id = ?
-             LIMIT 1"
+             LIMIT 1",
         )?;
         statement.bind((1, feature_name))?;
         statement.bind((2, user_id.unwrap_or("")))?;
@@ -1377,11 +1438,14 @@ impl Database {
 
     /// Get all feature flags for a guild
     /// Returns a map of feature_name -> enabled status
-    pub async fn get_guild_feature_flags(&self, guild_id: &str) -> Result<std::collections::HashMap<String, bool>> {
+    pub async fn get_guild_feature_flags(
+        &self,
+        guild_id: &str,
+    ) -> Result<std::collections::HashMap<String, bool>> {
         let conn = self.connection.lock().await;
         let mut statement = conn.prepare(
             "SELECT feature_name, enabled FROM feature_flags
-             WHERE guild_id = ? AND user_id = ''"
+             WHERE guild_id = ? AND user_id = ''",
         )?;
         statement.bind((1, guild_id))?;
 
@@ -1406,7 +1470,7 @@ impl Database {
         let conn = self.connection.lock().await;
         let mut statement = conn.prepare(
             "INSERT INTO feature_versions (feature_name, version, guild_id, toggled_by, enabled)
-             VALUES (?, ?, ?, ?, ?)"
+             VALUES (?, ?, ?, ?, ?)",
         )?;
         statement.bind((1, feature_name))?;
         statement.bind((2, version))?;
@@ -1419,7 +1483,12 @@ impl Database {
     }
 
     // Guild Settings Methods
-    pub async fn set_guild_setting(&self, guild_id: &str, setting_key: &str, setting_value: &str) -> Result<()> {
+    pub async fn set_guild_setting(
+        &self,
+        guild_id: &str,
+        setting_key: &str,
+        setting_value: &str,
+    ) -> Result<()> {
         let conn = self.connection.lock().await;
         let mut statement = conn.prepare(
             "INSERT OR REPLACE INTO guild_settings (guild_id, setting_key, setting_value, updated_at)
@@ -1432,10 +1501,14 @@ impl Database {
         Ok(())
     }
 
-    pub async fn get_guild_setting(&self, guild_id: &str, setting_key: &str) -> Result<Option<String>> {
+    pub async fn get_guild_setting(
+        &self,
+        guild_id: &str,
+        setting_key: &str,
+    ) -> Result<Option<String>> {
         let conn = self.connection.lock().await;
         let mut statement = conn.prepare(
-            "SELECT setting_value FROM guild_settings WHERE guild_id = ? AND setting_key = ?"
+            "SELECT setting_value FROM guild_settings WHERE guild_id = ? AND setting_key = ?",
         )?;
         statement.bind((1, guild_id))?;
         statement.bind((2, setting_key))?;
@@ -1452,7 +1525,7 @@ impl Database {
         let conn = self.connection.lock().await;
         let mut statement = conn.prepare(
             "INSERT OR REPLACE INTO bot_settings (setting_key, setting_value, updated_at)
-             VALUES (?, ?, CURRENT_TIMESTAMP)"
+             VALUES (?, ?, CURRENT_TIMESTAMP)",
         )?;
         statement.bind((1, setting_key))?;
         statement.bind((2, setting_value))?;
@@ -1462,9 +1535,8 @@ impl Database {
 
     pub async fn get_bot_setting(&self, setting_key: &str) -> Result<Option<String>> {
         let conn = self.connection.lock().await;
-        let mut statement = conn.prepare(
-            "SELECT setting_value FROM bot_settings WHERE setting_key = ?"
-        )?;
+        let mut statement =
+            conn.prepare("SELECT setting_value FROM bot_settings WHERE setting_key = ?")?;
         statement.bind((1, setting_key))?;
 
         if let Ok(State::Row) = statement.next() {
@@ -1475,7 +1547,12 @@ impl Database {
     }
 
     // Extended User Preferences Methods
-    pub async fn set_user_preference(&self, user_id: &str, preference_key: &str, preference_value: &str) -> Result<()> {
+    pub async fn set_user_preference(
+        &self,
+        user_id: &str,
+        preference_key: &str,
+        preference_value: &str,
+    ) -> Result<()> {
         let conn = self.connection.lock().await;
         let mut statement = conn.prepare(
             "INSERT OR REPLACE INTO extended_user_preferences (user_id, preference_key, preference_value, updated_at)
@@ -1488,7 +1565,11 @@ impl Database {
         Ok(())
     }
 
-    pub async fn get_user_preference(&self, user_id: &str, preference_key: &str) -> Result<Option<String>> {
+    pub async fn get_user_preference(
+        &self,
+        user_id: &str,
+        preference_key: &str,
+    ) -> Result<Option<String>> {
         let conn = self.connection.lock().await;
         let mut statement = conn.prepare(
             "SELECT preference_value FROM extended_user_preferences WHERE user_id = ? AND preference_key = ?"
@@ -1518,7 +1599,7 @@ impl Database {
         let mut statement = conn.prepare(
             "INSERT INTO conflict_detection
              (channel_id, guild_id, participants, detection_type, confidence_score, last_message_id)
-             VALUES (?, ?, ?, ?, ?, ?)"
+             VALUES (?, ?, ?, ?, ?, ?)",
         )?;
         statement.bind((1, channel_id))?;
         statement.bind((2, guild_id.unwrap_or("")))?;
@@ -1540,7 +1621,7 @@ impl Database {
     pub async fn mark_conflict_resolved(&self, conflict_id: i64) -> Result<()> {
         let conn = self.connection.lock().await;
         let mut statement = conn.prepare(
-            "UPDATE conflict_detection SET resolved_at = CURRENT_TIMESTAMP WHERE id = ?"
+            "UPDATE conflict_detection SET resolved_at = CURRENT_TIMESTAMP WHERE id = ?",
         )?;
         statement.bind((1, conflict_id))?;
         statement.next()?;
@@ -1553,7 +1634,7 @@ impl Database {
         let mut statement = conn.prepare(
             "UPDATE conflict_detection
              SET mediation_triggered = 1, mediation_message_id = ?
-             WHERE id = ?"
+             WHERE id = ?",
         )?;
         statement.bind((1, message_id))?;
         statement.bind((2, conflict_id))?;
@@ -1566,7 +1647,7 @@ impl Database {
         let mut statement = conn.prepare(
             "SELECT id FROM conflict_detection
              WHERE channel_id = ? AND resolved_at IS NULL
-             ORDER BY last_detected DESC LIMIT 1"
+             ORDER BY last_detected DESC LIMIT 1",
         )?;
         statement.bind((1, channel_id))?;
 
@@ -1586,7 +1667,7 @@ impl Database {
         let conn = self.connection.lock().await;
         let mut statement = conn.prepare(
             "INSERT INTO mediation_history (conflict_id, channel_id, mediation_message)
-             VALUES (?, ?, ?)"
+             VALUES (?, ?, ?)",
         )?;
         statement.bind((1, conflict_id))?;
         statement.bind((2, channel_id))?;
@@ -1604,7 +1685,7 @@ impl Database {
              FROM mediation_history mh
              WHERE mh.channel_id = ?
              ORDER BY mh.created_at DESC
-             LIMIT 1"
+             LIMIT 1",
         )?;
         statement.bind((1, channel_id))?;
 
@@ -1627,7 +1708,7 @@ impl Database {
              FROM conversation_history
              WHERE channel_id = ?
              ORDER BY timestamp DESC
-             LIMIT ?"
+             LIMIT ?",
         )?;
         statement.bind((1, channel_id))?;
         statement.bind((2, limit as i64))?;
@@ -1660,7 +1741,7 @@ impl Database {
              WHERE channel_id = ?
                AND CAST(strftime('%s', timestamp) AS INTEGER) > ?
              ORDER BY timestamp DESC
-             LIMIT ?"
+             LIMIT ?",
         )?;
         statement.bind((1, channel_id))?;
         statement.bind((2, since_timestamp))?;
@@ -1723,7 +1804,7 @@ impl Database {
 
         // First try channel-specific setting
         let mut statement = conn.prepare(
-            "SELECT verbosity FROM channel_settings WHERE guild_id = ? AND channel_id = ?"
+            "SELECT verbosity FROM channel_settings WHERE guild_id = ? AND channel_id = ?",
         )?;
         statement.bind((1, guild_id))?;
         statement.bind((2, channel_id))?;
@@ -1748,14 +1829,19 @@ impl Database {
     }
 
     /// Set verbosity for a specific channel
-    pub async fn set_channel_verbosity(&self, guild_id: &str, channel_id: &str, verbosity: &str) -> Result<()> {
+    pub async fn set_channel_verbosity(
+        &self,
+        guild_id: &str,
+        channel_id: &str,
+        verbosity: &str,
+    ) -> Result<()> {
         let conn = self.connection.lock().await;
         let mut statement = conn.prepare(
             "INSERT INTO channel_settings (guild_id, channel_id, verbosity, updated_at)
              VALUES (?, ?, ?, CURRENT_TIMESTAMP)
              ON CONFLICT(guild_id, channel_id) DO UPDATE SET
              verbosity = excluded.verbosity,
-             updated_at = CURRENT_TIMESTAMP"
+             updated_at = CURRENT_TIMESTAMP",
         )?;
         statement.bind((1, guild_id))?;
         statement.bind((2, channel_id))?;
@@ -1766,7 +1852,11 @@ impl Database {
     }
 
     /// Get all settings for a channel (verbosity, conflict_enabled, persona)
-    pub async fn get_channel_settings(&self, guild_id: &str, channel_id: &str) -> Result<(String, bool, Option<String>)> {
+    pub async fn get_channel_settings(
+        &self,
+        guild_id: &str,
+        channel_id: &str,
+    ) -> Result<(String, bool, Option<String>)> {
         let conn = self.connection.lock().await;
         let mut statement = conn.prepare(
             "SELECT verbosity, conflict_enabled, default_persona FROM channel_settings WHERE guild_id = ? AND channel_id = ?"
@@ -1786,14 +1876,19 @@ impl Database {
     }
 
     /// Set whether conflict detection is enabled for a channel
-    pub async fn set_channel_conflict_enabled(&self, guild_id: &str, channel_id: &str, enabled: bool) -> Result<()> {
+    pub async fn set_channel_conflict_enabled(
+        &self,
+        guild_id: &str,
+        channel_id: &str,
+        enabled: bool,
+    ) -> Result<()> {
         let conn = self.connection.lock().await;
         let mut statement = conn.prepare(
             "INSERT INTO channel_settings (guild_id, channel_id, conflict_enabled, updated_at)
              VALUES (?, ?, ?, CURRENT_TIMESTAMP)
              ON CONFLICT(guild_id, channel_id) DO UPDATE SET
              conflict_enabled = excluded.conflict_enabled,
-             updated_at = CURRENT_TIMESTAMP"
+             updated_at = CURRENT_TIMESTAMP",
         )?;
         statement.bind((1, guild_id))?;
         statement.bind((2, channel_id))?;
@@ -1840,7 +1935,7 @@ impl Database {
             "INSERT INTO openai_usage
              (request_id, user_id, guild_id, channel_id, service_type, model,
               input_tokens, output_tokens, total_tokens, estimated_cost_usd)
-             VALUES (?, ?, ?, ?, 'chat', ?, ?, ?, ?, ?)"
+             VALUES (?, ?, ?, ?, 'chat', ?, ?, ?, ?, ?)",
         )?;
         statement.bind((1, request_id.unwrap_or("")))?;
         statement.bind((2, user_id))?;
@@ -1862,7 +1957,7 @@ impl Database {
              ON CONFLICT(date, guild_id, user_id, service_type) DO UPDATE SET
              request_count = request_count + 1,
              total_tokens = total_tokens + excluded.total_tokens,
-             total_cost_usd = total_cost_usd + excluded.total_cost_usd"
+             total_cost_usd = total_cost_usd + excluded.total_cost_usd",
         )?;
         agg_stmt.bind((1, date.as_str()))?;
         agg_stmt.bind((2, guild_id.unwrap_or("")))?;
@@ -1891,7 +1986,7 @@ impl Database {
             "INSERT INTO openai_usage
              (user_id, guild_id, channel_id, service_type, model,
               audio_duration_seconds, estimated_cost_usd)
-             VALUES (?, ?, ?, 'whisper', 'whisper-1', ?, ?)"
+             VALUES (?, ?, ?, 'whisper', 'whisper-1', ?, ?)",
         )?;
         statement.bind((1, user_id))?;
         statement.bind((2, guild_id.unwrap_or("")))?;
@@ -1939,7 +2034,7 @@ impl Database {
             "INSERT INTO openai_usage
              (user_id, guild_id, channel_id, service_type, model,
               image_count, image_size, estimated_cost_usd)
-             VALUES (?, ?, ?, 'dalle', 'dall-e-3', ?, ?, ?)"
+             VALUES (?, ?, ?, 'dalle', 'dall-e-3', ?, ?, ?)",
         )?;
         statement.bind((1, user_id))?;
         statement.bind((2, guild_id.unwrap_or("")))?;
@@ -1958,7 +2053,7 @@ impl Database {
              ON CONFLICT(date, guild_id, user_id, service_type) DO UPDATE SET
              request_count = request_count + 1,
              total_images = total_images + excluded.total_images,
-             total_cost_usd = total_cost_usd + excluded.total_cost_usd"
+             total_cost_usd = total_cost_usd + excluded.total_cost_usd",
         )?;
         agg_stmt.bind((1, date.as_str()))?;
         agg_stmt.bind((2, guild_id.unwrap_or("")))?;
@@ -1987,7 +2082,7 @@ impl Database {
                     SUM(total_cost_usd) as cost
              FROM openai_usage_daily
              WHERE user_id = ? AND date >= date('now', ? || ' days')
-             GROUP BY service_type"
+             GROUP BY service_type",
         )?;
         statement.bind((1, user_id))?;
         statement.bind((2, format!("-{}", days).as_str()))?;
@@ -2027,7 +2122,7 @@ impl Database {
                  SELECT DISTINCT user_id FROM openai_usage_daily WHERE guild_id = ?
              )))
              AND date >= date('now', ? || ' days')
-             GROUP BY service_type"
+             GROUP BY service_type",
         )?;
         statement.bind((1, guild_id))?;
         statement.bind((2, guild_id))?;
@@ -2069,7 +2164,7 @@ impl Database {
              AND date >= date('now', ? || ' days')
              GROUP BY user_id
              ORDER BY cost DESC
-             LIMIT ?"
+             LIMIT ?",
         )?;
         statement.bind((1, guild_id))?;
         statement.bind((2, guild_id))?;
@@ -2091,12 +2186,21 @@ impl Database {
     pub async fn get_global_usage_stats(
         &self,
         period_days: Option<u32>,
-    ) -> Result<(f64, f64, u64, u64, Vec<(String, f64)>, Vec<(String, f64)>, Vec<(String, Option<String>, f64)>)> {
+    ) -> Result<(
+        f64,
+        f64,
+        u64,
+        u64,
+        Vec<(String, f64)>,
+        Vec<(String, f64)>,
+        Vec<(String, Option<String>, f64)>,
+    )> {
         let conn = self.connection.lock().await;
 
         // Total cost (all time)
         let total_cost: f64 = {
-            let mut stmt = conn.prepare("SELECT COALESCE(SUM(total_cost_usd), 0) FROM openai_usage_daily")?;
+            let mut stmt =
+                conn.prepare("SELECT COALESCE(SUM(total_cost_usd), 0) FROM openai_usage_daily")?;
             if stmt.next()? == State::Row {
                 stmt.read::<f64, _>(0)?
             } else {
@@ -2122,7 +2226,8 @@ impl Database {
 
         // Total tokens (all time)
         let total_tokens: u64 = {
-            let mut stmt = conn.prepare("SELECT COALESCE(SUM(total_tokens), 0) FROM openai_usage_daily")?;
+            let mut stmt =
+                conn.prepare("SELECT COALESCE(SUM(total_tokens), 0) FROM openai_usage_daily")?;
             if stmt.next()? == State::Row {
                 stmt.read::<i64, _>(0)? as u64
             } else {
@@ -2132,7 +2237,8 @@ impl Database {
 
         // Total calls (all time)
         let total_calls: u64 = {
-            let mut stmt = conn.prepare("SELECT COALESCE(SUM(request_count), 0) FROM openai_usage_daily")?;
+            let mut stmt =
+                conn.prepare("SELECT COALESCE(SUM(request_count), 0) FROM openai_usage_daily")?;
             if stmt.next()? == State::Row {
                 stmt.read::<i64, _>(0)? as u64
             } else {
@@ -2151,7 +2257,8 @@ impl Database {
                 )
             } else {
                 "SELECT service_type, SUM(total_cost_usd) as cost FROM openai_usage_daily \
-                 GROUP BY service_type ORDER BY cost DESC".to_string()
+                 GROUP BY service_type ORDER BY cost DESC"
+                    .to_string()
             };
             let mut stmt = conn.prepare(&query)?;
             while let Ok(State::Row) = stmt.next() {
@@ -2168,7 +2275,7 @@ impl Database {
             let days = period_days.unwrap_or(14);
             let mut stmt = conn.prepare(
                 "SELECT date, SUM(total_cost_usd) as cost FROM openai_usage_daily \
-                 WHERE date >= date('now', ? || ' days') GROUP BY date ORDER BY date ASC"
+                 WHERE date >= date('now', ? || ' days') GROUP BY date ORDER BY date ASC",
             )?;
             let days_str = format!("-{}", days);
             stmt.bind((1, days_str.as_str()))?;
@@ -2196,7 +2303,8 @@ impl Database {
                 "SELECT u.user_id, uc.username, SUM(u.total_cost_usd) as cost \
                  FROM openai_usage_daily u \
                  LEFT JOIN user_cache uc ON u.user_id = uc.user_id \
-                 WHERE u.user_id != '' GROUP BY u.user_id ORDER BY cost DESC LIMIT 10".to_string()
+                 WHERE u.user_id != '' GROUP BY u.user_id ORDER BY cost DESC LIMIT 10"
+                    .to_string()
             };
             let mut stmt = conn.prepare(&query)?;
             while let Ok(State::Row) = stmt.next() {
@@ -2208,15 +2316,22 @@ impl Database {
             results
         };
 
-        Ok((total_cost, period_cost, total_tokens, total_calls, cost_by_service, daily_breakdown, top_users))
+        Ok((
+            total_cost,
+            period_cost,
+            total_tokens,
+            total_calls,
+            cost_by_service,
+            daily_breakdown,
+            top_users,
+        ))
     }
 
     /// Cleanup old raw usage data (keep last N days)
     pub async fn cleanup_old_openai_usage(&self, days: i64) -> Result<()> {
         let conn = self.connection.lock().await;
-        let mut statement = conn.prepare(
-            "DELETE FROM openai_usage WHERE timestamp < datetime('now', ? || ' days')"
-        )?;
+        let mut statement = conn
+            .prepare("DELETE FROM openai_usage WHERE timestamp < datetime('now', ? || ' days')")?;
         statement.bind((1, format!("-{}", days).as_str()))?;
         statement.next()?;
         info!("Cleaned up openai_usage older than {} days", days);
@@ -2226,9 +2341,8 @@ impl Database {
     /// Cleanup old daily aggregates (keep last N days)
     pub async fn cleanup_old_openai_usage_daily(&self, days: i64) -> Result<()> {
         let conn = self.connection.lock().await;
-        let mut statement = conn.prepare(
-            "DELETE FROM openai_usage_daily WHERE date < date('now', ? || ' days')"
-        )?;
+        let mut statement =
+            conn.prepare("DELETE FROM openai_usage_daily WHERE date < date('now', ? || ' days')")?;
         statement.bind((1, format!("-{}", days).as_str()))?;
         statement.next()?;
         info!("Cleaned up openai_usage_daily older than {} days", days);
@@ -2238,10 +2352,15 @@ impl Database {
     // DM Interaction Tracking Methods
 
     /// Create a new DM session
-    pub async fn create_dm_session(&self, session_id: &str, user_id: &str, channel_id: &str) -> Result<()> {
+    pub async fn create_dm_session(
+        &self,
+        session_id: &str,
+        user_id: &str,
+        channel_id: &str,
+    ) -> Result<()> {
         let conn = self.connection.lock().await;
         let mut statement = conn.prepare(
-            "INSERT INTO dm_sessions (session_id, user_id, channel_id) VALUES (?, ?, ?)"
+            "INSERT INTO dm_sessions (session_id, user_id, channel_id) VALUES (?, ?, ?)",
         )?;
         statement.bind((1, session_id))?;
         statement.bind((2, user_id))?;
@@ -2249,9 +2368,8 @@ impl Database {
         statement.next()?;
 
         // Also create metrics row
-        let mut metrics_stmt = conn.prepare(
-            "INSERT INTO dm_session_metrics (session_id) VALUES (?)"
-        )?;
+        let mut metrics_stmt =
+            conn.prepare("INSERT INTO dm_session_metrics (session_id) VALUES (?)")?;
         metrics_stmt.bind((1, session_id))?;
         metrics_stmt.next()?;
 
@@ -2287,7 +2405,7 @@ impl Database {
                  total_bot_chars = ?,
                  avg_response_time_ms = ?,
                  last_activity_at = CURRENT_TIMESTAMP
-             WHERE session_id = ?"
+             WHERE session_id = ?",
         )?;
         statement.bind((1, msg_count as i64))?;
         statement.bind((2, user_chars as i64))?;
@@ -2310,7 +2428,7 @@ impl Database {
         let conn = self.connection.lock().await;
         let mut statement = conn.prepare(
             "INSERT INTO dm_events (session_id, event_type, user_id, channel_id, event_data)
-             VALUES (?, ?, ?, ?, ?)"
+             VALUES (?, ?, ?, ?, ?)",
         )?;
         statement.bind((1, session_id))?;
         statement.bind((2, event_type))?;
@@ -2332,7 +2450,10 @@ impl Database {
         let conn = self.connection.lock().await;
 
         let (api_field, tokens_update) = match api_type {
-            "chat" => ("chat_calls = chat_calls + 1", format!("total_tokens = total_tokens + {}", tokens)),
+            "chat" => (
+                "chat_calls = chat_calls + 1",
+                format!("total_tokens = total_tokens + {}", tokens),
+            ),
             "whisper" => ("whisper_calls = whisper_calls + 1", String::new()),
             "dalle" => ("dalle_calls = dalle_calls + 1", String::new()),
             _ => return Ok(()),
@@ -2369,7 +2490,11 @@ impl Database {
     }
 
     /// Increment DM session feature counter
-    pub async fn increment_dm_session_feature(&self, session_id: &str, feature: &str) -> Result<()> {
+    pub async fn increment_dm_session_feature(
+        &self,
+        session_id: &str,
+        feature: &str,
+    ) -> Result<()> {
         let conn = self.connection.lock().await;
 
         let field = match feature {
@@ -2407,24 +2532,30 @@ impl Database {
              FROM dm_sessions
              WHERE user_id = ?
              AND started_at >= datetime('now', ? || ' days')
-             AND ended_at IS NOT NULL"
+             AND ended_at IS NOT NULL",
         )?;
         stmt.bind((1, user_id))?;
         stmt.bind((2, format!("-{}", days).as_str()))?;
 
-        let (session_count, total_messages, user_messages, bot_messages, avg_response_time, avg_duration) =
-            if let Ok(State::Row) = stmt.next() {
-                (
-                    stmt.read::<i64, _>(0).unwrap_or(0),
-                    stmt.read::<i64, _>(1).unwrap_or(0),
-                    stmt.read::<i64, _>(2).unwrap_or(0),
-                    stmt.read::<i64, _>(3).unwrap_or(0),
-                    stmt.read::<i64, _>(4).unwrap_or(0),
-                    stmt.read::<f64, _>(5).unwrap_or(0.0),
-                )
-            } else {
-                (0, 0, 0, 0, 0, 0.0)
-            };
+        let (
+            session_count,
+            total_messages,
+            user_messages,
+            bot_messages,
+            avg_response_time,
+            avg_duration,
+        ) = if let Ok(State::Row) = stmt.next() {
+            (
+                stmt.read::<i64, _>(0).unwrap_or(0),
+                stmt.read::<i64, _>(1).unwrap_or(0),
+                stmt.read::<i64, _>(2).unwrap_or(0),
+                stmt.read::<i64, _>(3).unwrap_or(0),
+                stmt.read::<i64, _>(4).unwrap_or(0),
+                stmt.read::<f64, _>(5).unwrap_or(0.0),
+            )
+        } else {
+            (0, 0, 0, 0, 0, 0.0)
+        };
 
         // Get API metrics
         let mut api_stmt = conn.prepare(
@@ -2440,26 +2571,34 @@ impl Database {
              FROM dm_session_metrics sm
              JOIN dm_sessions s ON sm.session_id = s.session_id
              WHERE s.user_id = ?
-             AND s.started_at >= datetime('now', ? || ' days')"
+             AND s.started_at >= datetime('now', ? || ' days')",
         )?;
         api_stmt.bind((1, user_id))?;
         api_stmt.bind((2, format!("-{}", days).as_str()))?;
 
-        let (api_calls, tokens, cost, chat_calls, whisper_calls, dalle_calls, audio_count, slash_count) =
-            if let Ok(State::Row) = api_stmt.next() {
-                (
-                    api_stmt.read::<i64, _>(0).unwrap_or(0),
-                    api_stmt.read::<i64, _>(1).unwrap_or(0),
-                    api_stmt.read::<f64, _>(2).unwrap_or(0.0),
-                    api_stmt.read::<i64, _>(3).unwrap_or(0),
-                    api_stmt.read::<i64, _>(4).unwrap_or(0),
-                    api_stmt.read::<i64, _>(5).unwrap_or(0),
-                    api_stmt.read::<i64, _>(6).unwrap_or(0),
-                    api_stmt.read::<i64, _>(7).unwrap_or(0),
-                )
-            } else {
-                (0, 0, 0.0, 0, 0, 0, 0, 0)
-            };
+        let (
+            api_calls,
+            tokens,
+            cost,
+            chat_calls,
+            whisper_calls,
+            dalle_calls,
+            audio_count,
+            slash_count,
+        ) = if let Ok(State::Row) = api_stmt.next() {
+            (
+                api_stmt.read::<i64, _>(0).unwrap_or(0),
+                api_stmt.read::<i64, _>(1).unwrap_or(0),
+                api_stmt.read::<f64, _>(2).unwrap_or(0.0),
+                api_stmt.read::<i64, _>(3).unwrap_or(0),
+                api_stmt.read::<i64, _>(4).unwrap_or(0),
+                api_stmt.read::<i64, _>(5).unwrap_or(0),
+                api_stmt.read::<i64, _>(6).unwrap_or(0),
+                api_stmt.read::<i64, _>(7).unwrap_or(0),
+            )
+        } else {
+            (0, 0, 0.0, 0, 0, 0, 0, 0)
+        };
 
         Ok(DmStats {
             session_count,
@@ -2480,14 +2619,18 @@ impl Database {
     }
 
     /// Get user's recent DM sessions
-    pub async fn get_user_recent_sessions(&self, user_id: &str, limit: i64) -> Result<Vec<SessionInfo>> {
+    pub async fn get_user_recent_sessions(
+        &self,
+        user_id: &str,
+        limit: i64,
+    ) -> Result<Vec<SessionInfo>> {
         let conn = self.connection.lock().await;
         let mut statement = conn.prepare(
             "SELECT session_id, started_at, ended_at, message_count, avg_response_time_ms
              FROM dm_sessions
              WHERE user_id = ?
              ORDER BY started_at DESC
-             LIMIT ?"
+             LIMIT ?",
         )?;
         statement.bind((1, user_id))?;
         statement.bind((2, limit))?;
@@ -2509,9 +2652,8 @@ impl Database {
     /// Cleanup old DM events (keep last N days)
     pub async fn cleanup_old_dm_events(&self, days: i64) -> Result<()> {
         let conn = self.connection.lock().await;
-        let mut statement = conn.prepare(
-            "DELETE FROM dm_events WHERE timestamp < datetime('now', ? || ' days')"
-        )?;
+        let mut statement =
+            conn.prepare("DELETE FROM dm_events WHERE timestamp < datetime('now', ? || ' days')")?;
         statement.bind((1, format!("-{}", days).as_str()))?;
         statement.next()?;
         info!("Cleaned up dm_events older than {} days", days);
@@ -2546,17 +2688,15 @@ impl Database {
     pub async fn update_plugin_job(&self, job: &crate::features::plugins::job::Job) -> Result<()> {
         let conn = self.connection.lock().await;
 
-        let completed_at = job.completed_at
-            .map(|t| t.to_rfc3339())
-            .unwrap_or_default();
+        let completed_at = job.completed_at.map(|t| t.to_rfc3339()).unwrap_or_default();
 
-        let result_preview = job.result.as_ref()
+        let result_preview = job
+            .result
+            .as_ref()
             .map(|r| r.chars().take(1000).collect::<String>())
             .unwrap_or_default();
 
-        let error = job.error.as_ref()
-            .cloned()
-            .unwrap_or_default();
+        let error = job.error.as_ref().cloned().unwrap_or_default();
 
         let thread_id = job.thread_id.as_deref().unwrap_or("");
 
@@ -2567,7 +2707,7 @@ impl Database {
                 result = ?,
                 error = ?,
                 completed_at = CASE WHEN ? = '' THEN NULL ELSE ? END
-             WHERE id = ?"
+             WHERE id = ?",
         )?;
         statement.bind((1, job.status.to_string().as_str()))?;
         statement.bind((2, thread_id))?;
@@ -2582,7 +2722,9 @@ impl Database {
     }
 
     /// Get incomplete plugin jobs (for crash recovery)
-    pub async fn get_incomplete_plugin_jobs(&self) -> Result<Vec<crate::features::plugins::job::Job>> {
+    pub async fn get_incomplete_plugin_jobs(
+        &self,
+    ) -> Result<Vec<crate::features::plugins::job::Job>> {
         use crate::features::plugins::job::{Job, JobStatus};
         use std::collections::HashMap;
 
@@ -2598,13 +2740,16 @@ impl Database {
 
         while let Ok(State::Row) = statement.next() {
             let params_json: String = statement.read::<String, _>(7)?;
-            let params: HashMap<String, String> = serde_json::from_str(&params_json).unwrap_or_default();
+            let params: HashMap<String, String> =
+                serde_json::from_str(&params_json).unwrap_or_default();
             let guild_id: String = statement.read(3)?;
             let thread_id: String = statement.read(5)?;
             let status_str: String = statement.read(6)?;
             let started_at_str: String = statement.read(8)?;
 
-            let status = status_str.parse::<JobStatus>().unwrap_or(JobStatus::Pending);
+            let status = status_str
+                .parse::<JobStatus>()
+                .unwrap_or(JobStatus::Pending);
             let started_at = chrono::DateTime::parse_from_rfc3339(&started_at_str)
                 .map(|dt| dt.with_timezone(&chrono::Utc))
                 .unwrap_or_else(|_| chrono::Utc::now());
@@ -2613,9 +2758,17 @@ impl Database {
                 id: statement.read(0)?,
                 plugin_name: statement.read(1)?,
                 user_id: statement.read(2)?,
-                guild_id: if guild_id.is_empty() { None } else { Some(guild_id) },
+                guild_id: if guild_id.is_empty() {
+                    None
+                } else {
+                    Some(guild_id)
+                },
                 channel_id: statement.read(4)?,
-                thread_id: if thread_id.is_empty() { None } else { Some(thread_id) },
+                thread_id: if thread_id.is_empty() {
+                    None
+                } else {
+                    Some(thread_id)
+                },
                 status,
                 params,
                 started_at,
@@ -2633,7 +2786,7 @@ impl Database {
     pub async fn cleanup_old_plugin_jobs(&self, days: i64) -> Result<()> {
         let conn = self.connection.lock().await;
         let mut statement = conn.prepare(
-            "DELETE FROM plugin_jobs WHERE completed_at < datetime('now', ? || ' days')"
+            "DELETE FROM plugin_jobs WHERE completed_at < datetime('now', ? || ' days')",
         )?;
         statement.bind((1, format!("-{}", days).as_str()))?;
         statement.next()?;
@@ -2644,14 +2797,17 @@ impl Database {
     // Playlist Job Methods
 
     /// Create a new playlist job record
-    pub async fn create_playlist_job(&self, job: &crate::features::plugins::job::PlaylistJob) -> Result<()> {
+    pub async fn create_playlist_job(
+        &self,
+        job: &crate::features::plugins::job::PlaylistJob,
+    ) -> Result<()> {
         let conn = self.connection.lock().await;
 
         let mut statement = conn.prepare(
             "INSERT INTO playlist_jobs (
                 id, user_id, guild_id, channel_id, playlist_url, playlist_id,
                 playlist_title, total_videos, status, max_videos, started_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )?;
         statement.bind((1, job.id.as_str()))?;
         statement.bind((2, job.user_id.as_str()))?;
@@ -2670,16 +2826,15 @@ impl Database {
     }
 
     /// Update a playlist job record
-    pub async fn update_playlist_job(&self, job: &crate::features::plugins::job::PlaylistJob) -> Result<()> {
+    pub async fn update_playlist_job(
+        &self,
+        job: &crate::features::plugins::job::PlaylistJob,
+    ) -> Result<()> {
         let conn = self.connection.lock().await;
 
-        let completed_at = job.completed_at
-            .map(|t| t.to_rfc3339())
-            .unwrap_or_default();
+        let completed_at = job.completed_at.map(|t| t.to_rfc3339()).unwrap_or_default();
 
-        let cancelled_at = job.cancelled_at
-            .map(|t| t.to_rfc3339())
-            .unwrap_or_default();
+        let cancelled_at = job.cancelled_at.map(|t| t.to_rfc3339()).unwrap_or_default();
 
         let mut statement = conn.prepare(
             "UPDATE playlist_jobs SET
@@ -2694,7 +2849,7 @@ impl Database {
                 completed_at = CASE WHEN ? = '' THEN NULL ELSE ? END,
                 cancelled_at = CASE WHEN ? = '' THEN NULL ELSE ? END,
                 cancelled_by = ?
-             WHERE id = ?"
+             WHERE id = ?",
         )?;
         statement.bind((1, job.thread_id.as_deref().unwrap_or("")))?;
         statement.bind((2, job.playlist_title.as_deref().unwrap_or("")))?;
@@ -2716,7 +2871,9 @@ impl Database {
     }
 
     /// Get incomplete playlist jobs (for crash recovery / auto-resume)
-    pub async fn get_incomplete_playlist_jobs(&self) -> Result<Vec<crate::features::plugins::job::PlaylistJob>> {
+    pub async fn get_incomplete_playlist_jobs(
+        &self,
+    ) -> Result<Vec<crate::features::plugins::job::PlaylistJob>> {
         use crate::features::plugins::job::{PlaylistJob, PlaylistJobStatus};
 
         let conn = self.connection.lock().await;
@@ -2728,7 +2885,7 @@ impl Database {
                     status, max_videos, current_video_job_id, error, started_at
              FROM playlist_jobs
              WHERE status IN ('pending', 'running', 'paused')
-             ORDER BY started_at ASC"
+             ORDER BY started_at ASC",
         )?;
 
         while let Ok(State::Row) = statement.next() {
@@ -2741,7 +2898,9 @@ impl Database {
             let error: String = statement.read(15)?;
             let started_at_str: String = statement.read(16)?;
 
-            let status = status_str.parse::<PlaylistJobStatus>().unwrap_or(PlaylistJobStatus::Pending);
+            let status = status_str
+                .parse::<PlaylistJobStatus>()
+                .unwrap_or(PlaylistJobStatus::Pending);
             let started_at = chrono::DateTime::parse_from_rfc3339(&started_at_str)
                 .map(|dt| dt.with_timezone(&chrono::Utc))
                 .unwrap_or_else(|_| chrono::Utc::now());
@@ -2749,19 +2908,39 @@ impl Database {
             jobs.push(PlaylistJob {
                 id: statement.read(0)?,
                 user_id: statement.read(1)?,
-                guild_id: if guild_id.is_empty() { None } else { Some(guild_id) },
+                guild_id: if guild_id.is_empty() {
+                    None
+                } else {
+                    Some(guild_id)
+                },
                 channel_id: statement.read(3)?,
-                thread_id: if thread_id.is_empty() { None } else { Some(thread_id) },
+                thread_id: if thread_id.is_empty() {
+                    None
+                } else {
+                    Some(thread_id)
+                },
                 playlist_url: statement.read(5)?,
                 playlist_id: statement.read(6)?,
-                playlist_title: if playlist_title.is_empty() { None } else { Some(playlist_title) },
+                playlist_title: if playlist_title.is_empty() {
+                    None
+                } else {
+                    Some(playlist_title)
+                },
                 total_videos: statement.read::<i64, _>(8)? as u32,
                 completed_videos: statement.read::<i64, _>(9)? as u32,
                 failed_videos: statement.read::<i64, _>(10)? as u32,
                 skipped_videos: statement.read::<i64, _>(11)? as u32,
                 status,
-                max_videos: if max_videos < 0 { None } else { Some(max_videos as u32) },
-                current_video_job_id: if current_video_job_id.is_empty() { None } else { Some(current_video_job_id) },
+                max_videos: if max_videos < 0 {
+                    None
+                } else {
+                    Some(max_videos as u32)
+                },
+                current_video_job_id: if current_video_job_id.is_empty() {
+                    None
+                } else {
+                    Some(current_video_job_id)
+                },
                 error: if error.is_empty() { None } else { Some(error) },
                 started_at,
                 completed_at: None,
@@ -2774,7 +2953,10 @@ impl Database {
     }
 
     /// Get active playlist jobs for a user
-    pub async fn get_user_active_playlist_jobs(&self, user_id: &str) -> Result<Vec<crate::features::plugins::job::PlaylistJob>> {
+    pub async fn get_user_active_playlist_jobs(
+        &self,
+        user_id: &str,
+    ) -> Result<Vec<crate::features::plugins::job::PlaylistJob>> {
         use crate::features::plugins::job::{PlaylistJob, PlaylistJobStatus};
 
         let conn = self.connection.lock().await;
@@ -2786,7 +2968,7 @@ impl Database {
                     status, max_videos, current_video_job_id, error, started_at
              FROM playlist_jobs
              WHERE user_id = ? AND status IN ('pending', 'running', 'paused')
-             ORDER BY started_at DESC"
+             ORDER BY started_at DESC",
         )?;
         statement.bind((1, user_id))?;
 
@@ -2800,7 +2982,9 @@ impl Database {
             let error: String = statement.read(15)?;
             let started_at_str: String = statement.read(16)?;
 
-            let status = status_str.parse::<PlaylistJobStatus>().unwrap_or(PlaylistJobStatus::Pending);
+            let status = status_str
+                .parse::<PlaylistJobStatus>()
+                .unwrap_or(PlaylistJobStatus::Pending);
             let started_at = chrono::DateTime::parse_from_rfc3339(&started_at_str)
                 .map(|dt| dt.with_timezone(&chrono::Utc))
                 .unwrap_or_else(|_| chrono::Utc::now());
@@ -2808,19 +2992,39 @@ impl Database {
             jobs.push(PlaylistJob {
                 id: statement.read(0)?,
                 user_id: statement.read(1)?,
-                guild_id: if guild_id.is_empty() { None } else { Some(guild_id) },
+                guild_id: if guild_id.is_empty() {
+                    None
+                } else {
+                    Some(guild_id)
+                },
                 channel_id: statement.read(3)?,
-                thread_id: if thread_id.is_empty() { None } else { Some(thread_id) },
+                thread_id: if thread_id.is_empty() {
+                    None
+                } else {
+                    Some(thread_id)
+                },
                 playlist_url: statement.read(5)?,
                 playlist_id: statement.read(6)?,
-                playlist_title: if playlist_title.is_empty() { None } else { Some(playlist_title) },
+                playlist_title: if playlist_title.is_empty() {
+                    None
+                } else {
+                    Some(playlist_title)
+                },
                 total_videos: statement.read::<i64, _>(8)? as u32,
                 completed_videos: statement.read::<i64, _>(9)? as u32,
                 failed_videos: statement.read::<i64, _>(10)? as u32,
                 skipped_videos: statement.read::<i64, _>(11)? as u32,
                 status,
-                max_videos: if max_videos < 0 { None } else { Some(max_videos as u32) },
-                current_video_job_id: if current_video_job_id.is_empty() { None } else { Some(current_video_job_id) },
+                max_videos: if max_videos < 0 {
+                    None
+                } else {
+                    Some(max_videos as u32)
+                },
+                current_video_job_id: if current_video_job_id.is_empty() {
+                    None
+                } else {
+                    Some(current_video_job_id)
+                },
                 error: if error.is_empty() { None } else { Some(error) },
                 started_at,
                 completed_at: None,
@@ -2839,13 +3043,15 @@ impl Database {
 
         let mut statement = conn.prepare(
             "SELECT params FROM plugin_jobs
-             WHERE parent_playlist_id = ? AND status = 'completed'"
+             WHERE parent_playlist_id = ? AND status = 'completed'",
         )?;
         statement.bind((1, playlist_job_id))?;
 
         while let Ok(State::Row) = statement.next() {
             let params_json: String = statement.read(0)?;
-            if let Ok(params) = serde_json::from_str::<std::collections::HashMap<String, String>>(&params_json) {
+            if let Ok(params) =
+                serde_json::from_str::<std::collections::HashMap<String, String>>(&params_json)
+            {
                 if let Some(url) = params.get("url") {
                     // Extract video ID from URL
                     if let Some(vid) = url.split("v=").nth(1).and_then(|s| s.split('&').next()) {
@@ -2881,7 +3087,7 @@ impl Database {
              WHERE u.user_id != ''
              GROUP BY u.user_id
              ORDER BY total_cost DESC
-             LIMIT ?"
+             LIMIT ?",
         )?;
         stmt.bind((1, limit as i64))?;
 
@@ -2899,9 +3105,8 @@ impl Database {
 
         // Enrich with DM session counts
         for user in &mut users {
-            let mut session_stmt = conn.prepare(
-                "SELECT COUNT(*) FROM dm_sessions WHERE user_id = ?"
-            )?;
+            let mut session_stmt =
+                conn.prepare("SELECT COUNT(*) FROM dm_sessions WHERE user_id = ?")?;
             session_stmt.bind((1, user.user_id.as_str()))?;
             if let Ok(State::Row) = session_stmt.next() {
                 user.dm_session_count = session_stmt.read::<i64, _>(0)? as u64;
@@ -2924,7 +3129,7 @@ impl Database {
                 MIN(date) as first_seen,
                 MAX(date) as last_activity
              FROM openai_usage_daily
-             WHERE user_id = ?"
+             WHERE user_id = ?",
         )?;
         usage_stmt.bind((1, user_id))?;
 
@@ -2948,7 +3153,7 @@ impl Database {
                 COUNT(*) as session_count,
                 SUM(message_count) as total_messages
              FROM dm_sessions
-             WHERE user_id = ?"
+             WHERE user_id = ?",
         )?;
         dm_agg_stmt.bind((1, user_id))?;
 
@@ -2970,7 +3175,7 @@ impl Database {
                 SUM(sm.dalle_calls) as dalle_calls
              FROM dm_session_metrics sm
              JOIN dm_sessions s ON sm.session_id = s.session_id
-             WHERE s.user_id = ?"
+             WHERE s.user_id = ?",
         )?;
         metrics_stmt.bind((1, user_id))?;
 
@@ -2992,7 +3197,7 @@ impl Database {
              WHERE user_id = ? AND persona IS NOT NULL AND persona != ''
              GROUP BY persona
              ORDER BY cnt DESC
-             LIMIT 1"
+             LIMIT 1",
         )?;
         persona_stmt.bind((1, user_id))?;
 
@@ -3004,9 +3209,8 @@ impl Database {
 
         // Get cached username
         drop(persona_stmt);
-        let mut username_stmt = conn.prepare(
-            "SELECT username FROM user_cache WHERE user_id = ?"
-        )?;
+        let mut username_stmt =
+            conn.prepare("SELECT username FROM user_cache WHERE user_id = ?")?;
         username_stmt.bind((1, user_id))?;
         let username = if let Ok(State::Row) = username_stmt.next() {
             username_stmt.read::<Option<String>, _>(0)?
@@ -3032,7 +3236,11 @@ impl Database {
     }
 
     /// Get DM sessions for a user
-    pub async fn get_user_dm_sessions(&self, user_id: &str, limit: u32) -> Result<Vec<DmSessionEntry>> {
+    pub async fn get_user_dm_sessions(
+        &self,
+        user_id: &str,
+        limit: u32,
+    ) -> Result<Vec<DmSessionEntry>> {
         let conn = self.connection.lock().await;
 
         let mut stmt = conn.prepare(
@@ -3047,7 +3255,7 @@ impl Database {
              LEFT JOIN dm_session_metrics m ON s.session_id = m.session_id
              WHERE s.user_id = ?
              ORDER BY s.started_at DESC
-             LIMIT ?"
+             LIMIT ?",
         )?;
         stmt.bind((1, user_id))?;
         stmt.bind((2, limit as i64))?;
@@ -3097,7 +3305,11 @@ impl Database {
     }
 
     /// Get historical performance metrics
-    pub async fn get_historical_metrics(&self, metric_type: &str, hours: u32) -> Result<Vec<(i64, f64)>> {
+    pub async fn get_historical_metrics(
+        &self,
+        metric_type: &str,
+        hours: u32,
+    ) -> Result<Vec<(i64, f64)>> {
         let conn = self.connection.lock().await;
 
         let mut stmt = conn.prepare(
@@ -3107,7 +3319,7 @@ impl Database {
              FROM performance_metrics
              WHERE metric_type = ?
              AND timestamp >= datetime('now', ? || ' hours')
-             ORDER BY timestamp ASC"
+             ORDER BY timestamp ASC",
         )?;
         stmt.bind((1, metric_type))?;
         stmt.bind((2, format!("-{}", hours).as_str()))?;
@@ -3131,7 +3343,7 @@ impl Database {
              FROM openai_usage_daily
              WHERE date >= date('now', ? || ' days')
              GROUP BY date
-             ORDER BY date ASC"
+             ORDER BY date ASC",
         )?;
         stmt.bind((1, format!("-{}", days).as_str()))?;
 
@@ -3146,7 +3358,13 @@ impl Database {
     }
 
     /// Log a performance metric
-    pub async fn log_performance_metric(&self, metric_type: &str, value: f64, unit: Option<&str>, metadata: Option<&str>) -> Result<()> {
+    pub async fn log_performance_metric(
+        &self,
+        metric_type: &str,
+        value: f64,
+        unit: Option<&str>,
+        metadata: Option<&str>,
+    ) -> Result<()> {
         let conn = self.connection.lock().await;
         let mut stmt = conn.prepare(
             "INSERT INTO performance_metrics (metric_type, value, unit, metadata) VALUES (?, ?, ?, ?)"
@@ -3160,7 +3378,11 @@ impl Database {
     }
 
     /// Get channel message history from conversation_history
-    pub async fn get_channel_messages(&self, channel_id: &str, limit: u32) -> Result<Vec<ConversationMessage>> {
+    pub async fn get_channel_messages(
+        &self,
+        channel_id: &str,
+        limit: u32,
+    ) -> Result<Vec<ConversationMessage>> {
         let conn = self.connection.lock().await;
 
         let mut stmt = conn.prepare(
@@ -3168,7 +3390,7 @@ impl Database {
              FROM conversation_history
              WHERE channel_id = ?
              ORDER BY timestamp DESC
-             LIMIT ?"
+             LIMIT ?",
         )?;
         stmt.bind((1, channel_id))?;
         stmt.bind((2, limit as i64))?;
@@ -3191,7 +3413,10 @@ impl Database {
 
     /// Get channels with conversation history, optionally filtered by guild
     /// Returns channels from channel_settings with message counts from conversation_history
-    pub async fn get_channels_with_history(&self, guild_id: Option<&str>) -> Result<Vec<ChannelHistoryEntry>> {
+    pub async fn get_channels_with_history(
+        &self,
+        guild_id: Option<&str>,
+    ) -> Result<Vec<ChannelHistoryEntry>> {
         let conn = self.connection.lock().await;
 
         // Query channels that have settings OR have conversation history

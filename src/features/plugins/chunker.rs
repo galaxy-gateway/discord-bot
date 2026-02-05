@@ -37,9 +37,9 @@ pub struct ChunkerConfig {
 impl Default for ChunkerConfig {
     fn default() -> Self {
         Self {
-            chunk_duration_secs: 600,      // 10 minutes per chunk
-            download_timeout_secs: 300,    // 5 minutes for download
-            split_timeout_secs: 120,       // 2 minutes for split
+            chunk_duration_secs: 600,   // 10 minutes per chunk
+            download_timeout_secs: 300, // 5 minutes for download
+            split_timeout_secs: 120,    // 2 minutes for split
             download_command: None,
             download_args: Vec::new(),
         }
@@ -78,10 +78,8 @@ impl AudioChunker {
     /// Creates a temporary directory for storing downloaded and chunked files.
     pub async fn new(config: ChunkerConfig) -> Result<Self> {
         // Create a unique temp directory
-        let temp_dir = std::env::temp_dir().join(format!(
-            "persona_chunker_{}",
-            uuid::Uuid::new_v4()
-        ));
+        let temp_dir =
+            std::env::temp_dir().join(format!("persona_chunker_{}", uuid::Uuid::new_v4()));
         tokio::fs::create_dir_all(&temp_dir)
             .await
             .context("Failed to create temp directory")?;
@@ -167,7 +165,11 @@ impl AudioChunker {
             })
             .collect();
 
-        info!("Running download command: {} with {} args", cmd_name, args.len());
+        info!(
+            "Running download command: {} with {} args",
+            cmd_name,
+            args.len()
+        );
 
         let mut cmd = Command::new(cmd_name);
         cmd.args(&args)
@@ -270,9 +272,12 @@ impl AudioChunker {
     pub async fn get_audio_duration(&self, audio_path: &Path) -> Result<u64> {
         let mut cmd = Command::new("ffprobe");
         cmd.args([
-            "-v", "quiet",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1",
+            "-v",
+            "quiet",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
             audio_path.to_str().unwrap(),
         ])
         .stdout(std::process::Stdio::piped())
@@ -285,7 +290,9 @@ impl AudioChunker {
         }
 
         let duration_str = String::from_utf8_lossy(&output.stdout);
-        let duration: f64 = duration_str.trim().parse()
+        let duration: f64 = duration_str
+            .trim()
+            .parse()
             .context("Failed to parse duration")?;
 
         Ok(duration.ceil() as u64)
@@ -312,11 +319,15 @@ impl AudioChunker {
         // -c copy: Copy codec (fast, no re-encoding)
         let mut cmd = Command::new("ffmpeg");
         cmd.args([
-            "-i", audio_path.to_str().unwrap(),
-            "-f", "segment",
-            "-segment_time", &self.config.chunk_duration_secs.to_string(),
-            "-c", "copy",
-            "-y",  // Overwrite without asking
+            "-i",
+            audio_path.to_str().unwrap(),
+            "-f",
+            "segment",
+            "-segment_time",
+            &self.config.chunk_duration_secs.to_string(),
+            "-c",
+            "copy",
+            "-y", // Overwrite without asking
             output_pattern.to_str().unwrap(),
         ])
         .stdout(std::process::Stdio::null())
@@ -381,7 +392,10 @@ impl AudioChunker {
                 Ok(needs)
             }
             Err(e) => {
-                warn!("Could not determine audio duration, assuming chunking needed: {}", e);
+                warn!(
+                    "Could not determine audio duration, assuming chunking needed: {}",
+                    e
+                );
                 Ok(true)
             }
         }

@@ -13,8 +13,8 @@
 //! - 1.0.0: Initial release with time parsing (30m, 2h, 1d, 1h30m) and persona delivery
 
 use crate::database::Database;
-use crate::features::personas::PersonaManager;
 use crate::features::analytics::UsageTracker;
+use crate::features::personas::PersonaManager;
 use anyhow::Result;
 use log::{debug, error, info, warn};
 use openai::chat::{ChatCompletion, ChatCompletionMessage, ChatCompletionMessageRole};
@@ -68,7 +68,10 @@ impl ReminderScheduler {
         info!("⏰ Processing {} due reminder(s)", reminders.len());
 
         for (id, user_id, channel_id, reminder_text) in reminders {
-            match self.deliver_reminder(http, id, &user_id, &channel_id, &reminder_text).await {
+            match self
+                .deliver_reminder(http, id, &user_id, &channel_id, &reminder_text)
+                .await
+            {
                 Ok(_) => {
                     info!("✅ Delivered reminder #{id} to user {user_id}");
                 }
@@ -94,14 +97,26 @@ impl ReminderScheduler {
         reminder_text: &str,
     ) -> Result<()> {
         // Get user's preferred persona
-        let persona_name = self.database.get_user_persona(user_id).await.unwrap_or_else(|_| "obi".to_string());
+        let persona_name = self
+            .database
+            .get_user_persona(user_id)
+            .await
+            .unwrap_or_else(|_| "obi".to_string());
 
         // Get the persona's system prompt
         let persona = self.persona_manager.get_persona(&persona_name);
         let system_prompt = persona.map(|p| p.system_prompt.as_str()).unwrap_or("");
 
         // Generate a persona-flavored reminder message
-        let reminder_message = self.generate_reminder_message(&persona_name, system_prompt, reminder_text, user_id, channel_id).await?;
+        let reminder_message = self
+            .generate_reminder_message(
+                &persona_name,
+                system_prompt,
+                reminder_text,
+                user_id,
+                channel_id,
+            )
+            .await?;
 
         // Parse channel ID
         let channel = ChannelId(channel_id.parse::<u64>()?);
@@ -135,24 +150,27 @@ impl ReminderScheduler {
             The reminder message is: \"{reminder_text}\""
         );
 
-        let chat_completion = ChatCompletion::builder(&self.openai_model, vec![
-            ChatCompletionMessage {
-                role: ChatCompletionMessageRole::System,
-                content: Some(system_prompt),
-                name: None,
-                function_call: None,
-                tool_call_id: None,
-                tool_calls: None,
-            },
-            ChatCompletionMessage {
-                role: ChatCompletionMessageRole::User,
-                content: Some("Please deliver this reminder to me now.".to_string()),
-                name: None,
-                function_call: None,
-                tool_call_id: None,
-                tool_calls: None,
-            },
-        ])
+        let chat_completion = ChatCompletion::builder(
+            &self.openai_model,
+            vec![
+                ChatCompletionMessage {
+                    role: ChatCompletionMessageRole::System,
+                    content: Some(system_prompt),
+                    name: None,
+                    function_call: None,
+                    tool_call_id: None,
+                    tool_calls: None,
+                },
+                ChatCompletionMessage {
+                    role: ChatCompletionMessageRole::User,
+                    content: Some("Please deliver this reminder to me now.".to_string()),
+                    name: None,
+                    function_call: None,
+                    tool_call_id: None,
+                    tool_calls: None,
+                },
+            ],
+        )
         .create()
         .await;
 

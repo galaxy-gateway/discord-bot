@@ -15,10 +15,10 @@ use ratatui::prelude::*;
 use std::io;
 use std::time::Duration;
 
-use persona::ipc::{IpcClient, connect_with_retry};
-use persona::tui::{App, Screen, Event, EventHandler};
+use persona::ipc::{connect_with_retry, IpcClient};
+use persona::tui::app::{ChannelListSelection, InputMode, InputPurpose};
 use persona::tui::event::{map_key_event, KeyAction};
-use persona::tui::app::{InputMode, InputPurpose, ChannelListSelection};
+use persona::tui::{App, Event, EventHandler, Screen};
 
 /// TUI refresh rate
 const TICK_RATE: Duration = Duration::from_millis(250);
@@ -26,9 +26,7 @@ const TICK_RATE: Duration = Duration::from_millis(250);
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize logging
-    env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or("warn")
-    ).init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
 
     info!("Starting Obi TUI...");
 
@@ -189,8 +187,12 @@ async fn handle_action(
                     }
                     Screen::Stats => {
                         // Request historical metrics for charts
-                        let _ = client.request_historical_metrics("cpu".to_string(), 24).await;
-                        let _ = client.request_historical_metrics("memory".to_string(), 24).await;
+                        let _ = client
+                            .request_historical_metrics("cpu".to_string(), 24)
+                            .await;
+                        let _ = client
+                            .request_historical_metrics("memory".to_string(), 24)
+                            .await;
                     }
                     Screen::Channels => {
                         // If a channel is selected and needs history, request it
@@ -340,37 +342,35 @@ async fn handle_action(
                 _ => {}
             }
         }
-        KeyAction::Back => {
-            match app.current_screen {
-                Screen::Channels => {
-                    if app.browse_mode {
-                        app.stop_browse_mode();
-                    } else if app.channel_state.selected().is_some() {
-                        app.channel_state.clear_selection();
-                    } else {
-                        app.switch_screen(Screen::Dashboard);
-                    }
-                }
-                Screen::Users => {
-                    if app.users_state.viewing_details {
-                        app.users_state.exit_details();
-                    } else {
-                        app.switch_screen(Screen::Dashboard);
-                    }
-                }
-                Screen::Errors => {
-                    if app.errors_state.viewing_details {
-                        app.errors_state.exit_details();
-                    } else {
-                        app.switch_screen(Screen::Dashboard);
-                    }
-                }
-                Screen::Help => {
+        KeyAction::Back => match app.current_screen {
+            Screen::Channels => {
+                if app.browse_mode {
+                    app.stop_browse_mode();
+                } else if app.channel_state.selected().is_some() {
+                    app.channel_state.clear_selection();
+                } else {
                     app.switch_screen(Screen::Dashboard);
                 }
-                _ => {}
             }
-        }
+            Screen::Users => {
+                if app.users_state.viewing_details {
+                    app.users_state.exit_details();
+                } else {
+                    app.switch_screen(Screen::Dashboard);
+                }
+            }
+            Screen::Errors => {
+                if app.errors_state.viewing_details {
+                    app.errors_state.exit_details();
+                } else {
+                    app.switch_screen(Screen::Dashboard);
+                }
+            }
+            Screen::Help => {
+                app.switch_screen(Screen::Dashboard);
+            }
+            _ => {}
+        },
         KeyAction::StartInput => {
             app.start_editing();
         }
@@ -393,7 +393,8 @@ async fn handle_action(
                                 // Send message to selected channel
                                 if let Some(channel_id) = app.channel_state.selected() {
                                     if let Some(client) = ipc_client {
-                                        let _ = client.send_message(channel_id, input.clone()).await;
+                                        let _ =
+                                            client.send_message(channel_id, input.clone()).await;
                                     }
                                     app.status_message = Some("Message sent".to_string());
                                 }
@@ -407,9 +408,11 @@ async fn handle_action(
                                         // Also request channel info
                                         let _ = client.request_channel_info(channel_id).await;
                                     }
-                                    app.status_message = Some(format!("Now watching channel {}", channel_id));
+                                    app.status_message =
+                                        Some(format!("Now watching channel {}", channel_id));
                                 } else {
-                                    app.error_message = Some("Invalid channel ID - must be a number".to_string());
+                                    app.error_message =
+                                        Some("Invalid channel ID - must be a number".to_string());
                                 }
                             }
                         }
@@ -443,10 +446,16 @@ async fn handle_action(
                     }
                     _ => {
                         let _ = client.request_status().await;
-                        let _ = client.request_usage_stats(app.stats_cache.time_period.days()).await;
+                        let _ = client
+                            .request_usage_stats(app.stats_cache.time_period.days())
+                            .await;
                         let _ = client.request_system_metrics().await;
-                        let _ = client.request_historical_metrics("cpu".to_string(), 24).await;
-                        let _ = client.request_historical_metrics("memory".to_string(), 24).await;
+                        let _ = client
+                            .request_historical_metrics("cpu".to_string(), 24)
+                            .await;
+                        let _ = client
+                            .request_historical_metrics("memory".to_string(), 24)
+                            .await;
                         app.stats_cache.start_refresh();
                         app.status_message = Some("Refreshing...".to_string());
                     }
@@ -456,18 +465,22 @@ async fn handle_action(
         KeyAction::Toggle => {
             match app.current_screen {
                 Screen::Settings => {
-                    if let Some(feature) = persona::features::FEATURES.get(app.settings_feature_index) {
+                    if let Some(feature) =
+                        persona::features::FEATURES.get(app.settings_feature_index)
+                    {
                         if feature.toggleable {
                             // Toggle the local state and get new value
                             let new_state = app.toggle_feature_state(feature.id);
 
                             if let Some(client) = ipc_client {
                                 // Send to server to persist
-                                let _ = client.set_feature(
-                                    feature.id.to_string(),
-                                    new_state,
-                                    None, // Global toggle
-                                ).await;
+                                let _ = client
+                                    .set_feature(
+                                        feature.id.to_string(),
+                                        new_state,
+                                        None, // Global toggle
+                                    )
+                                    .await;
                             }
 
                             let status = if new_state { "enabled" } else { "disabled" };
@@ -481,7 +494,9 @@ async fn handle_action(
                     app.stats_cache.cycle_time_period();
                     // Request stats with new time period
                     if let Some(client) = ipc_client {
-                        let _ = client.request_usage_stats(app.stats_cache.time_period.days()).await;
+                        let _ = client
+                            .request_usage_stats(app.stats_cache.time_period.days())
+                            .await;
                     }
                 }
                 _ => {}
@@ -508,7 +523,8 @@ async fn handle_action(
                         }
                         ChannelListSelection::GuildHeader(guild_id) => {
                             // Remove all channels in this guild
-                            let channels_to_remove: Vec<u64> = app.channels_by_guild()
+                            let channels_to_remove: Vec<u64> = app
+                                .channels_by_guild()
                                 .iter()
                                 .find(|(gid, _, _)| *gid == guild_id)
                                 .map(|(_, _, channels)| channels.clone())
@@ -521,7 +537,8 @@ async fn handle_action(
                                 }
                             }
                             let guild_name = if guild_id.is_none() { "DMs" } else { "guild" };
-                            app.status_message = Some(format!("Unwatched all channels in {}", guild_name));
+                            app.status_message =
+                                Some(format!("Unwatched all channels in {}", guild_name));
 
                             // Reset selection
                             let new_items = app.channel_list_visible_items();

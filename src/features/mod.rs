@@ -17,6 +17,7 @@ pub mod audio;
 pub mod conflict;
 pub mod council;
 pub mod debate;
+pub mod discussion;
 pub mod image_gen;
 pub mod introspection;
 pub mod personas;
@@ -27,21 +28,30 @@ pub mod startup;
 
 // Re-export commonly used items from submodules
 pub use analytics::{
-    metrics_collection_loop, InteractionTracker, UsageTracker, CurrentMetrics,
-    format_bytes, format_bytes_signed, format_duration, format_history,
-    get_db_file_size, DiskInfo, HistoricalSummary,
+    format_bytes, format_bytes_signed, format_duration, format_history, get_db_file_size,
+    metrics_collection_loop, CurrentMetrics, DiskInfo, HistoricalSummary, InteractionTracker,
+    UsageTracker,
 };
 pub use audio::{AudioTranscriber, TranscriptionResult};
 pub use conflict::{ConflictDetector, ConflictMediator};
-pub use image_gen::{ImageGenerator, ImageSize, ImageStyle, GeneratedImage};
+pub use council::{get_active_councils, CouncilMessage, CouncilState};
+pub use debate::{
+    get_active_debates, orchestrator::DebateConfig, DebateOrchestrator, DebateState,
+    CONTINUE_ROUNDS,
+};
+pub use discussion::{
+    create_awaiting_buttons, create_council_buttons, create_debate_buttons, detect_thread_context,
+    format_prior_context, parse_council_speaker_id, parse_debate_hear_id, DiscussionMessage,
+    DiscussionType, ThreadContext, CONTINUE_COUNCIL_PREFIX, CONTINUE_DEBATE_PREFIX,
+    DISMISS_COUNCIL_PREFIX, END_DEBATE_PREFIX, HEAR_DEBATE_PREFIX, SPEAKER_COUNCIL_PREFIX,
+};
+pub use image_gen::{GeneratedImage, ImageGenerator, ImageSize, ImageStyle};
 pub use introspection::get_component_snippet;
 pub use personas::{Persona, PersonaManager};
+pub use plugins::{JobManager, OutputHandler, Plugin, PluginConfig, PluginExecutor, PluginManager};
 pub use rate_limiting::RateLimiter;
 pub use reminders::ReminderScheduler;
 pub use startup::StartupNotifier;
-pub use plugins::{Plugin, PluginConfig, PluginManager, PluginExecutor, JobManager, OutputHandler};
-pub use council::{CouncilState, CouncilMessage, get_active_councils};
-pub use debate::{DebateOrchestrator, orchestrator::DebateConfig, DebateState, get_active_debates, CONTINUE_ROUNDS};
 
 // ============================================================================
 // Feature Registry
@@ -189,18 +199,26 @@ pub const FEATURES: &[Feature] = &[
     Feature {
         id: "debate",
         name: "Persona Debates",
-        version: "1.2.0",
+        version: "2.0.0",
         since: "3.27.0",
         toggleable: true,
-        description: "Threaded debates between two personas with continue and tag-team options",
+        description: "Threaded debates with interactive controls, rules support, and council interoperability",
     },
     Feature {
         id: "council",
         name: "Persona Council",
-        version: "1.0.0",
+        version: "2.0.0",
         since: "3.31.0",
         toggleable: true,
-        description: "Multi-persona discussions with follow-up question support",
+        description: "Multi-persona discussions with interactive controls, rules support, and debate interoperability",
+    },
+    Feature {
+        id: "discussion",
+        name: "Discussion Interoperability",
+        version: "1.0.0",
+        since: "3.33.0",
+        toggleable: false,
+        description: "Shared context and controls between council and debate sessions",
     },
 ];
 

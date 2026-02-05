@@ -22,9 +22,9 @@ pub struct ImageGenerator {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImageSize {
-    Square,      // 1024x1024
-    Landscape,   // 1792x1024
-    Portrait,    // 1024x1792
+    Square,    // 1024x1024
+    Landscape, // 1792x1024
+    Portrait,  // 1024x1792
 }
 
 impl ImageSize {
@@ -124,8 +124,12 @@ impl ImageGenerator {
         size: ImageSize,
         style: ImageStyle,
     ) -> Result<GeneratedImage> {
-        info!("Generating image with DALL-E 3 | Size: {} | Style: {} | Prompt: '{}'",
-              size.as_str(), style.as_str(), prompt.chars().take(100).collect::<String>());
+        info!(
+            "Generating image with DALL-E 3 | Size: {} | Style: {} | Prompt: '{}'",
+            size.as_str(),
+            style.as_str(),
+            prompt.chars().take(100).collect::<String>()
+        );
 
         let request = DalleRequest {
             model: "dall-e-3".to_string(),
@@ -137,7 +141,8 @@ impl ImageGenerator {
         };
 
         debug!("Sending request to OpenAI DALL-E API");
-        let response = self.client
+        let response = self
+            .client
             .post("https://api.openai.com/v1/images/generations")
             .header("Authorization", format!("Bearer {}", self.openai_api_key))
             .header("Content-Type", "application/json")
@@ -167,10 +172,14 @@ impl ImageGenerator {
         } else {
             // Try to parse error response
             if let Ok(error_response) = serde_json::from_str::<DalleError>(&response_text) {
-                error!("DALL-E API error: {} (type: {:?})",
-                       error_response.error.message,
-                       error_response.error.error_type);
-                Err(anyhow::anyhow!("DALL-E error: {}", error_response.error.message))
+                error!(
+                    "DALL-E API error: {} (type: {:?})",
+                    error_response.error.message, error_response.error.error_type
+                );
+                Err(anyhow::anyhow!(
+                    "DALL-E error: {}",
+                    error_response.error.message
+                ))
             } else {
                 error!("DALL-E API error (status {status}): {response_text}");
                 Err(anyhow::anyhow!("DALL-E API error (status {})", status))
@@ -181,10 +190,7 @@ impl ImageGenerator {
     /// Download an image from URL to bytes
     pub async fn download_image(&self, url: &str) -> Result<Vec<u8>> {
         debug!("Downloading generated image");
-        let response = self.client
-            .get(url)
-            .send()
-            .await?;
+        let response = self.client.get(url).send().await?;
 
         if response.status().is_success() {
             let bytes = response.bytes().await?;
@@ -192,7 +198,10 @@ impl ImageGenerator {
             Ok(bytes.to_vec())
         } else {
             error!("Failed to download image: {}", response.status());
-            Err(anyhow::anyhow!("Failed to download image: {}", response.status()))
+            Err(anyhow::anyhow!(
+                "Failed to download image: {}",
+                response.status()
+            ))
         }
     }
 }

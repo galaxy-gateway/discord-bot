@@ -12,4 +12,4 @@
 
 pub mod orchestrator;
 
-pub use orchestrator::{DebateOrchestrator, DebateState, get_active_debates, CONTINUE_ROUNDS};
+pub use orchestrator::{get_active_debates, DebateOrchestrator, DebateState, CONTINUE_ROUNDS};

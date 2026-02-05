@@ -6,10 +6,10 @@
 //! - 4 bytes: message length (big-endian u32)
 //! - N bytes: JSON payload
 
-use serde::{Deserialize, Serialize};
+use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
-use anyhow::{Result, anyhow};
 
 // ============================================================================
 // Bot -> TUI Events
@@ -26,15 +26,9 @@ pub enum BotEvent {
         message: DisplayMessage,
     },
     /// Discord message deleted
-    MessageDelete {
-        channel_id: u64,
-        message_id: u64,
-    },
+    MessageDelete { channel_id: u64, message_id: u64 },
     /// User presence update
-    PresenceUpdate {
-        user_id: u64,
-        status: String,
-    },
+    PresenceUpdate { user_id: u64, status: String },
     /// Bot is ready and connected
     Ready {
         guilds: Vec<GuildInfo>,
@@ -42,9 +36,7 @@ pub enum BotEvent {
         bot_username: String,
     },
     /// Bot disconnected from Discord
-    Disconnected {
-        reason: Option<String>,
-    },
+    Disconnected { reason: Option<String> },
     /// Response to a command
     CommandResponse {
         request_id: String,
@@ -60,9 +52,7 @@ pub enum BotEvent {
         active_sessions: usize,
     },
     /// Heartbeat to keep connection alive
-    Heartbeat {
-        timestamp: i64,
-    },
+    Heartbeat { timestamp: i64 },
     /// Usage stats update
     UsageStatsUpdate {
         total_cost: f64,
@@ -102,9 +92,7 @@ pub enum BotEvent {
         data_points: Vec<(i64, f64)>,
     },
     /// User list response
-    UserListResponse {
-        users: Vec<UserSummary>,
-    },
+    UserListResponse { users: Vec<UserSummary> },
     /// User details response
     UserDetailsResponse {
         user_id: String,
@@ -112,9 +100,7 @@ pub enum BotEvent {
         dm_sessions: Vec<DmSessionInfo>,
     },
     /// Recent errors response
-    RecentErrorsResponse {
-        errors: Vec<ErrorInfo>,
-    },
+    RecentErrorsResponse { errors: Vec<ErrorInfo> },
     /// Feature states response (enabled/disabled for each feature)
     FeatureStatesResponse {
         /// Map of feature_id -> enabled
@@ -268,13 +254,9 @@ pub enum TuiCommand {
         content: String,
     },
     /// Start watching a channel for messages
-    WatchChannel {
-        channel_id: u64,
-    },
+    WatchChannel { channel_id: u64 },
     /// Stop watching a channel
-    UnwatchChannel {
-        channel_id: u64,
-    },
+    UnwatchChannel { channel_id: u64 },
     /// Toggle a feature on/off
     SetFeature {
         request_id: String,
@@ -301,10 +283,7 @@ pub enum TuiCommand {
     /// Request guild list
     GetGuilds,
     /// Request channel messages (history)
-    GetChannelHistory {
-        channel_id: u64,
-        limit: u32,
-    },
+    GetChannelHistory { channel_id: u64, limit: u32 },
     /// Request usage statistics
     GetUsageStats {
         /// Number of days to query (None = all time)
@@ -313,43 +292,23 @@ pub enum TuiCommand {
     /// Request system metrics
     GetSystemMetrics,
     /// Heartbeat response
-    Pong {
-        timestamp: i64,
-    },
+    Pong { timestamp: i64 },
     /// Request channel information
-    GetChannelInfo {
-        channel_id: u64,
-    },
+    GetChannelInfo { channel_id: u64 },
     /// Request historical metrics (time-series data)
-    GetHistoricalMetrics {
-        metric_type: String,
-        hours: u32,
-    },
+    GetHistoricalMetrics { metric_type: String, hours: u32 },
     /// Request user list with stats
-    GetUserList {
-        limit: u32,
-    },
+    GetUserList { limit: u32 },
     /// Request detailed user statistics
-    GetUserDetails {
-        user_id: String,
-    },
+    GetUserDetails { user_id: String },
     /// Request recent errors
-    GetRecentErrors {
-        limit: u32,
-    },
+    GetRecentErrors { limit: u32 },
     /// Request DM sessions for a user
-    GetDmSessions {
-        user_id: String,
-        limit: u32,
-    },
+    GetDmSessions { user_id: String, limit: u32 },
     /// Request feature states (enabled/disabled) for a guild
-    GetFeatureStates {
-        guild_id: Option<u64>,
-    },
+    GetFeatureStates { guild_id: Option<u64> },
     /// Request channels with conversation history (for browse mode)
-    GetChannelsWithHistory {
-        guild_id: Option<u64>,
-    },
+    GetChannelsWithHistory { guild_id: Option<u64> },
 }
 
 // ============================================================================

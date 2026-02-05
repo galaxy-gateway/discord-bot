@@ -2,10 +2,11 @@
 //!
 //! Gather responses from multiple personas on a single prompt.
 //!
-//! - **Version**: 1.0.0
+//! - **Version**: 2.0.0
 //! - **Since**: 3.31.0
 //!
 //! ## Changelog
+//! - 2.0.0: Added rules parameter and interactive controls
 //! - 1.0.0: Initial implementation
 
 use serenity::builder::CreateApplicationCommand;
@@ -121,6 +122,14 @@ fn create_council_command() -> CreateApplicationCommand {
                 option.add_string_choice(name, value);
             }
             option
+        })
+        .create_option(|option| {
+            option
+                .name("rules")
+                .description("Ground rules and term definitions for the discussion")
+                .kind(CommandOptionType::String)
+                .required(false)
+                .max_length(1000)
         });
     command
 }

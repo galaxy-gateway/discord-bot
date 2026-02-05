@@ -10,8 +10,8 @@
 //! - 1.1.0: Add collapsible guild sections for channel watcher
 //! - 1.0.0: Initial release
 
-use crate::ipc::{BotEvent, GuildInfo, ChannelHistorySummary};
-use crate::tui::state::{ChannelState, StatsCache, UsersState, ErrorsState};
+use crate::ipc::{BotEvent, ChannelHistorySummary, GuildInfo};
+use crate::tui::state::{ChannelState, ErrorsState, StatsCache, UsersState};
 use crate::tui::ui::SettingsTab;
 use std::collections::{HashMap, HashSet};
 
@@ -216,7 +216,11 @@ impl App {
     /// Handle an IPC event from the bot
     pub fn handle_bot_event(&mut self, event: BotEvent) {
         match event {
-            BotEvent::Ready { guilds, bot_user_id, bot_username } => {
+            BotEvent::Ready {
+                guilds,
+                bot_user_id,
+                bot_username,
+            } => {
                 self.bot_connected = true;
                 self.guilds = guilds;
                 self.bot_user_id = Some(bot_user_id);
@@ -228,7 +232,11 @@ impl App {
                 let msg = reason.unwrap_or_else(|| "Unknown reason".to_string());
                 self.add_activity(format!("Bot disconnected: {}", msg));
             }
-            BotEvent::MessageCreate { channel_id, guild_id: _, message } => {
+            BotEvent::MessageCreate {
+                channel_id,
+                guild_id: _,
+                message,
+            } => {
                 self.channel_state.add_message(channel_id, message.clone());
                 self.add_activity(format!(
                     "#{}: {} - {}",
@@ -237,15 +245,25 @@ impl App {
                     truncate(&message.content, 50)
                 ));
             }
-            BotEvent::MessageDelete { channel_id, message_id } => {
+            BotEvent::MessageDelete {
+                channel_id,
+                message_id,
+            } => {
                 self.channel_state.remove_message(channel_id, message_id);
             }
-            BotEvent::StatusUpdate { connected, uptime_seconds, guild_count: _, active_sessions } => {
+            BotEvent::StatusUpdate {
+                connected,
+                uptime_seconds,
+                guild_count: _,
+                active_sessions,
+            } => {
                 self.bot_connected = connected;
                 self.uptime_seconds = uptime_seconds;
                 self.active_sessions = active_sessions;
             }
-            BotEvent::CommandResponse { success, message, .. } => {
+            BotEvent::CommandResponse {
+                success, message, ..
+            } => {
                 if success {
                     self.status_message = message;
                 } else {
@@ -298,7 +316,13 @@ impl App {
                 message_count,
                 last_activity: _,
             } => {
-                self.channel_state.set_channel_info(channel_id, name, guild_id, guild_name, message_count);
+                self.channel_state.set_channel_info(
+                    channel_id,
+                    name,
+                    guild_id,
+                    guild_name,
+                    message_count,
+                );
             }
             BotEvent::ChannelHistoryResponse {
                 channel_id,
@@ -312,7 +336,8 @@ impl App {
                 metric_type,
                 data_points,
             } => {
-                self.stats_cache.set_historical_data(&metric_type, data_points);
+                self.stats_cache
+                    .set_historical_data(&metric_type, data_points);
             }
             BotEvent::UserListResponse { users } => {
                 self.users_state.set_users(users);
@@ -322,14 +347,21 @@ impl App {
                 stats,
                 dm_sessions,
             } => {
-                self.users_state.set_user_details(user_id, stats, dm_sessions);
+                self.users_state
+                    .set_user_details(user_id, stats, dm_sessions);
             }
             BotEvent::RecentErrorsResponse { errors } => {
                 self.errors_state.set_errors(errors);
             }
-            BotEvent::FeatureStatesResponse { states, guild_id: _ } => {
+            BotEvent::FeatureStatesResponse {
+                states,
+                guild_id: _,
+            } => {
                 self.feature_states = states;
-                self.add_activity(format!("Loaded {} feature states", self.feature_states.len()));
+                self.add_activity(format!(
+                    "Loaded {} feature states",
+                    self.feature_states.len()
+                ));
             }
             BotEvent::ChannelsWithHistoryResponse { channels } => {
                 let count = channels.len();
@@ -439,7 +471,7 @@ impl App {
     /// Move to the previous settings tab
     pub fn settings_tab_left(&mut self) {
         self.settings_tab = match self.settings_tab {
-            SettingsTab::Features => SettingsTab::Guild,  // Wrap around
+            SettingsTab::Features => SettingsTab::Guild, // Wrap around
             SettingsTab::Personas => SettingsTab::Features,
             SettingsTab::Guild => SettingsTab::Personas,
         };
@@ -450,7 +482,7 @@ impl App {
         self.settings_tab = match self.settings_tab {
             SettingsTab::Features => SettingsTab::Personas,
             SettingsTab::Personas => SettingsTab::Guild,
-            SettingsTab::Guild => SettingsTab::Features,  // Wrap around
+            SettingsTab::Guild => SettingsTab::Features, // Wrap around
         };
     }
 
@@ -477,7 +509,7 @@ impl App {
         match self.settings_tab {
             SettingsTab::Features => crate::features::FEATURES.len(),
             SettingsTab::Personas => crate::features::PersonaManager::new().list_personas().len(),
-            SettingsTab::Guild => 10,     // Number of settings in render_guild_settings()
+            SettingsTab::Guild => 10, // Number of settings in render_guild_settings()
         }
     }
 
@@ -490,7 +522,8 @@ impl App {
     pub fn toggle_feature_state(&mut self, feature_id: &str) -> bool {
         let current = self.is_feature_enabled(feature_id);
         let new_state = !current;
-        self.feature_states.insert(feature_id.to_string(), new_state);
+        self.feature_states
+            .insert(feature_id.to_string(), new_state);
         new_state
     }
 
@@ -519,7 +552,15 @@ impl App {
             .map(|g| {
                 g.channels
                     .iter()
-                    .filter(|c| matches!(c.channel_type, ChannelType::Text | ChannelType::News | ChannelType::Thread | ChannelType::Forum))
+                    .filter(|c| {
+                        matches!(
+                            c.channel_type,
+                            ChannelType::Text
+                                | ChannelType::News
+                                | ChannelType::Thread
+                                | ChannelType::Forum
+                        )
+                    })
                     .collect()
             })
             .unwrap_or_default()
@@ -563,19 +604,25 @@ impl App {
             message_count: Option<u64>,
         }
 
-        let mut merged: Vec<MergedEntry> = discord_channels.iter().map(|c| {
-            let msg_count = self.db_channel_history.get(&c.id).map(|s| s.message_count);
-            MergedEntry {
-                id: c.id,
-                name: c.name.clone(),
-                message_count: msg_count,
-            }
-        }).collect();
+        let mut merged: Vec<MergedEntry> = discord_channels
+            .iter()
+            .map(|c| {
+                let msg_count = self.db_channel_history.get(&c.id).map(|s| s.message_count);
+                MergedEntry {
+                    id: c.id,
+                    name: c.name.clone(),
+                    message_count: msg_count,
+                }
+            })
+            .collect();
 
         // Add DB-only channels
         for (channel_id, summary) in &self.db_channel_history {
             if summary.guild_id == Some(guild_id) && !discord_ids.contains(channel_id) {
-                let name = summary.channel_name.clone().unwrap_or_else(|| format!("{}", channel_id));
+                let name = summary
+                    .channel_name
+                    .clone()
+                    .unwrap_or_else(|| format!("{}", channel_id));
                 merged.push(MergedEntry {
                     id: *channel_id,
                     name,
@@ -585,16 +632,16 @@ impl App {
         }
 
         // Sort same as UI
-        merged.sort_by(|a, b| {
-            match (a.message_count, b.message_count) {
-                (Some(ac), Some(bc)) => bc.cmp(&ac),
-                (Some(_), None) => std::cmp::Ordering::Less,
-                (None, Some(_)) => std::cmp::Ordering::Greater,
-                (None, None) => a.name.cmp(&b.name),
-            }
+        merged.sort_by(|a, b| match (a.message_count, b.message_count) {
+            (Some(ac), Some(bc)) => bc.cmp(&ac),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => a.name.cmp(&b.name),
         });
 
-        merged.get(self.browse_channel_index).map(|e| (e.id, e.name.clone()))
+        merged
+            .get(self.browse_channel_index)
+            .map(|e| (e.id, e.name.clone()))
     }
 
     /// Get the currently selected channel in browse mode (legacy - Discord cache only)
@@ -687,22 +734,36 @@ impl App {
             // 1. db_channel_history - authoritative from database
             // 2. channel metadata - from ChannelInfoResponse (may have None if not in Discord cache)
             // 3. guilds cache - lookup by channel ID
-            let (guild_id, guild_name) = if let Some(summary) = self.db_channel_history.get(&channel_id) {
-                // Database has authoritative guild info
-                (summary.guild_id, summary.guild_name.clone().unwrap_or_else(|| "Unknown".to_string()))
-            } else if let Some(meta) = self.channel_state.get_metadata(channel_id) {
-                // Use metadata if we have it
-                (meta.guild_id, meta.guild_name.clone().unwrap_or_else(|| "Unknown".to_string()))
-            } else {
-                // Try guilds cache as last resort
-                self.guilds.iter()
-                    .find_map(|g| {
-                        g.channels.iter()
-                            .find(|c| c.id == channel_id)
-                            .map(|_| (Some(g.id), g.name.clone()))
-                    })
-                    .unwrap_or((None, "Direct Messages".to_string()))
-            };
+            let (guild_id, guild_name) =
+                if let Some(summary) = self.db_channel_history.get(&channel_id) {
+                    // Database has authoritative guild info
+                    (
+                        summary.guild_id,
+                        summary
+                            .guild_name
+                            .clone()
+                            .unwrap_or_else(|| "Unknown".to_string()),
+                    )
+                } else if let Some(meta) = self.channel_state.get_metadata(channel_id) {
+                    // Use metadata if we have it
+                    (
+                        meta.guild_id,
+                        meta.guild_name
+                            .clone()
+                            .unwrap_or_else(|| "Unknown".to_string()),
+                    )
+                } else {
+                    // Try guilds cache as last resort
+                    self.guilds
+                        .iter()
+                        .find_map(|g| {
+                            g.channels
+                                .iter()
+                                .find(|c| c.id == channel_id)
+                                .map(|_| (Some(g.id), g.name.clone()))
+                        })
+                        .unwrap_or((None, "Direct Messages".to_string()))
+                };
 
             let entry = groups.entry(guild_id).or_insert_with(|| {
                 let name = if guild_id.is_none() {

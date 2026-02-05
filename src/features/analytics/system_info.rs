@@ -10,12 +10,12 @@
 //! - 1.1.0: Added OpenAI usage data cleanup integration
 //! - 1.0.0: Initial implementation with current metrics and historical tracking
 
-use sysinfo::{System, Disks, ProcessRefreshKind, ProcessesToUpdate};
+use crate::database::Database;
+use log::{debug, info, warn};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
-use log::{info, warn, debug};
-use crate::database::Database;
+use sysinfo::{Disks, ProcessRefreshKind, ProcessesToUpdate, System};
 
 /// Information about a disk/mount point
 pub struct DiskInfo {
@@ -148,15 +148,25 @@ impl CurrentMetrics {
             Process: {}\n\
             Rust:    {} | Serenity: v0.11.6\n\
             ```",
-            self.hostname, self.os_name, self.os_version,
-            self.architecture, self.kernel,
-            self.cpu_usage, self.cpu_cores_physical, self.cpu_cores_logical,
-            self.load_avg.0, self.load_avg.1, self.load_avg.2,
-            format_bytes(self.memory_used), format_bytes(self.memory_total), mem_percent,
+            self.hostname,
+            self.os_name,
+            self.os_version,
+            self.architecture,
+            self.kernel,
+            self.cpu_usage,
+            self.cpu_cores_physical,
+            self.cpu_cores_logical,
+            self.load_avg.0,
+            self.load_avg.1,
+            self.load_avg.2,
+            format_bytes(self.memory_used),
+            format_bytes(self.memory_total),
+            mem_percent,
             swap_line,
             format_bytes(self.db_size),
             disk_lines,
-            crate::features::get_bot_version(), format_duration(bot_uptime_secs),
+            crate::features::get_bot_version(),
+            format_duration(bot_uptime_secs),
             format_bytes(self.bot_memory),
             rustc_version_runtime::version(),
         )
@@ -275,10 +285,7 @@ pub fn format_history(
 
 /// Get the size of the database file in bytes
 pub fn get_db_file_size(path: &str) -> u64 {
-    Path::new(path)
-        .metadata()
-        .map(|m| m.len())
-        .unwrap_or(0)
+    Path::new(path).metadata().map(|m| m.len()).unwrap_or(0)
 }
 
 /// Format bytes into human-readable string (e.g., "1.5 GB")
@@ -346,7 +353,10 @@ pub async fn metrics_collection_loop(db: Arc<Database>, db_path: String) {
 
         // Record database size
         let db_size = get_db_file_size(&db_path);
-        if let Err(e) = db.store_system_metric("db_size_bytes", db_size as f64).await {
+        if let Err(e) = db
+            .store_system_metric("db_size_bytes", db_size as f64)
+            .await
+        {
             warn!("Failed to store db_size metric: {}", e);
         }
 
@@ -355,10 +365,13 @@ pub async fn metrics_collection_loop(db: Arc<Database>, db_path: String) {
             sys.refresh_processes_specifics(
                 ProcessesToUpdate::Some(&[pid]),
                 true,
-                ProcessRefreshKind::new().with_memory()
+                ProcessRefreshKind::new().with_memory(),
             );
             if let Some(proc) = sys.process(pid) {
-                if let Err(e) = db.store_system_metric("bot_memory_bytes", proc.memory() as f64).await {
+                if let Err(e) = db
+                    .store_system_metric("bot_memory_bytes", proc.memory() as f64)
+                    .await
+                {
                     warn!("Failed to store bot_memory metric: {}", e);
                 }
             }
@@ -368,13 +381,19 @@ pub async fn metrics_collection_loop(db: Arc<Database>, db_path: String) {
         let memory_total = sys.total_memory();
         if memory_total > 0 {
             let memory_percent = (sys.used_memory() as f64 / memory_total as f64) * 100.0;
-            if let Err(e) = db.store_system_metric("system_memory_percent", memory_percent).await {
+            if let Err(e) = db
+                .store_system_metric("system_memory_percent", memory_percent)
+                .await
+            {
                 warn!("Failed to store system_memory metric: {}", e);
             }
         }
 
         // Record system CPU percentage
-        if let Err(e) = db.store_system_metric("system_cpu_percent", sys.global_cpu_usage() as f64).await {
+        if let Err(e) = db
+            .store_system_metric("system_cpu_percent", sys.global_cpu_usage() as f64)
+            .await
+        {
             warn!("Failed to store system_cpu metric: {}", e);
         }
 

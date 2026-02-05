@@ -16,50 +16,110 @@ use regex::Regex;
 /// These are matched case-insensitively using substring matching
 const HOSTILE_KEYWORDS: &[&str] = &[
     // Intelligence insults
-    "stupid", "idiotic", "idiot", "moron", "dumb", "dumbass", "braindead",
-    "fool", "foolish", "ignorant", "clueless", "delusional",
-
+    "stupid",
+    "idiotic",
+    "idiot",
+    "moron",
+    "dumb",
+    "dumbass",
+    "braindead",
+    "fool",
+    "foolish",
+    "ignorant",
+    "clueless",
+    "delusional",
     // Common profanity - F-word variations
-    "fuck", "fucking", "fucked", "fucker", "fk", "fck", "fuk", "f*ck",
-    "shut the fuck up", "what the fuck", "the fuck",
-
+    "fuck",
+    "fucking",
+    "fucked",
+    "fucker",
+    "fk",
+    "fck",
+    "fuk",
+    "f*ck",
+    "shut the fuck up",
+    "what the fuck",
+    "the fuck",
     // Common profanity - S-word variations
-    "shit", "shitty", "bullshit", "bs", "piece of shit", "full of shit",
-
+    "shit",
+    "shitty",
+    "bullshit",
+    "bs",
+    "piece of shit",
+    "full of shit",
     // Common profanity - other
-    "asshole", "a**hole", "bitch", "btch", "damn", "damned",
-    "crap", "crappy", "hell", "go to hell",
-
+    "asshole",
+    "a**hole",
+    "bitch",
+    "btch",
+    "damn",
+    "damned",
+    "crap",
+    "crappy",
+    "hell",
+    "go to hell",
     // Dismissive commands
-    "shut up", "stfu", "gtfo", "shut it", "shut your mouth",
-    "piss off", "screw you", "screw off", "get lost", "buzz off",
-
+    "shut up",
+    "stfu",
+    "gtfo",
+    "shut it",
+    "shut your mouth",
+    "piss off",
+    "screw you",
+    "screw off",
+    "get lost",
+    "buzz off",
     // Extreme hostility
-    "kys", "kill yourself", "kill your",
-
+    "kys",
+    "kill yourself",
+    "kill your",
     // General insults
-    "trash", "garbage", "pathetic", "loser", "clown", "worthless",
-    "useless", "incompetent", "disgrace", "embarrassment", "scum",
-    "joke", "waste of time", "waste of space",
-
+    "trash",
+    "garbage",
+    "pathetic",
+    "loser",
+    "clown",
+    "worthless",
+    "useless",
+    "incompetent",
+    "disgrace",
+    "embarrassment",
+    "scum",
+    "joke",
+    "waste of time",
+    "waste of space",
     // Quality/value criticisms
-    "terrible", "awful", "worst", "disgusting",
-
+    "terrible",
+    "awful",
+    "worst",
+    "disgusting",
     // Direct hostility
-    "hate you", "hate your", "despise",
-
+    "hate you",
+    "hate your",
+    "despise",
     // Correctness attacks
-    "wrong", "you're wrong", "completely wrong", "so wrong",
-
+    "wrong",
+    "you're wrong",
+    "completely wrong",
+    "so wrong",
     // Dismissive responses
-    "nobody asked", "didn't ask", "who asked", "who cares", "don't care",
-
+    "nobody asked",
+    "didn't ask",
+    "who asked",
+    "who cares",
+    "don't care",
     // Slurs (ableist)
-    "retard", "retarded", "r*tard",
-
+    "retard",
+    "retarded",
+    "r*tard",
     // Context-dependent insults
-    "toxic", "cancer", "cringe", "cringey", "embarrassing",
-    "noob", "scrub",
+    "toxic",
+    "cancer",
+    "cringe",
+    "cringey",
+    "embarrassing",
+    "noob",
+    "scrub",
 ];
 
 /// Detector for identifying heated arguments and conflicts in conversations
@@ -143,10 +203,7 @@ impl ConflictDetector {
             std::collections::HashMap::new();
 
         for msg in messages {
-            user_messages
-                .entry(msg.0.clone())
-                .or_default()
-                .push(msg);
+            user_messages.entry(msg.0.clone()).or_default().push(msg);
         }
 
         // Check if 2 users are dominating conversation
@@ -321,7 +378,11 @@ mod tests {
 
         let punctuation_message = "What are you talking about???!!!";
         let score = detector.get_conflict_score(punctuation_message);
-        assert!(score >= 0.2, "Excessive punctuation should increase score, got: {}", score);
+        assert!(
+            score >= 0.2,
+            "Excessive punctuation should increase score, got: {}",
+            score
+        );
     }
 
     #[test]
@@ -331,7 +392,10 @@ mod tests {
         // Test individual messages from the user's example
         let test_messages = vec![
             ("How STUPID are we now?", "stupid + CAPS"),
-            ("REALLY STUPID!!!!!!!", "stupid + CAPS + excessive punctuation + shouting"),
+            (
+                "REALLY STUPID!!!!!!!",
+                "stupid + CAPS + excessive punctuation + shouting",
+            ),
             ("DUMB", "dumb keyword"),
             ("DUMBASS", "dumbass keyword"),
             ("DUMB DUMB", "dumb keyword (counted once)"),
@@ -369,8 +433,15 @@ mod tests {
         println!("Should trigger: {}", confidence > 0.3);
 
         // This should definitely trigger
-        assert!(is_conflict, "Hostile conversation should trigger conflict detection");
-        assert!(confidence > 0.3, "Confidence should exceed 0.3 threshold, got: {}", confidence);
+        assert!(
+            is_conflict,
+            "Hostile conversation should trigger conflict detection"
+        );
+        assert!(
+            confidence > 0.3,
+            "Confidence should exceed 0.3 threshold, got: {}",
+            confidence
+        );
     }
 
     #[test]
@@ -400,7 +471,13 @@ mod tests {
             println!("  Score: {:.2} | Triggers (>0.3): {}\n", score, score > 0.3);
 
             // All of these should trigger (score > 0.3)
-            assert!(score > 0.3, "Message '{}' ({}) should trigger, got score: {}", msg, category, score);
+            assert!(
+                score > 0.3,
+                "Message '{}' ({}) should trigger, got score: {}",
+                msg,
+                category,
+                score
+            );
         }
     }
 }

@@ -47,13 +47,19 @@ pub mod job;
 pub mod output;
 pub mod youtube;
 
-pub use chunker::{AudioChunker, ChunkerConfig, ChunkProgress, ChunkStatus};
+pub use chunker::{AudioChunker, ChunkProgress, ChunkStatus, ChunkerConfig};
 pub use commands::create_plugin_commands;
 pub use config::{ChunkingConfig, Plugin, PluginConfig};
 pub use executor::{ExecutionResult, PluginExecutor};
 pub use job::{Job, JobManager, JobStatus, PlaylistJob, PlaylistJobStatus};
-pub use output::{OutputHandler, UserContext, OutputFormat, format_transcript_sentences, count_words, format_word_count};
-pub use youtube::{parse_youtube_url, enumerate_playlist, fetch_video_metadata, format_description_preview, PlaylistInfo, PlaylistItem, VideoMetadata, YouTubeUrl, YouTubeUrlType};
+pub use output::{
+    count_words, format_transcript_sentences, format_word_count, OutputFormat, OutputHandler,
+    UserContext,
+};
+pub use youtube::{
+    enumerate_playlist, fetch_video_metadata, format_description_preview, parse_youtube_url,
+    PlaylistInfo, PlaylistItem, VideoMetadata, YouTubeUrl, YouTubeUrlType,
+};
 
 use crate::database::Database;
 
@@ -138,9 +144,7 @@ impl PluginManager {
         if !plugin.security.allowed_users.is_empty()
             && !plugin.security.allowed_users.contains(&user_id.to_string())
         {
-            return Err(anyhow::anyhow!(
-                "You are not authorized to use this plugin"
-            ));
+            return Err(anyhow::anyhow!("You are not authorized to use this plugin"));
         }
 
         // Check allowed roles (if specified)
@@ -161,10 +165,11 @@ impl PluginManager {
     /// Check cooldown for a user on a plugin
     pub fn check_cooldown(&self, plugin: &Plugin, user_id: &str) -> Result<()> {
         if plugin.security.cooldown_seconds > 0 {
-            if !self
-                .job_manager
-                .check_cooldown(user_id, &plugin.name, plugin.security.cooldown_seconds)
-            {
+            if !self.job_manager.check_cooldown(
+                user_id,
+                &plugin.name,
+                plugin.security.cooldown_seconds,
+            ) {
                 return Err(anyhow::anyhow!(
                     "Please wait {} seconds before using this plugin again",
                     plugin.security.cooldown_seconds
@@ -175,11 +180,7 @@ impl PluginManager {
     }
 
     /// Validate input parameters against plugin schema
-    pub fn validate_params(
-        &self,
-        plugin: &Plugin,
-        params: &HashMap<String, String>,
-    ) -> Result<()> {
+    pub fn validate_params(&self, plugin: &Plugin, params: &HashMap<String, String>) -> Result<()> {
         for opt in &plugin.command.options {
             let value = params.get(&opt.name);
 
@@ -245,7 +246,8 @@ impl PluginManager {
         is_thread: bool, // If true, we're already in a thread - skip creation
     ) -> Result<String> {
         // Create job record synchronously so we can return the job_id
-        let job_id = self.job_manager
+        let job_id = self
+            .job_manager
             .create_job(
                 &plugin.name,
                 &user_id,
@@ -276,7 +278,10 @@ impl PluginManager {
             }
 
             // Determine source URL for structured output
-            let source_url = plugin.output.source_param.as_ref()
+            let source_url = plugin
+                .output
+                .source_param
+                .as_ref()
                 .and_then(|param| params.get(param))
                 .cloned();
 
@@ -292,18 +297,27 @@ impl PluginManager {
                                 title
                             }
                             None => {
-                                let template = plugin.output.thread_name_template.as_deref()
+                                let template = plugin
+                                    .output
+                                    .thread_name_template
+                                    .as_deref()
                                     .unwrap_or("Plugin Output");
                                 substitute_params(template, &params)
                             }
                         }
                     } else {
-                        let template = plugin.output.thread_name_template.as_deref()
+                        let template = plugin
+                            .output
+                            .thread_name_template
+                            .as_deref()
                             .unwrap_or("Plugin Output");
                         substitute_params(template, &params)
                     }
                 } else {
-                    let template = plugin.output.thread_name_template.as_deref()
+                    let template = plugin
+                        .output
+                        .thread_name_template
+                        .as_deref()
                         .unwrap_or("Plugin Output");
                     substitute_params(template, &params)
                 };
@@ -331,7 +345,11 @@ impl PluginManager {
                 }
 
                 // Send thread starter message to channel with video title (this is what others see)
-                let starter_content = if source_url.as_ref().map(|u| u.contains("youtube.com") || u.contains("youtu.be")).unwrap_or(false) {
+                let starter_content = if source_url
+                    .as_ref()
+                    .map(|u| u.contains("youtube.com") || u.contains("youtu.be"))
+                    .unwrap_or(false)
+                {
                     format!("Transcribing YouTube video: {}", thread_name)
                 } else {
                     thread_name.clone()
@@ -341,9 +359,15 @@ impl PluginManager {
                 let thread_channel = match channel_id.say(&http, starter_content).await {
                     Ok(msg) => {
                         match create_thread_with_retry(
-                            &output_handler, &http, channel_id, msg.id,
-                            &thread_name, plugin.output.auto_archive_minutes, 3
-                        ).await
+                            &output_handler,
+                            &http,
+                            channel_id,
+                            msg.id,
+                            &thread_name,
+                            plugin.output.auto_archive_minutes,
+                            3,
+                        )
+                        .await
                         {
                             Ok(thread) => {
                                 info!("Created thread: {} ({})", thread_name, thread.id);
@@ -362,8 +386,12 @@ impl PluginManager {
                                 error!("Failed to create thread after retries: {}", e);
                                 finalize_interaction_response(
                                     &interaction_info,
-                                    &format!("Failed to create thread: {}. Posting to channel instead.", e)
-                                ).await;
+                                    &format!(
+                                        "Failed to create thread: {}. Posting to channel instead.",
+                                        e
+                                    ),
+                                )
+                                .await;
                                 None
                             }
                         }
@@ -372,8 +400,9 @@ impl PluginManager {
                         error!("Failed to send thread starter message: {}", e);
                         finalize_interaction_response(
                             &interaction_info,
-                            &format!("Failed to start transcription: {}", e)
-                        ).await;
+                            &format!("Failed to start transcription: {}", e),
+                        )
+                        .await;
                         None
                     }
                 };
@@ -384,7 +413,9 @@ impl PluginManager {
                 if let Some(ref url) = source_url {
                     // Fetch title for display
                     let title = if url.contains("youtube.com") || url.contains("youtu.be") {
-                        fetch_youtube_title(url).await.unwrap_or_else(|| "Video".to_string())
+                        fetch_youtube_title(url)
+                            .await
+                            .unwrap_or_else(|| "Video".to_string())
                     } else {
                         "Content".to_string()
                     };
@@ -415,7 +446,8 @@ impl PluginManager {
 
             // STEP 2: Post progress status BEFORE execution
             // Post to thread (either new or existing)
-            let should_post_status = plugin.output.create_thread && (is_thread || output_channel != channel_id);
+            let should_post_status =
+                plugin.output.create_thread && (is_thread || output_channel != channel_id);
             if should_post_status {
                 let status_msg = "⏳ Transcribing video... This may take a few minutes.";
                 if let Err(e) = output_channel.say(&http, status_msg).await {
@@ -434,11 +466,25 @@ impl PluginManager {
                         let url_already_posted = plugin.output.create_thread;
                         let post_result = if let Some(ref url) = source_url {
                             output_handler
-                                .post_structured_result(&http, output_channel, url, &exec_result.stdout, &plugin.output, url_already_posted, Some(&user_context))
+                                .post_structured_result(
+                                    &http,
+                                    output_channel,
+                                    url,
+                                    &exec_result.stdout,
+                                    &plugin.output,
+                                    url_already_posted,
+                                    Some(&user_context),
+                                )
                                 .await
                         } else {
                             output_handler
-                                .post_result(&http, output_channel, &exec_result.stdout, &plugin.output, Some(&user_context))
+                                .post_result(
+                                    &http,
+                                    output_channel,
+                                    &exec_result.stdout,
+                                    &plugin.output,
+                                    Some(&user_context),
+                                )
                                 .await
                         };
 
@@ -454,12 +500,14 @@ impl PluginManager {
                     } else {
                         // Command failed
                         let error_msg = if exec_result.timed_out {
-                            format!("Command timed out after {} seconds", plugin.execution.timeout_seconds)
+                            format!(
+                                "Command timed out after {} seconds",
+                                plugin.execution.timeout_seconds
+                            )
                         } else {
                             format!(
                                 "Command failed (exit code: {:?})\n{}",
-                                exec_result.exit_code,
-                                exec_result.stderr
+                                exec_result.exit_code, exec_result.stderr
                             )
                         };
 
@@ -532,11 +580,16 @@ impl PluginManager {
             max_videos.unwrap_or(playlist_config.default_max_videos)
         };
 
-        let videos: Vec<_> = playlist_info.items.into_iter().take(effective_max as usize).collect();
+        let videos: Vec<_> = playlist_info
+            .items
+            .into_iter()
+            .take(effective_max as usize)
+            .collect();
         let total_videos = videos.len() as u32;
 
         // Create playlist job record
-        let playlist_job_id = self.job_manager
+        let playlist_job_id = self
+            .job_manager
             .create_playlist_job(
                 &user_id,
                 guild_id.as_deref(),
@@ -573,7 +626,8 @@ impl PluginManager {
             }
 
             // STEP 1: Create thread for playlist
-            let thread_name = format!("Playlist: {} ({} videos)",
+            let thread_name = format!(
+                "Playlist: {} ({} videos)",
                 if playlist_title.len() > 60 {
                     format!("{}...", &playlist_title[..57])
                 } else {
@@ -606,18 +660,31 @@ impl PluginManager {
 
             // Send thread starter message to channel with playlist title and job ID
             let short_id = short_job_id(&playlist_job_id_clone);
-            let starter_content = format!("Transcribing YouTube playlist: {} | job: {}", playlist_title, short_id);
+            let starter_content = format!(
+                "Transcribing YouTube playlist: {} | job: {}",
+                playlist_title, short_id
+            );
 
             // Create thread from a new message (not the ephemeral response)
             let thread_channel = match channel_id.say(&http, starter_content).await {
                 Ok(msg) => {
                     match create_thread_with_retry(
-                        &output_handler, &http, channel_id, msg.id, &thread_name, 1440, 3
-                    ).await
+                        &output_handler,
+                        &http,
+                        channel_id,
+                        msg.id,
+                        &thread_name,
+                        1440,
+                        3,
+                    )
+                    .await
                     {
                         Ok(thread) => {
                             info!("Created playlist thread: {} ({})", thread_name, thread.id);
-                            job_manager.set_playlist_thread_id(&playlist_job_id_clone, thread.id.to_string());
+                            job_manager.set_playlist_thread_id(
+                                &playlist_job_id_clone,
+                                thread.id.to_string(),
+                            );
 
                             // Post playlist URL inside the thread (first message in thread)
                             let thread_id = ChannelId(thread.id.0);
@@ -630,8 +697,12 @@ impl PluginManager {
                             error!("Failed to create playlist thread after retries: {}", e);
                             finalize_interaction_response(
                                 &interaction_info,
-                                &format!("Failed to create thread: {}. Posting to channel instead.", e)
-                            ).await;
+                                &format!(
+                                    "Failed to create thread: {}. Posting to channel instead.",
+                                    e
+                                ),
+                            )
+                            .await;
                             None
                         }
                     }
@@ -640,8 +711,9 @@ impl PluginManager {
                     error!("Failed to send thread starter message: {}", e);
                     finalize_interaction_response(
                         &interaction_info,
-                        &format!("Failed to start playlist transcription: {}", e)
-                    ).await;
+                        &format!("Failed to start playlist transcription: {}", e),
+                    )
+                    .await;
                     None
                 }
             };
@@ -658,7 +730,15 @@ impl PluginManager {
 
             // Post initial progress
             if let Ok(msg_id) = output_handler
-                .post_playlist_progress(&http, output_channel, None, 1, total_videos, &videos[0].title, None)
+                .post_playlist_progress(
+                    &http,
+                    output_channel,
+                    None,
+                    1,
+                    total_videos,
+                    &videos[0].title,
+                    None,
+                )
                 .await
             {
                 progress_message_id = Some(msg_id);
@@ -669,7 +749,10 @@ impl PluginManager {
 
                 // Check for cancellation
                 if job_manager.is_playlist_cancelled(&playlist_job_id_clone) {
-                    info!("Playlist job {} cancelled, stopping at video {}", playlist_job_id_clone, video_index);
+                    info!(
+                        "Playlist job {} cancelled, stopping at video {}",
+                        playlist_job_id_clone, video_index
+                    );
                     break;
                 }
 
@@ -685,8 +768,13 @@ impl PluginManager {
                 if let Some(msg_id) = progress_message_id {
                     let _ = output_handler
                         .post_playlist_progress(
-                            &http, output_channel, Some(msg_id),
-                            video_index, total_videos, &video.title, Some(eta)
+                            &http,
+                            output_channel,
+                            Some(msg_id),
+                            video_index,
+                            total_videos,
+                            &video.title,
+                            Some(eta),
                         )
                         .await;
                 }
@@ -716,7 +804,13 @@ impl PluginManager {
 
                 // Update playlist progress with current video
                 let _ = job_manager
-                    .update_playlist_progress(&playlist_job_id_clone, completed, failed, skipped, Some(&video_job_id))
+                    .update_playlist_progress(
+                        &playlist_job_id_clone,
+                        completed,
+                        failed,
+                        skipped,
+                        Some(&video_job_id),
+                    )
                     .await;
 
                 // Mark video job as running
@@ -731,11 +825,15 @@ impl PluginManager {
                             // Post video result
                             if let Err(e) = output_handler
                                 .post_video_result(
-                                    &http, output_channel,
-                                    video_index, total_videos,
-                                    &video.title, &video.url,
-                                    &exec_result.stdout, &plugin.output,
-                                    Some(&user_context)
+                                    &http,
+                                    output_channel,
+                                    video_index,
+                                    total_videos,
+                                    &video.title,
+                                    &video.url,
+                                    &exec_result.stdout,
+                                    &plugin.output,
+                                    Some(&user_context),
                                 )
                                 .await
                             {
@@ -746,11 +844,18 @@ impl PluginManager {
                             let separator = "=".repeat(60);
                             combined_transcript.push_str(&format!(
                                 "\n\n{}\n[{}/{}] {}\n{}\n{}\n\n{}",
-                                separator, video_index, total_videos, video.title, video.url,
-                                separator, exec_result.stdout
+                                separator,
+                                video_index,
+                                total_videos,
+                                video.title,
+                                video.url,
+                                separator,
+                                exec_result.stdout
                             ));
 
-                            let _ = job_manager.complete_job(&video_job_id, "completed".to_string()).await;
+                            let _ = job_manager
+                                .complete_job(&video_job_id, "completed".to_string())
+                                .await;
                             completed += 1;
                         } else {
                             let error_msg = if exec_result.timed_out {
@@ -761,10 +866,13 @@ impl PluginManager {
 
                             let _ = output_handler
                                 .post_video_failed(
-                                    &http, output_channel,
-                                    video_index, total_videos,
-                                    &video.title, &video.url,
-                                    &error_msg
+                                    &http,
+                                    output_channel,
+                                    video_index,
+                                    total_videos,
+                                    &video.title,
+                                    &video.url,
+                                    &error_msg,
                                 )
                                 .await;
 
@@ -775,10 +883,13 @@ impl PluginManager {
                     Err(e) => {
                         let _ = output_handler
                             .post_video_failed(
-                                &http, output_channel,
-                                video_index, total_videos,
-                                &video.title, &video.url,
-                                &e.to_string()
+                                &http,
+                                output_channel,
+                                video_index,
+                                total_videos,
+                                &video.title,
+                                &video.url,
+                                &e.to_string(),
                             )
                             .await;
 
@@ -789,14 +900,21 @@ impl PluginManager {
 
                 // Update playlist progress
                 let _ = job_manager
-                    .update_playlist_progress(&playlist_job_id_clone, completed, failed, skipped, None)
+                    .update_playlist_progress(
+                        &playlist_job_id_clone,
+                        completed,
+                        failed,
+                        skipped,
+                        None,
+                    )
                     .await;
 
                 // Delay between videos to avoid rate limits
                 if index < videos.len() - 1 {
                     tokio::time::sleep(std::time::Duration::from_secs(
-                        playlist_config.min_video_interval_seconds
-                    )).await;
+                        playlist_config.min_video_interval_seconds,
+                    ))
+                    .await;
                 }
             }
 
@@ -808,7 +926,13 @@ impl PluginManager {
                 if let Some(job) = job_manager.get_playlist_job(&playlist_job_id_clone) {
                     let cancelled_by = job.cancelled_by.unwrap_or_else(|| "user".to_string());
                     let _ = output_handler
-                        .post_playlist_cancelled(&http, output_channel, completed, total_videos, &cancelled_by)
+                        .post_playlist_cancelled(
+                            &http,
+                            output_channel,
+                            completed,
+                            total_videos,
+                            &cancelled_by,
+                        )
                         .await;
                 }
             } else {
@@ -821,17 +945,23 @@ impl PluginManager {
 
                 let _ = output_handler
                     .post_playlist_summary(
-                        &http, output_channel,
+                        &http,
+                        output_channel,
                         &playlist_title,
-                        completed, failed, skipped, total_videos,
+                        completed,
+                        failed,
+                        skipped,
+                        total_videos,
                         runtime,
-                        combined
+                        combined,
                     )
                     .await;
             }
 
             // Mark playlist job complete
-            let _ = job_manager.complete_playlist_job(&playlist_job_id_clone).await;
+            let _ = job_manager
+                .complete_playlist_job(&playlist_job_id_clone)
+                .await;
 
             info!(
                 "Playlist job {} completed: {}/{} successful, {} failed",
@@ -861,15 +991,15 @@ impl PluginManager {
         interaction_info: Option<(u64, String)>,
         is_thread: bool,
     ) -> Result<String> {
-        let chunking_config = plugin.execution.chunking.clone()
-            .unwrap_or_default();
+        let chunking_config = plugin.execution.chunking.clone().unwrap_or_default();
 
         // Create job record - merge passed params with job-specific params
         let mut job_params = params.clone();
         job_params.insert("url".to_string(), url.clone());
         job_params.insert("mode".to_string(), "chunked".to_string());
 
-        let job_id = self.job_manager
+        let job_id = self
+            .job_manager
             .create_job(
                 &plugin.name,
                 &user_id,
@@ -899,31 +1029,36 @@ impl PluginManager {
             // Extract user options from params
             // "summaries" replaces "summary_style" with clearer naming:
             //   each = per-chunk summaries, periodic = windowed combined, all = both, none = no summaries
-            let summaries = params.get("summaries")
+            let summaries = params
+                .get("summaries")
                 .map(|s| s.as_str())
                 .unwrap_or("each");
             // "summary_interval" controls chunks between periodic summaries (default: 5, range: 2-20)
-            let summary_interval: u32 = params.get("summary_interval")
+            let summary_interval: u32 = params
+                .get("summary_interval")
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(5)
                 .max(2)
                 .min(20);
             // "transcript_file_interval" replaces "transcript_interval" for clarity
-            let transcript_file_interval: usize = params.get("transcript_file_interval")
+            let transcript_file_interval: usize = params
+                .get("transcript_file_interval")
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(0);
             let custom_prompt = params.get("custom_prompt").cloned();
 
             // Extract and validate chunk_duration (convert minutes to seconds, clamp to 5-30 min)
-            let chunk_duration_secs: u64 = params.get("chunk_duration")
+            let chunk_duration_secs: u64 = params
+                .get("chunk_duration")
                 .and_then(|s| s.parse::<u64>().ok())
                 .map(|mins| mins * 60) // Convert minutes to seconds
                 .unwrap_or(chunking_config.chunk_duration_secs)
-                .max(60)    // Minimum 1 minute
+                .max(60) // Minimum 1 minute
                 .min(1800); // Maximum 30 minutes
 
             // Extract output_format (text, files, or auto)
-            let output_format = params.get("output_format")
+            let output_format = params
+                .get("output_format")
                 .map(|s| OutputFormat::from_str(s))
                 .unwrap_or_default();
 
@@ -968,27 +1103,42 @@ impl PluginManager {
                 let short_id = short_job_id(&job_id_clone);
                 let starter_content = if let Some(ref meta) = metadata {
                     if let Some(ref uploader) = meta.uploader {
-                        format!("## YouTube: {} - by {}\nTranscription job: `{}`\n\n{}",
-                                thread_name, uploader, short_id, url)
+                        format!(
+                            "## YouTube: {} - by {}\nTranscription job: `{}`\n\n{}",
+                            thread_name, uploader, short_id, url
+                        )
                     } else {
-                        format!("## YouTube: {}\nTranscription job: `{}`\n\n{}",
-                                thread_name, short_id, url)
+                        format!(
+                            "## YouTube: {}\nTranscription job: `{}`\n\n{}",
+                            thread_name, short_id, url
+                        )
                     }
                 } else {
-                    format!("## YouTube: {}\nTranscription job: `{}`\n\n{}",
-                            thread_name, short_id, url)
+                    format!(
+                        "## YouTube: {}\nTranscription job: `{}`\n\n{}",
+                        thread_name, short_id, url
+                    )
                 };
 
                 // Create thread from a new message
                 let thread_channel = match channel_id.say(&http, starter_content).await {
                     Ok(msg) => {
                         match create_thread_with_retry(
-                            &output_handler, &http, channel_id, msg.id,
-                            &thread_name, plugin.output.auto_archive_minutes, 3
-                        ).await
+                            &output_handler,
+                            &http,
+                            channel_id,
+                            msg.id,
+                            &thread_name,
+                            plugin.output.auto_archive_minutes,
+                            3,
+                        )
+                        .await
                         {
                             Ok(thread) => {
-                                info!("Created thread for chunked transcription: {} ({})", thread_name, thread.id);
+                                info!(
+                                    "Created thread for chunked transcription: {} ({})",
+                                    thread_name, thread.id
+                                );
                                 job_manager.set_thread_id(&job_id_clone, thread.id.to_string());
 
                                 let thread_id = ChannelId(thread.id.0);
@@ -997,8 +1147,10 @@ impl PluginManager {
                                 if let Some(ref meta) = metadata {
                                     if let Some(ref desc) = meta.description {
                                         if !desc.is_empty() {
-                                            let preview = youtube::format_description_preview(desc, 10);
-                                            let desc_msg = format!("**Description:**\n>>> {}", preview);
+                                            let preview =
+                                                youtube::format_description_preview(desc, 10);
+                                            let desc_msg =
+                                                format!("**Description:**\n>>> {}", preview);
                                             let _ = thread_id.say(&http, &desc_msg).await;
                                         }
                                     }
@@ -1010,8 +1162,12 @@ impl PluginManager {
                                 error!("Failed to create thread after retries: {}", e);
                                 finalize_interaction_response(
                                     &interaction_info,
-                                    &format!("Failed to create thread: {}. Posting to channel instead.", e)
-                                ).await;
+                                    &format!(
+                                        "Failed to create thread: {}. Posting to channel instead.",
+                                        e
+                                    ),
+                                )
+                                .await;
                                 None
                             }
                         }
@@ -1020,8 +1176,9 @@ impl PluginManager {
                         error!("Failed to send thread starter message: {}", e);
                         finalize_interaction_response(
                             &interaction_info,
-                            &format!("Failed to start chunked transcription: {}", e)
-                        ).await;
+                            &format!("Failed to start chunked transcription: {}", e),
+                        )
+                        .await;
                         None
                     }
                 };
@@ -1050,15 +1207,21 @@ impl PluginManager {
                 let short_id = short_job_id(&job_id_clone);
                 let header_content = if let Some(ref meta) = metadata {
                     if let Some(ref uploader) = meta.uploader {
-                        format!("## YouTube: {} - by {}\nTranscription job: `{}`\n\n{}",
-                                video_title, uploader, short_id, url)
+                        format!(
+                            "## YouTube: {} - by {}\nTranscription job: `{}`\n\n{}",
+                            video_title, uploader, short_id, url
+                        )
                     } else {
-                        format!("## YouTube: {}\nTranscription job: `{}`\n\n{}",
-                                video_title, short_id, url)
+                        format!(
+                            "## YouTube: {}\nTranscription job: `{}`\n\n{}",
+                            video_title, short_id, url
+                        )
                     }
                 } else {
-                    format!("## YouTube: {}\nTranscription job: `{}`\n\n{}",
-                            video_title, short_id, url)
+                    format!(
+                        "## YouTube: {}\nTranscription job: `{}`\n\n{}",
+                        video_title, short_id, url
+                    )
                 };
                 let _ = channel_id.say(&http, &header_content).await;
 
@@ -1100,7 +1263,12 @@ impl PluginManager {
                 Err(e) => {
                     let error_msg = format!("Failed to initialize chunker: {}", e);
                     let _ = output_handler
-                        .post_error(&http, output_channel, &error_msg, plugin.output.error_template.as_deref())
+                        .post_error(
+                            &http,
+                            output_channel,
+                            &error_msg,
+                            plugin.output.error_template.as_deref(),
+                        )
                         .await;
                     let _ = job_manager.fail_job(&job_id_clone, error_msg).await;
                     return;
@@ -1119,7 +1287,12 @@ impl PluginManager {
                 Err(e) => {
                     let error_msg = format!("Failed to download audio: {}", e);
                     let _ = output_handler
-                        .post_error(&http, output_channel, &error_msg, plugin.output.error_template.as_deref())
+                        .post_error(
+                            &http,
+                            output_channel,
+                            &error_msg,
+                            plugin.output.error_template.as_deref(),
+                        )
                         .await;
                     let _ = job_manager.fail_job(&job_id_clone, error_msg).await;
                     let _ = chunker.cleanup().await;
@@ -1128,7 +1301,10 @@ impl PluginManager {
             };
 
             // STEP 4: Check if chunking is needed
-            let needs_chunking = chunker.needs_chunking(&download_result.audio_path).await.unwrap_or(true);
+            let needs_chunking = chunker
+                .needs_chunking(&download_result.audio_path)
+                .await
+                .unwrap_or(true);
 
             if !needs_chunking {
                 // Audio is short enough - use standard execution
@@ -1136,18 +1312,22 @@ impl PluginManager {
 
                 if let Some(msg_id) = progress_msg_id {
                     let _ = output_channel
-                        .edit_message(&http, msg_id, |m| m.content("⏳ Transcribing short video..."))
+                        .edit_message(&http, msg_id, |m| {
+                            m.content("⏳ Transcribing short video...")
+                        })
                         .await;
                 }
 
                 // Execute standard transcription on the downloaded file
-                let result = executor.execute_on_file(
-                    &chunking_config,
-                    &download_result.audio_path,
-                    chunker.temp_dir(),
-                    plugin.execution.max_output_bytes,
-                    &params,
-                ).await;
+                let result = executor
+                    .execute_on_file(
+                        &chunking_config,
+                        &download_result.audio_path,
+                        chunker.temp_dir(),
+                        plugin.execution.max_output_bytes,
+                        &params,
+                    )
+                    .await;
 
                 let _ = chunker.cleanup().await;
 
@@ -1156,11 +1336,18 @@ impl PluginManager {
                         if exec_result.success {
                             let _ = output_handler
                                 .post_structured_result(
-                                    &http, output_channel, &url, &exec_result.stdout,
-                                    &plugin.output, true, Some(&user_context)
+                                    &http,
+                                    output_channel,
+                                    &url,
+                                    &exec_result.stdout,
+                                    &plugin.output,
+                                    true,
+                                    Some(&user_context),
                                 )
                                 .await;
-                            let _ = job_manager.complete_job(&job_id_clone, "completed".to_string()).await;
+                            let _ = job_manager
+                                .complete_job(&job_id_clone, "completed".to_string())
+                                .await;
                         } else {
                             let error_msg = if exec_result.timed_out {
                                 "Transcription timed out".to_string()
@@ -1168,14 +1355,24 @@ impl PluginManager {
                                 exec_result.stderr
                             };
                             let _ = output_handler
-                                .post_error(&http, output_channel, &error_msg, plugin.output.error_template.as_deref())
+                                .post_error(
+                                    &http,
+                                    output_channel,
+                                    &error_msg,
+                                    plugin.output.error_template.as_deref(),
+                                )
                                 .await;
                             let _ = job_manager.fail_job(&job_id_clone, error_msg).await;
                         }
                     }
                     Err(e) => {
                         let _ = output_handler
-                            .post_error(&http, output_channel, &e.to_string(), plugin.output.error_template.as_deref())
+                            .post_error(
+                                &http,
+                                output_channel,
+                                &e.to_string(),
+                                plugin.output.error_template.as_deref(),
+                            )
                             .await;
                         let _ = job_manager.fail_job(&job_id_clone, e.to_string()).await;
                     }
@@ -1189,7 +1386,12 @@ impl PluginManager {
                 Err(e) => {
                     let error_msg = format!("Failed to split audio: {}", e);
                     let _ = output_handler
-                        .post_error(&http, output_channel, &error_msg, plugin.output.error_template.as_deref())
+                        .post_error(
+                            &http,
+                            output_channel,
+                            &error_msg,
+                            plugin.output.error_template.as_deref(),
+                        )
                         .await;
                     let _ = job_manager.fail_job(&job_id_clone, error_msg).await;
                     let _ = chunker.cleanup().await;
@@ -1201,12 +1403,18 @@ impl PluginManager {
 
             // Estimate total time (assume 5 minutes per chunk max)
             let estimated_duration = std::time::Duration::from_secs(
-                (total_chunks as u64) * chunking_config.chunk_timeout_secs / 2
+                (total_chunks as u64) * chunking_config.chunk_timeout_secs / 2,
             );
 
             // Post chunks ready status
             let _ = output_handler
-                .post_chunks_ready(&http, output_channel, progress_msg_id, total_chunks, Some(estimated_duration))
+                .post_chunks_ready(
+                    &http,
+                    output_channel,
+                    progress_msg_id,
+                    total_chunks,
+                    Some(estimated_duration),
+                )
                 .await;
 
             // STEP 6: Process chunks sequentially with progress updates
@@ -1233,9 +1441,13 @@ impl PluginManager {
                 // Update progress
                 if let Ok(msg_id) = output_handler
                     .post_chunk_progress(
-                        &http, output_channel, progress_message_id,
-                        chunk_num, total_chunks,
-                        "Processing...", Some(eta)
+                        &http,
+                        output_channel,
+                        progress_message_id,
+                        chunk_num,
+                        total_chunks,
+                        "Processing...",
+                        Some(eta),
                     )
                     .await
                 {
@@ -1243,13 +1455,15 @@ impl PluginManager {
                 }
 
                 // Execute transcription on this chunk
-                let result = executor.execute_on_file(
-                    &chunking_config,
-                    chunk_path,
-                    chunker.temp_dir(),
-                    plugin.execution.max_output_bytes,
-                    &params,
-                ).await;
+                let result = executor
+                    .execute_on_file(
+                        &chunking_config,
+                        chunk_path,
+                        chunker.temp_dir(),
+                        plugin.execution.max_output_bytes,
+                        &params,
+                    )
+                    .await;
 
                 match result {
                     Ok(exec_result) => {
@@ -1259,13 +1473,17 @@ impl PluginManager {
                             if output_format.should_use_file(chunk_content.len()) {
                                 // Format transcript with sentences on separate lines
                                 let formatted = format_transcript_sentences(chunk_content);
-                                let chunk_filename = format!("part-{}-of-{}.txt", chunk_num, total_chunks);
+                                let chunk_filename =
+                                    format!("part-{}-of-{}.txt", chunk_num, total_chunks);
                                 let _ = output_handler
                                     .post_file(&http, output_channel, &formatted, &chunk_filename)
                                     .await;
                             } else {
                                 // Post as text message with block quote formatting
-                                let msg = format!("### 📜 Part {}/{}\n\n>>> {}", chunk_num, total_chunks, chunk_content);
+                                let msg = format!(
+                                    "### 📜 Part {}/{}\n\n>>> {}",
+                                    chunk_num, total_chunks, chunk_content
+                                );
                                 let _ = output_channel.say(&http, &msg).await;
                             }
 
@@ -1273,14 +1491,19 @@ impl PluginManager {
                             // Skip entirely if summaries is "none"
                             if summaries != "none" {
                                 // Use chunk_summary_prompt if available, fallback to summary_prompt
-                                let prompt_to_use = plugin.output.chunk_summary_prompt
+                                let prompt_to_use = plugin
+                                    .output
+                                    .chunk_summary_prompt
                                     .as_ref()
                                     .or(plugin.output.summary_prompt.as_ref());
 
                                 if let Some(base_prompt) = prompt_to_use {
                                     // Build prompt with custom instructions if provided
                                     let full_prompt = if let Some(ref custom) = custom_prompt {
-                                        format!("{}\n\nAdditional instructions: {}", base_prompt, custom)
+                                        format!(
+                                            "{}\n\nAdditional instructions: {}",
+                                            base_prompt, custom
+                                        )
                                     } else {
                                         base_prompt.clone()
                                     };
@@ -1290,7 +1513,7 @@ impl PluginManager {
                                             &exec_result.stdout,
                                             &full_prompt,
                                             Some(&user_context),
-                                            Some("chunk_summary")
+                                            Some("chunk_summary"),
                                         )
                                         .await
                                     {
@@ -1315,8 +1538,10 @@ impl PluginManager {
                                             // Use windowed summaries: only summarize chunks since last summary
                                             let start_idx = last_summary_chunk;
                                             let end_idx = chunk_summaries.len();
-                                            let window_summaries = &chunk_summaries[start_idx..end_idx];
-                                            let summaries_window = window_summaries.join("\n\n---\n\n");
+                                            let window_summaries =
+                                                &chunk_summaries[start_idx..end_idx];
+                                            let summaries_window =
+                                                window_summaries.join("\n\n---\n\n");
 
                                             // Calculate part range for display (1-indexed)
                                             let start_part = start_idx + 1;
@@ -1330,18 +1555,22 @@ impl PluginManager {
                                             );
 
                                             // Add custom instructions to windowed summary too
-                                            let cumulative_template = if let Some(ref custom) = custom_prompt {
-                                                format!("{}\n\nAdditional instructions: {}", base_template, custom)
-                                            } else {
-                                                base_template
-                                            };
+                                            let cumulative_template =
+                                                if let Some(ref custom) = custom_prompt {
+                                                    format!(
+                                                        "{}\n\nAdditional instructions: {}",
+                                                        base_template, custom
+                                                    )
+                                                } else {
+                                                    base_template
+                                                };
 
                                             if let Some(cumulative_summary) = output_handler
                                                 .generate_summary_for_text_with_context(
                                                     &summaries_window,
                                                     &cumulative_template,
                                                     Some(&user_context),
-                                                    Some("cumulative_summary")
+                                                    Some("cumulative_summary"),
                                                 )
                                                 .await
                                             {
@@ -1349,8 +1578,13 @@ impl PluginManager {
                                                     "### 💡 Summary (Parts {}-{})\n\n{}",
                                                     start_part, end_part, cumulative_summary
                                                 );
-                                                let _ = output_channel.say(&http, &cumulative_msg).await;
-                                                info!("Posted windowed summary for parts {}-{}", start_part, end_part);
+                                                let _ = output_channel
+                                                    .say(&http, &cumulative_msg)
+                                                    .await;
+                                                info!(
+                                                    "Posted windowed summary for parts {}-{}",
+                                                    start_part, end_part
+                                                );
 
                                                 // Update last_summary_chunk to current position
                                                 last_summary_chunk = chunk_summaries.len();
@@ -1370,17 +1604,26 @@ impl PluginManager {
                             ));
 
                             // Post transcript file at interval if configured (after adding chunk)
-                            if transcript_file_interval > 0 && chunk_num % transcript_file_interval == 0 {
-                                let partial_filename = format!("transcript_parts_1-{}.txt", chunk_num);
+                            if transcript_file_interval > 0
+                                && chunk_num % transcript_file_interval == 0
+                            {
+                                let partial_filename =
+                                    format!("transcript_parts_1-{}.txt", chunk_num);
                                 // Format with sentences on separate lines
                                 let formatted = format_transcript_sentences(&combined_transcript);
                                 let _ = output_handler
                                     .post_file(&http, output_channel, &formatted, &partial_filename)
                                     .await;
-                                let _ = output_channel.say(
-                                    &http,
-                                    &format!("📜 **Partial transcript** (parts 1-{}, {} words)", chunk_num, count_words(&combined_transcript))
-                                ).await;
+                                let _ = output_channel
+                                    .say(
+                                        &http,
+                                        &format!(
+                                            "📜 **Partial transcript** (parts 1-{}, {} words)",
+                                            chunk_num,
+                                            count_words(&combined_transcript)
+                                        ),
+                                    )
+                                    .await;
                             }
 
                             completed_chunks += 1;
@@ -1393,7 +1636,13 @@ impl PluginManager {
                             };
 
                             let _ = output_handler
-                                .post_chunk_failed(&http, output_channel, chunk_num, total_chunks, &error_msg)
+                                .post_chunk_failed(
+                                    &http,
+                                    output_channel,
+                                    chunk_num,
+                                    total_chunks,
+                                    &error_msg,
+                                )
                                 .await;
 
                             failed_chunks += 1;
@@ -1401,7 +1650,13 @@ impl PluginManager {
                     }
                     Err(e) => {
                         let _ = output_handler
-                            .post_chunk_failed(&http, output_channel, chunk_num, total_chunks, &e.to_string())
+                            .post_chunk_failed(
+                                &http,
+                                output_channel,
+                                chunk_num,
+                                total_chunks,
+                                &e.to_string(),
+                            )
                             .await;
                         failed_chunks += 1;
                     }
@@ -1417,12 +1672,22 @@ impl PluginManager {
 
             // Post final stats with improved heading, including job ID for reference
             let short_id = short_job_id(&job_id_clone);
-            let title_display = if video_title.len() > 60 { format!("{}...", &video_title[..57]) } else { video_title.clone() };
+            let title_display = if video_title.len() > 60 {
+                format!("{}...", &video_title[..57])
+            } else {
+                video_title.clone()
+            };
             let stats_msg = format!(
                 "---\n\n## {} Transcription Complete: {}\nJob: `{}`\n\n\
                  **Stats:** {}/{} parts • {} words • **Runtime:** {}\n\n{}",
-                status_emoji, title_display, short_id,
-                completed_chunks, total_chunks, word_count_str, runtime_str, url
+                status_emoji,
+                title_display,
+                short_id,
+                completed_chunks,
+                total_chunks,
+                word_count_str,
+                runtime_str,
+                url
             );
             let _ = output_channel.say(&http, &stats_msg).await;
 
@@ -1445,18 +1710,25 @@ impl PluginManager {
                         &combined_summaries,
                         &overall_template,
                         Some(&user_context),
-                        Some("overall_summary")
+                        Some("overall_summary"),
                     )
                     .await
                 {
-                    let _ = output_channel.say(&http, &format!("### 💡 Overall Summary\n\n{}", final_summary)).await;
+                    let _ = output_channel
+                        .say(
+                            &http,
+                            &format!("### 💡 Overall Summary\n\n{}", final_summary),
+                        )
+                        .await;
                 }
             }
 
             // Post full transcript based on output_format
             if !combined_transcript.is_empty() {
                 if output_format.should_use_file(combined_transcript.len()) {
-                    let filename = plugin.output.file_name_template
+                    let filename = plugin
+                        .output
+                        .file_name_template
                         .as_deref()
                         .unwrap_or("transcript.txt")
                         .replace(
@@ -1468,7 +1740,12 @@ impl PluginManager {
                     let _ = output_handler
                         .post_file(&http, output_channel, &formatted, &filename)
                         .await;
-                    let _ = output_channel.say(&http, &format!("📜 **Full transcript** ({} words)", word_count)).await;
+                    let _ = output_channel
+                        .say(
+                            &http,
+                            &format!("📜 **Full transcript** ({} words)", word_count),
+                        )
+                        .await;
                 } else {
                     // Post as text messages (split if needed)
                     let _ = output_channel.say(&http, "📜 **Full Transcript:**").await;
@@ -1488,9 +1765,19 @@ impl PluginManager {
             let _ = chunker.cleanup().await;
 
             if failed_chunks == 0 {
-                let _ = job_manager.complete_job(&job_id_clone, format!("Completed {} parts", completed_chunks)).await;
+                let _ = job_manager
+                    .complete_job(
+                        &job_id_clone,
+                        format!("Completed {} parts", completed_chunks),
+                    )
+                    .await;
             } else {
-                let _ = job_manager.fail_job(&job_id_clone, format!("{}/{} parts failed", failed_chunks, total_chunks)).await;
+                let _ = job_manager
+                    .fail_job(
+                        &job_id_clone,
+                        format!("{}/{} parts failed", failed_chunks, total_chunks),
+                    )
+                    .await;
             }
 
             info!(
@@ -1506,7 +1793,9 @@ impl PluginManager {
     ///
     /// Returns true if chunking is enabled and configured for this plugin.
     pub fn should_use_chunking(&self, plugin: &Plugin) -> bool {
-        plugin.execution.chunking
+        plugin
+            .execution
+            .chunking
             .as_ref()
             .map(|c| c.enabled)
             .unwrap_or(false)
@@ -1530,12 +1819,22 @@ async fn create_thread_with_retry(
     for attempt in 0..max_retries {
         if attempt > 0 {
             let delay = std::time::Duration::from_secs(2u64.pow(attempt));
-            info!("Retrying thread creation after {:?} (attempt {})", delay, attempt + 1);
+            info!(
+                "Retrying thread creation after {:?} (attempt {})",
+                delay,
+                attempt + 1
+            );
             tokio::time::sleep(delay).await;
         }
 
         match output_handler
-            .create_output_thread(http, channel_id, message_id, thread_name, auto_archive_minutes)
+            .create_output_thread(
+                http,
+                channel_id,
+                message_id,
+                thread_name,
+                auto_archive_minutes,
+            )
             .await
         {
             Ok(thread) => return Ok(thread),
@@ -1545,17 +1844,15 @@ async fn create_thread_with_retry(
             }
         }
     }
-    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Thread creation failed after {} retries", max_retries)))
+    Err(last_error
+        .unwrap_or_else(|| anyhow::anyhow!("Thread creation failed after {} retries", max_retries)))
 }
 
 /// Finalize the ephemeral interaction response
 ///
 /// Updates the ephemeral "thinking" message to show the final status.
 /// This ensures users always see feedback even if thread creation fails.
-async fn finalize_interaction_response(
-    interaction_info: &Option<(u64, String)>,
-    message: &str,
-) {
+async fn finalize_interaction_response(interaction_info: &Option<(u64, String)>, message: &str) {
     if let Some((app_id, token)) = interaction_info {
         let client = reqwest::Client::new();
         let edit_url = format!(

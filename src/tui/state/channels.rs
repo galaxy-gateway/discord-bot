@@ -56,7 +56,9 @@ impl ChannelState {
     /// Watch a channel
     pub fn watch(&mut self, channel_id: u64) {
         self.watched.insert(channel_id);
-        self.messages.entry(channel_id).or_insert_with(VecDeque::new);
+        self.messages
+            .entry(channel_id)
+            .or_insert_with(VecDeque::new);
     }
 
     /// Stop watching a channel
@@ -85,7 +87,10 @@ impl ChannelState {
             return;
         }
 
-        let buffer = self.messages.entry(channel_id).or_insert_with(VecDeque::new);
+        let buffer = self
+            .messages
+            .entry(channel_id)
+            .or_insert_with(VecDeque::new);
         buffer.push_back(message);
 
         // Trim old messages
@@ -160,13 +165,23 @@ impl ChannelState {
     }
 
     /// Set channel metadata (from ChannelInfoResponse)
-    pub fn set_channel_info(&mut self, channel_id: u64, name: String, guild_id: Option<u64>, guild_name: Option<String>, message_count: u64) {
-        self.metadata.insert(channel_id, ChannelMetadata {
-            guild_id,
-            name,
-            guild_name,
-            message_count,
-        });
+    pub fn set_channel_info(
+        &mut self,
+        channel_id: u64,
+        name: String,
+        guild_id: Option<u64>,
+        guild_name: Option<String>,
+        message_count: u64,
+    ) {
+        self.metadata.insert(
+            channel_id,
+            ChannelMetadata {
+                guild_id,
+                name,
+                guild_name,
+                message_count,
+            },
+        );
     }
 
     /// Get channel metadata
@@ -181,7 +196,10 @@ impl ChannelState {
 
     /// Set history messages (from ChannelHistoryResponse)
     pub fn set_history(&mut self, channel_id: u64, messages: Vec<DisplayMessage>) {
-        let buffer = self.messages.entry(channel_id).or_insert_with(VecDeque::new);
+        let buffer = self
+            .messages
+            .entry(channel_id)
+            .or_insert_with(VecDeque::new);
 
         // Prepend history messages (they come first chronologically)
         for msg in messages.into_iter().rev() {
@@ -208,7 +226,10 @@ impl ChannelState {
 
     /// Check if channel needs history fetch (empty buffer)
     pub fn needs_history(&self, channel_id: u64) -> bool {
-        self.messages.get(&channel_id).map(|m| m.is_empty()).unwrap_or(true)
+        self.messages
+            .get(&channel_id)
+            .map(|m| m.is_empty())
+            .unwrap_or(true)
     }
 }
 

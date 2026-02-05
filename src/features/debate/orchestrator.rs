@@ -1,6 +1,15 @@
 //! # Debate Orchestrator
 //!
 //! Manages the flow of a debate between two personas in a Discord thread.
+//!
+//! - **Version**: 2.0.0
+//! - **Since**: 3.27.0
+//!
+//! ## Changelog
+//! - 2.0.0: Interoperability with council, rules parameter, opening-only default, interactive buttons
+//! - 1.2.0: Tag-team debates and thread history
+//! - 1.1.0: Continue and end buttons
+//! - 1.0.0: Initial implementation
 
 use anyhow::Result;
 use dashmap::DashMap;
@@ -21,6 +30,10 @@ pub struct DebateState {
     pub history: Vec<(String, String)>,
     pub total_rounds_completed: i64,
     pub last_speaker_was_persona1: bool,
+    /// Whether the debate session is active (awaiting interaction)
+    pub is_active: bool,
+    /// Whether the debate is waiting for user input (after opening statements)
+    pub awaiting_user_input: bool,
 }
 
 /// Global storage for active debates (keyed by thread ID)
@@ -53,6 +66,10 @@ pub struct DebateConfig {
     pub initial_history: Option<Vec<(String, String)>>,
     /// Names of previous debaters (for context in tag-team)
     pub previous_debaters: Option<(String, String)>,
+    /// Ground rules and definitions for the debate
+    pub rules: Option<String>,
+    /// Whether to only do opening statements (default true)
+    pub opening_only: bool,
 }
 
 /// Orchestrates a debate between two personas
@@ -68,8 +85,14 @@ impl DebateOrchestrator {
     }
 
     /// Build the system prompt for a debate participant
-    fn build_debate_prompt(&self, persona: &Persona, opponent_name: &str, topic: &str, is_opening: bool) -> String {
-        self.build_debate_prompt_with_context(persona, opponent_name, topic, is_opening, None)
+    fn build_debate_prompt(
+        &self,
+        persona: &Persona,
+        opponent_name: &str,
+        topic: &str,
+        is_opening: bool,
+    ) -> String {
+        self.build_debate_prompt_full(persona, opponent_name, topic, is_opening, None, None, None)
     }
 
     /// Build the system prompt with optional context about previous debaters
@@ -81,7 +104,40 @@ impl DebateOrchestrator {
         is_opening: bool,
         previous_debaters: Option<&(String, String)>,
     ) -> String {
+        self.build_debate_prompt_full(
+            persona,
+            opponent_name,
+            topic,
+            is_opening,
+            previous_debaters,
+            None,
+            None,
+        )
+    }
+
+    /// Build the system prompt with all optional context
+    fn build_debate_prompt_full(
+        &self,
+        persona: &Persona,
+        opponent_name: &str,
+        topic: &str,
+        is_opening: bool,
+        previous_debaters: Option<&(String, String)>,
+        rules: Option<&str>,
+        prior_context: Option<&str>,
+    ) -> String {
         let base_prompt = &persona.system_prompt;
+
+        // Add rules section if provided
+        let rules_section = rules.map(|r| format!(
+            "\n\n## Ground Rules\nThe following rules and definitions apply to this discussion:\n{}\n",
+            r
+        )).unwrap_or_default();
+
+        // Add prior discussion context if provided
+        let prior_section = prior_context
+            .map(|c| format!("\n\n{}\n", c))
+            .unwrap_or_default();
 
         let debate_instructions = match (is_opening, previous_debaters) {
             // Joining an existing debate - first entry
@@ -158,11 +214,21 @@ Guidelines:
             }
         };
 
-        format!("{}{}", base_prompt, debate_instructions)
+        format!(
+            "{}{}{}{}",
+            base_prompt, rules_section, prior_section, debate_instructions
+        )
     }
 
     /// Build an embed for a debate response
-    fn build_debate_embed(&self, persona: &Persona, persona_id: &str, response: &str, round: i64, total_rounds: i64) -> CreateEmbed {
+    fn build_debate_embed(
+        &self,
+        persona: &Persona,
+        persona_id: &str,
+        response: &str,
+        round: i64,
+        total_rounds: i64,
+    ) -> CreateEmbed {
         let mut embed = CreateEmbed::default();
 
         embed.author(|a| {
@@ -200,18 +266,29 @@ Guidelines:
         F: Fn(String, String, Vec<(String, String)>) -> Fut,
         Fut: std::future::Future<Output = Result<String>>,
     {
-        let persona1 = self.persona_manager.get_persona(&config.persona1_id)
+        let persona1 = self
+            .persona_manager
+            .get_persona(&config.persona1_id)
             .ok_or_else(|| anyhow::anyhow!("Persona '{}' not found", config.persona1_id))?
             .clone();
-        let persona2 = self.persona_manager.get_persona(&config.persona2_id)
+        let persona2 = self
+            .persona_manager
+            .get_persona(&config.persona2_id)
             .ok_or_else(|| anyhow::anyhow!("Persona '{}' not found", config.persona2_id))?
             .clone();
 
         let is_tag_team = config.initial_history.is_some();
         info!(
             "Starting debate: {} vs {} on '{}' ({} rounds){}",
-            persona1.name, persona2.name, config.topic, config.rounds,
-            if is_tag_team { " [TAG-TEAM: continuing from previous debate]" } else { "" }
+            persona1.name,
+            persona2.name,
+            config.topic,
+            config.rounds,
+            if is_tag_team {
+                " [TAG-TEAM: continuing from previous debate]"
+            } else {
+                ""
+            }
         );
 
         // Conversation history for context - start with initial history if provided
@@ -236,7 +313,11 @@ Guidelines:
                 &opponent_persona.name,
                 &config.topic,
                 is_opening,
-                if is_opening && is_tag_team { config.previous_debaters.as_ref() } else { None },
+                if is_opening && is_tag_team {
+                    config.previous_debaters.as_ref()
+                } else {
+                    None
+                },
             );
 
             // Build the user message (context for the AI)
@@ -260,21 +341,20 @@ Guidelines:
             }
 
             // Get AI response
-            let response = match get_ai_response(
-                system_prompt,
-                user_message,
-                history.clone(),
-            ).await {
+            let response = match get_ai_response(system_prompt, user_message, history.clone()).await
+            {
                 Ok(r) => r,
                 Err(e) => {
                     error!("Failed to get AI response for round {}: {}", round, e);
                     // Post error message and continue
-                    let _ = thread_id.send_message(&ctx.http, |m| {
-                        m.content(format!(
-                            "*{} seems lost in thought... (API error, skipping turn)*",
-                            current_persona.name
-                        ))
-                    }).await;
+                    let _ = thread_id
+                        .send_message(&ctx.http, |m| {
+                            m.content(format!(
+                                "*{} seems lost in thought... (API error, skipping turn)*",
+                                current_persona.name
+                            ))
+                        })
+                        .await;
                     continue;
                 }
             };
@@ -283,11 +363,18 @@ Guidelines:
             history.push(("assistant".to_string(), response.clone()));
 
             // Build and send the embed
-            let embed = self.build_debate_embed(current_persona, current_persona_id, &response, round, config.rounds);
+            let embed = self.build_debate_embed(
+                current_persona,
+                current_persona_id,
+                &response,
+                round,
+                config.rounds,
+            );
 
-            if let Err(e) = thread_id.send_message(&ctx.http, |m| {
-                m.set_embed(embed)
-            }).await {
+            if let Err(e) = thread_id
+                .send_message(&ctx.http, |m| m.set_embed(embed))
+                .await
+            {
                 error!("Failed to send debate message: {}", e);
                 break;
             }
@@ -304,14 +391,17 @@ Guidelines:
             history: history.clone(),
             total_rounds_completed: config.rounds,
             last_speaker_was_persona1: config.rounds % 2 == 1,
+            is_active: true,
+            awaiting_user_input: config.opening_only,
         };
         get_active_debates().insert(thread_id.0, final_state);
 
         // Send closing message with continue button
-        let closing_embed = self.build_closing_embed(&persona1, &persona2, &config.topic, config.rounds);
-        let _ = thread_id.send_message(&ctx.http, |m| {
-            m.set_embed(closing_embed)
-                .components(|c| {
+        let closing_embed =
+            self.build_closing_embed(&persona1, &persona2, &config.topic, config.rounds);
+        let _ = thread_id
+            .send_message(&ctx.http, |m| {
+                m.set_embed(closing_embed).components(|c| {
                     c.create_action_row(|row| {
                         row.create_button(|btn| {
                             btn.custom_id(format!("debate_continue_{}", thread_id.0))
@@ -326,9 +416,13 @@ Guidelines:
                         })
                     })
                 })
-        }).await;
+            })
+            .await;
 
-        info!("Debate completed: {} vs {} on '{}'", persona1.name, persona2.name, config.topic);
+        info!(
+            "Debate completed: {} vs {} on '{}'",
+            persona1.name, persona2.name, config.topic
+        );
         Ok(())
     }
 
@@ -350,10 +444,14 @@ Guidelines:
             .map(|s| s.clone())
             .ok_or_else(|| anyhow::anyhow!("No active debate found for this thread"))?;
 
-        let persona1 = self.persona_manager.get_persona(&state.config.persona1_id)
+        let persona1 = self
+            .persona_manager
+            .get_persona(&state.config.persona1_id)
             .ok_or_else(|| anyhow::anyhow!("Persona '{}' not found", state.config.persona1_id))?
             .clone();
-        let persona2 = self.persona_manager.get_persona(&state.config.persona2_id)
+        let persona2 = self
+            .persona_manager
+            .get_persona(&state.config.persona2_id)
             .ok_or_else(|| anyhow::anyhow!("Persona '{}' not found", state.config.persona2_id))?
             .clone();
 
@@ -366,13 +464,15 @@ Guidelines:
         );
 
         // Post continuation notice
-        let _ = thread_id.send_message(&ctx.http, |m| {
-            m.embed(|e| {
-                e.title("Debate Continuing!")
-                    .description(format!("Adding {} more rounds...", additional_rounds))
-                    .color(0x7289DA)
+        let _ = thread_id
+            .send_message(&ctx.http, |m| {
+                m.embed(|e| {
+                    e.title("Debate Continuing!")
+                        .description(format!("Adding {} more rounds...", additional_rounds))
+                        .color(0x7289DA)
+                })
             })
-        }).await;
+            .await;
 
         let mut history = state.history.clone();
         let mut last_was_p1 = state.last_speaker_was_persona1;
@@ -407,31 +507,37 @@ Guidelines:
                 debug!("Failed to send typing indicator: {}", e);
             }
 
-            let response = match get_ai_response(
-                system_prompt,
-                user_message,
-                history.clone(),
-            ).await {
+            let response = match get_ai_response(system_prompt, user_message, history.clone()).await
+            {
                 Ok(r) => r,
                 Err(e) => {
                     error!("Failed to get AI response for round {}: {}", round, e);
-                    let _ = thread_id.send_message(&ctx.http, |m| {
-                        m.content(format!(
-                            "*{} seems lost in thought... (API error, skipping turn)*",
-                            current_persona.name
-                        ))
-                    }).await;
+                    let _ = thread_id
+                        .send_message(&ctx.http, |m| {
+                            m.content(format!(
+                                "*{} seems lost in thought... (API error, skipping turn)*",
+                                current_persona.name
+                            ))
+                        })
+                        .await;
                     continue;
                 }
             };
 
             history.push(("assistant".to_string(), response.clone()));
 
-            let embed = self.build_debate_embed(current_persona, current_persona_id, &response, round, end_round);
+            let embed = self.build_debate_embed(
+                current_persona,
+                current_persona_id,
+                &response,
+                round,
+                end_round,
+            );
 
-            if let Err(e) = thread_id.send_message(&ctx.http, |m| {
-                m.set_embed(embed)
-            }).await {
+            if let Err(e) = thread_id
+                .send_message(&ctx.http, |m| m.set_embed(embed))
+                .await
+            {
                 error!("Failed to send debate message: {}", e);
                 break;
             }
@@ -447,14 +553,17 @@ Guidelines:
             history: history.clone(),
             total_rounds_completed: end_round,
             last_speaker_was_persona1: last_was_p1,
+            is_active: true,
+            awaiting_user_input: true,
         };
         get_active_debates().insert(thread_id.0, updated_state);
 
         // Send new closing message with continue button
-        let closing_embed = self.build_closing_embed(&persona1, &persona2, &state.config.topic, end_round);
-        let _ = thread_id.send_message(&ctx.http, |m| {
-            m.set_embed(closing_embed)
-                .components(|c| {
+        let closing_embed =
+            self.build_closing_embed(&persona1, &persona2, &state.config.topic, end_round);
+        let _ = thread_id
+            .send_message(&ctx.http, |m| {
+                m.set_embed(closing_embed).components(|c| {
                     c.create_action_row(|row| {
                         row.create_button(|btn| {
                             btn.custom_id(format!("debate_continue_{}", thread_id.0))
@@ -469,10 +578,111 @@ Guidelines:
                         })
                     })
                 })
-        }).await;
+            })
+            .await;
 
-        info!("Debate continuation completed: {} vs {} ({} total rounds)",
-              persona1.name, persona2.name, end_round);
+        info!(
+            "Debate continuation completed: {} vs {} ({} total rounds)",
+            persona1.name, persona2.name, end_round
+        );
+        Ok(())
+    }
+
+    /// Get a single response from a specific persona without continuing the alternation
+    ///
+    /// Used for interactive "Hear from X" buttons.
+    pub async fn get_single_response<F, Fut>(
+        &self,
+        ctx: &Context,
+        thread_id: ChannelId,
+        persona_id: &str,
+        get_ai_response: F,
+    ) -> Result<()>
+    where
+        F: Fn(String, String, Vec<(String, String)>) -> Fut,
+        Fut: std::future::Future<Output = Result<String>>,
+    {
+        // Get the saved state
+        let state = get_active_debates()
+            .get(&thread_id.0)
+            .map(|s| s.clone())
+            .ok_or_else(|| anyhow::anyhow!("No active debate found for this thread"))?;
+
+        let persona = self
+            .persona_manager
+            .get_persona(persona_id)
+            .ok_or_else(|| anyhow::anyhow!("Persona '{}' not found", persona_id))?
+            .clone();
+
+        // Determine the opponent
+        let opponent_id = if persona_id == state.config.persona1_id {
+            &state.config.persona2_id
+        } else {
+            &state.config.persona1_id
+        };
+        let opponent = self
+            .persona_manager
+            .get_persona(opponent_id)
+            .ok_or_else(|| anyhow::anyhow!("Opponent persona not found"))?;
+
+        info!(
+            "Getting single response from {} in debate on '{}'",
+            persona.name, state.config.topic
+        );
+
+        // Build system prompt with rules if available
+        let system_prompt = self.build_debate_prompt_full(
+            &persona,
+            &opponent.name,
+            &state.config.topic,
+            false, // Not an opening
+            None,
+            state.config.rules.as_deref(),
+            None,
+        );
+
+        let user_message = format!(
+            "The user has requested to hear your perspective. Respond with your thoughts on the debate topic: {}",
+            state.config.topic
+        );
+
+        // Show typing indicator
+        if let Err(e) = thread_id.broadcast_typing(&ctx.http).await {
+            debug!("Failed to send typing indicator: {}", e);
+        }
+
+        // Get AI response
+        let response = get_ai_response(system_prompt, user_message, state.history.clone()).await?;
+
+        // Update history with new response
+        let mut new_history = state.history.clone();
+        new_history.push(("assistant".to_string(), response.clone()));
+
+        // Update state
+        let updated_state = DebateState {
+            config: state.config.clone(),
+            history: new_history,
+            total_rounds_completed: state.total_rounds_completed + 1,
+            last_speaker_was_persona1: persona_id == state.config.persona1_id,
+            is_active: true,
+            awaiting_user_input: true,
+        };
+        get_active_debates().insert(thread_id.0, updated_state);
+
+        // Build and send the embed
+        let embed = self.build_debate_embed(
+            &persona,
+            persona_id,
+            &response,
+            state.total_rounds_completed + 1,
+            state.total_rounds_completed + 1,
+        );
+
+        thread_id
+            .send_message(&ctx.http, |m| m.set_embed(embed))
+            .await?;
+
+        info!("Single response from {} sent", persona.name);
         Ok(())
     }
 
@@ -483,7 +693,13 @@ Guidelines:
     }
 
     /// Build the closing embed for the debate
-    fn build_closing_embed(&self, persona1: &Persona, persona2: &Persona, topic: &str, rounds: i64) -> CreateEmbed {
+    fn build_closing_embed(
+        &self,
+        persona1: &Persona,
+        persona2: &Persona,
+        topic: &str,
+        rounds: i64,
+    ) -> CreateEmbed {
         let mut embed = CreateEmbed::default();
 
         embed.title("Debate Concluded");
@@ -519,11 +735,36 @@ mod tests {
             guild_id: Some("456".to_string()),
             initial_history: None,
             previous_debaters: None,
+            rules: None,
+            opening_only: false,
         };
 
         assert_eq!(config.persona1_id, "obi");
         assert_eq!(config.persona2_id, "muppet");
         assert_eq!(config.rounds, 6);
+        assert!(!config.opening_only);
+    }
+
+    #[test]
+    fn test_debate_config_with_rules() {
+        let config = DebateConfig {
+            persona1_id: "obi".to_string(),
+            persona2_id: "muppet".to_string(),
+            topic: "Tabs vs spaces".to_string(),
+            rounds: 2,
+            initiator_id: "123".to_string(),
+            guild_id: None,
+            initial_history: None,
+            previous_debaters: None,
+            rules: Some("Be respectful of coding styles".to_string()),
+            opening_only: true,
+        };
+
+        assert!(config.opening_only);
+        assert_eq!(
+            config.rules,
+            Some("Be respectful of coding styles".to_string())
+        );
     }
 
     #[test]
@@ -541,6 +782,8 @@ mod tests {
             guild_id: Some("456".to_string()),
             initial_history: Some(history.clone()),
             previous_debaters: Some(("Sage".to_string(), "Cynic".to_string())),
+            rules: None,
+            opening_only: false,
         };
 
         assert!(config.initial_history.is_some());

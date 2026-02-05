@@ -26,29 +26,44 @@ pub use core::Config;
 
 // Re-export feature items for backwards compatibility
 pub use features::{
-    // Analytics
-    metrics_collection_loop, InteractionTracker, UsageTracker, CurrentMetrics,
-    // Audio
-    AudioTranscriber, TranscriptionResult,
-    // Conflict
-    ConflictDetector, ConflictMediator,
-    // Debate
-    DebateOrchestrator, DebateConfig,
-    // Image generation
-    ImageGenerator, ImageSize, ImageStyle, GeneratedImage,
     // Introspection
     get_component_snippet,
+    // Analytics
+    metrics_collection_loop,
+    // Audio
+    AudioTranscriber,
+    // Conflict
+    ConflictDetector,
+    ConflictMediator,
+    CurrentMetrics,
+    DebateConfig,
+    // Debate
+    DebateOrchestrator,
+    GeneratedImage,
+    // Image generation
+    ImageGenerator,
+    ImageSize,
+    ImageStyle,
+    InteractionTracker,
+    JobManager,
+    OutputHandler,
     // Personas
-    Persona, PersonaManager,
+    Persona,
+    PersonaManager,
     // Plugins
-    Plugin, PluginConfig, PluginManager, PluginExecutor, JobManager, OutputHandler,
+    Plugin,
+    PluginConfig,
+    PluginExecutor,
+    PluginManager,
     // Rate limiting
     RateLimiter,
     // Reminders
     ReminderScheduler,
     // Startup
     StartupNotifier,
+    TranscriptionResult,
+    UsageTracker,
 };
 
 // Re-export IPC items
-pub use ipc::{IpcServer, IpcClient, BotEvent, TuiCommand};
+pub use ipc::{BotEvent, IpcClient, IpcServer, TuiCommand};

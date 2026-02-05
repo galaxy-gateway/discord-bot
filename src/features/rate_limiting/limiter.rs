@@ -33,9 +33,9 @@ impl RateLimiter {
     pub async fn check_rate_limit(&self, user_id: &str) -> bool {
         let now = Instant::now();
         let mut entry = self.requests.entry(user_id.to_string()).or_default();
-        
+
         entry.retain(|&time| now.duration_since(time) < self.time_window);
-        
+
         if entry.len() >= self.max_requests {
             false
         } else {
@@ -58,7 +58,7 @@ impl RateLimiter {
                 }
             }
         }
-        
+
         false
     }
 }
@@ -72,7 +72,7 @@ mod tests {
     #[tokio::test]
     async fn test_rate_limiter_allows_under_limit() {
         let limiter = RateLimiter::new(3, Duration::from_secs(1));
-        
+
         assert!(limiter.check_rate_limit("user1").await);
         assert!(limiter.check_rate_limit("user1").await);
         assert!(limiter.check_rate_limit("user1").await);
@@ -81,7 +81,7 @@ mod tests {
     #[tokio::test]
     async fn test_rate_limiter_blocks_over_limit() {
         let limiter = RateLimiter::new(2, Duration::from_secs(1));
-        
+
         assert!(limiter.check_rate_limit("user1").await);
         assert!(limiter.check_rate_limit("user1").await);
         assert!(!limiter.check_rate_limit("user1").await);
@@ -90,10 +90,10 @@ mod tests {
     #[tokio::test]
     async fn test_rate_limiter_resets_after_window() {
         let limiter = RateLimiter::new(1, Duration::from_millis(100));
-        
+
         assert!(limiter.check_rate_limit("user1").await);
         assert!(!limiter.check_rate_limit("user1").await);
-        
+
         sleep(Duration::from_millis(150)).await;
         assert!(limiter.check_rate_limit("user1").await);
     }
@@ -101,7 +101,7 @@ mod tests {
     #[tokio::test]
     async fn test_rate_limiter_per_user() {
         let limiter = RateLimiter::new(1, Duration::from_secs(1));
-        
+
         assert!(limiter.check_rate_limit("user1").await);
         assert!(limiter.check_rate_limit("user2").await);
         assert!(!limiter.check_rate_limit("user1").await);

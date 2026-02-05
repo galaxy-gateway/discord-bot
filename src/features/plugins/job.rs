@@ -217,7 +217,10 @@ pub struct PlaylistJob {
 impl PlaylistJob {
     /// Check if the job is still active (can process more videos)
     pub fn is_active(&self) -> bool {
-        matches!(self.status, PlaylistJobStatus::Running | PlaylistJobStatus::Pending | PlaylistJobStatus::Paused)
+        matches!(
+            self.status,
+            PlaylistJobStatus::Running | PlaylistJobStatus::Pending | PlaylistJobStatus::Paused
+        )
     }
 
     /// Check if the job has been cancelled
@@ -273,7 +276,8 @@ impl JobManager {
         channel_id: &str,
         params: HashMap<String, String>,
     ) -> Result<String> {
-        self.create_job_with_parent(plugin_name, user_id, guild_id, channel_id, params, None).await
+        self.create_job_with_parent(plugin_name, user_id, guild_id, channel_id, params, None)
+            .await
     }
 
     /// Create a new pending job with optional parent playlist
@@ -311,8 +315,12 @@ impl JobManager {
 
         info!(
             "Created job {} for plugin {} by user {}{}",
-            id, plugin_name, user_id,
-            parent_playlist_id.map(|p| format!(" (playlist: {})", p)).unwrap_or_default()
+            id,
+            plugin_name,
+            user_id,
+            parent_playlist_id
+                .map(|p| format!(" (playlist: {})", p))
+                .unwrap_or_default()
         );
 
         Ok(id)
@@ -399,9 +407,7 @@ impl JobManager {
 
         // Check if any recent job exists
         !self.jobs.iter().any(|job| {
-            job.user_id == user_id
-                && job.plugin_name == plugin_name
-                && job.started_at > cutoff
+            job.user_id == user_id && job.plugin_name == plugin_name && job.started_at > cutoff
         })
     }
 
@@ -437,7 +443,9 @@ impl JobManager {
         let mut removed = 0;
 
         self.jobs.retain(|_, job| {
-            let keep = job.completed_at.map_or(true, |completed| completed > cutoff);
+            let keep = job
+                .completed_at
+                .map_or(true, |completed| completed > cutoff);
             if !keep {
                 removed += 1;
             }
@@ -644,7 +652,10 @@ impl JobManager {
         }
 
         if !jobs.is_empty() {
-            info!("Recovered {} incomplete playlist jobs from database", jobs.len());
+            info!(
+                "Recovered {} incomplete playlist jobs from database",
+                jobs.len()
+            );
         }
 
         Ok(jobs)
@@ -652,7 +663,9 @@ impl JobManager {
 
     /// Get completed video IDs for a playlist job (for resume)
     pub async fn get_completed_video_ids(&self, playlist_job_id: &str) -> Result<Vec<String>> {
-        self.database.get_completed_video_job_ids(playlist_job_id).await
+        self.database
+            .get_completed_video_job_ids(playlist_job_id)
+            .await
     }
 }
 

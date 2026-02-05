@@ -2,10 +2,11 @@
 //!
 //! Multi-persona discussion threads with follow-up question support.
 //!
-//! - **Version**: 1.0.0
+//! - **Version**: 2.0.0
 //! - **Since**: 3.31.0
 //!
 //! ## Changelog
+//! - 2.0.0: Interoperability with debate, rules parameter, interactive buttons
 //! - 1.0.0: Initial implementation with state tracking
 
 use dashmap::DashMap;
@@ -24,6 +25,12 @@ pub struct CouncilState {
     pub initiator_id: String,
     /// Guild ID (if in a guild)
     pub guild_id: Option<String>,
+    /// Ground rules and definitions for the discussion
+    pub rules: Option<String>,
+    /// Whether the council session is active (awaiting interaction)
+    pub is_active: bool,
+    /// Whether opening statements have been completed
+    pub opening_complete: bool,
 }
 
 /// A message in the council conversation
@@ -59,7 +66,40 @@ impl CouncilState {
             history: Vec::new(),
             initiator_id,
             guild_id,
+            rules: None,
+            is_active: true,
+            opening_complete: false,
         }
+    }
+
+    /// Create a new council state with rules
+    pub fn with_rules(
+        topic: String,
+        persona_ids: Vec<String>,
+        initiator_id: String,
+        guild_id: Option<String>,
+        rules: Option<String>,
+    ) -> Self {
+        Self {
+            topic,
+            persona_ids,
+            history: Vec::new(),
+            initiator_id,
+            guild_id,
+            rules,
+            is_active: true,
+            opening_complete: false,
+        }
+    }
+
+    /// Mark opening statements as complete
+    pub fn mark_opening_complete(&mut self) {
+        self.opening_complete = true;
+    }
+
+    /// Deactivate the council session
+    pub fn deactivate(&mut self) {
+        self.is_active = false;
     }
 
     /// Add a user message to the history
@@ -122,6 +162,41 @@ mod tests {
         assert_eq!(state.topic, "Test topic");
         assert_eq!(state.persona_ids.len(), 2);
         assert!(state.history.is_empty());
+        assert!(state.rules.is_none());
+        assert!(state.is_active);
+        assert!(!state.opening_complete);
+    }
+
+    #[test]
+    fn test_council_state_with_rules() {
+        let state = CouncilState::with_rules(
+            "Test topic".to_string(),
+            vec!["obi".to_string()],
+            "user123".to_string(),
+            None,
+            Some("Be respectful".to_string()),
+        );
+
+        assert_eq!(state.rules, Some("Be respectful".to_string()));
+        assert!(state.is_active);
+    }
+
+    #[test]
+    fn test_council_state_lifecycle() {
+        let mut state = CouncilState::new(
+            "Test".to_string(),
+            vec!["obi".to_string()],
+            "user".to_string(),
+            None,
+        );
+
+        assert!(!state.opening_complete);
+        state.mark_opening_complete();
+        assert!(state.opening_complete);
+
+        assert!(state.is_active);
+        state.deactivate();
+        assert!(!state.is_active);
     }
 
     #[test]

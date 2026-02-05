@@ -10,16 +10,16 @@
 //! - 1.1.0: Added TopUser struct with username support for TUI display
 //! - 1.0.0: Initial IPC implementation with Unix socket protocol
 
+pub mod client;
 pub mod protocol;
 pub mod server;
-pub mod client;
 
+pub use client::{connect_with_retry, IpcClient};
 pub use protocol::{
-    BotEvent, TuiCommand, DisplayMessage, GuildInfo, ChannelInfo, ChannelType, AttachmentInfo,
-    UserSummary, UserStats, DmSessionInfo, ErrorInfo, TopUser, ChannelHistorySummary,
+    AttachmentInfo, BotEvent, ChannelHistorySummary, ChannelInfo, ChannelType, DisplayMessage,
+    DmSessionInfo, ErrorInfo, GuildInfo, TopUser, TuiCommand, UserStats, UserSummary,
 };
 pub use server::IpcServer;
-pub use client::{IpcClient, connect_with_retry};
 
 /// Default socket path for IPC communication
 pub const DEFAULT_SOCKET_PATH: &str = "/tmp/obi-bot.sock";

@@ -2,21 +2,21 @@
 //!
 //! Ratatui-based UI rendering for each screen.
 
-mod dashboard;
 mod channel_watcher;
-mod stats;
-mod users;
-mod settings;
+mod dashboard;
 mod errors;
 mod help;
+mod settings;
+mod stats;
+mod users;
 
-pub use dashboard::render_dashboard;
 pub use channel_watcher::render_channels;
-pub use stats::render_stats;
-pub use users::render_users;
-pub use settings::{render_settings, SettingsTab};
+pub use dashboard::render_dashboard;
 pub use errors::render_errors;
 pub use help::render_help;
+pub use settings::{render_settings, SettingsTab};
+pub use stats::render_stats;
+pub use users::render_users;
 
 use crate::tui::{App, Screen};
 use ratatui::prelude::*;
@@ -27,9 +27,9 @@ pub fn render(frame: &mut Frame, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),  // Tab bar
-            Constraint::Min(0),     // Main content
-            Constraint::Length(1),  // Status bar
+            Constraint::Length(3), // Tab bar
+            Constraint::Min(0),    // Main content
+            Constraint::Length(1), // Status bar
         ])
         .split(frame.area());
 
@@ -57,7 +57,9 @@ fn render_tabs(frame: &mut Frame, app: &App, area: Rect) {
         .iter()
         .map(|s| {
             let style = if *s == app.current_screen {
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(Color::White)
             };
@@ -67,7 +69,12 @@ fn render_tabs(frame: &mut Frame, app: &App, area: Rect) {
 
     let tabs = Tabs::new(titles)
         .block(Block::default().borders(Borders::ALL).title(" Obi TUI "))
-        .select(Screen::all().iter().position(|s| *s == app.current_screen).unwrap_or(0))
+        .select(
+            Screen::all()
+                .iter()
+                .position(|s| *s == app.current_screen)
+                .unwrap_or(0),
+        )
         .style(Style::default().fg(Color::White))
         .highlight_style(Style::default().fg(Color::Yellow));
 
@@ -88,9 +95,12 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
 
     let mode_status = match app.input_mode {
         crate::tui::app::InputMode::Normal => Span::raw(""),
-        crate::tui::app::InputMode::Editing => {
-            Span::styled(" [EDITING] ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
-        }
+        crate::tui::app::InputMode::Editing => Span::styled(
+            " [EDITING] ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
     };
 
     let help_hint = Span::styled(" q:Quit ?:Help ", Style::default().fg(Color::DarkGray));
@@ -113,8 +123,7 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         help_hint,
     ]);
 
-    let paragraph = Paragraph::new(status_line)
-        .style(Style::default().bg(Color::DarkGray));
+    let paragraph = Paragraph::new(status_line).style(Style::default().bg(Color::DarkGray));
 
     frame.render_widget(paragraph, area);
 }

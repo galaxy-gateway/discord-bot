@@ -2,7 +2,7 @@
 //!
 //! State management for user analytics screen.
 
-use crate::ipc::{UserSummary, UserStats, DmSessionInfo};
+use crate::ipc::{DmSessionInfo, UserStats, UserSummary};
 use std::time::Instant;
 
 /// User analytics state
@@ -44,7 +44,12 @@ impl UsersState {
     }
 
     /// Set user details for selected user
-    pub fn set_user_details(&mut self, user_id: String, stats: UserStats, dm_sessions: Vec<DmSessionInfo>) {
+    pub fn set_user_details(
+        &mut self,
+        user_id: String,
+        stats: UserStats,
+        dm_sessions: Vec<DmSessionInfo>,
+    ) {
         if self.selected_user().map(|u| &u.user_id) == Some(&user_id) {
             self.selected_user_stats = Some(stats);
             self.selected_user_sessions = dm_sessions;

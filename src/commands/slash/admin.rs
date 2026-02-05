@@ -106,7 +106,10 @@ fn create_set_guild_command() -> CreateApplicationCommand {
                 .add_string_choice("startup_notify_owner_id", "startup_notify_owner_id")
                 .add_string_choice("startup_notify_channel_id", "startup_notify_channel_id")
                 .add_string_choice("startup_dm_commit_count", "startup_dm_commit_count")
-                .add_string_choice("startup_channel_commit_count", "startup_channel_commit_count")
+                .add_string_choice(
+                    "startup_channel_commit_count",
+                    "startup_channel_commit_count",
+                )
         })
         .create_option(|option| {
             option
@@ -247,7 +250,20 @@ pub const GUILD_SETTINGS: &[&str] = &[
 pub const VERBOSITY_VALUES: &[&str] = &["concise", "normal", "detailed"];
 
 /// Valid persona values
-pub const PERSONA_VALUES: &[&str] = &["obi", "muppet", "chef", "teacher", "analyst", "visionary", "noir", "zen", "bard", "coach", "scientist", "gamer"];
+pub const PERSONA_VALUES: &[&str] = &[
+    "obi",
+    "muppet",
+    "chef",
+    "teacher",
+    "analyst",
+    "visionary",
+    "noir",
+    "zen",
+    "bard",
+    "coach",
+    "scientist",
+    "gamer",
+];
 
 /// Valid enabled/disabled values
 pub const ENABLED_DISABLED_VALUES: &[&str] = &["enabled", "disabled"];
@@ -291,7 +307,10 @@ pub fn validate_channel_setting(setting: &str, value: &str) -> (bool, &'static s
             if VERBOSITY_VALUES.contains(&value) {
                 (true, "")
             } else {
-                (false, "Invalid verbosity. Use: `concise`, `normal`, or `detailed`.")
+                (
+                    false,
+                    "Invalid verbosity. Use: `concise`, `normal`, or `detailed`.",
+                )
             }
         }
         "persona" => {
@@ -319,7 +338,10 @@ pub fn validate_guild_setting(setting: &str, value: &str) -> (bool, &'static str
             if VERBOSITY_VALUES.contains(&value) {
                 (true, "")
             } else {
-                (false, "Invalid verbosity level. Use: `concise`, `normal`, or `detailed`.")
+                (
+                    false,
+                    "Invalid verbosity level. Use: `concise`, `normal`, or `detailed`.",
+                )
             }
         }
         "default_persona" => {
@@ -329,7 +351,11 @@ pub fn validate_guild_setting(setting: &str, value: &str) -> (bool, &'static str
                 (false, "Invalid persona. Use one of: `obi`, `muppet`, `chef`, `teacher`, `analyst`, `visionary`, `noir`, `zen`, `bard`, `coach`, `scientist`, `gamer`.")
             }
         }
-        "conflict_mediation" | "audio_transcription" | "mention_responses" | "response_embeds" | "debate_auto_response" => {
+        "conflict_mediation"
+        | "audio_transcription"
+        | "mention_responses"
+        | "response_embeds"
+        | "debate_auto_response" => {
             if ENABLED_DISABLED_VALUES.contains(&value) {
                 (true, "")
             } else {
@@ -340,21 +366,30 @@ pub fn validate_guild_setting(setting: &str, value: &str) -> (bool, &'static str
             if SENSITIVITY_VALUES.contains(&value) {
                 (true, "")
             } else {
-                (false, "Invalid sensitivity. Use: `low`, `medium`, `high`, or `ultra`.")
+                (
+                    false,
+                    "Invalid sensitivity. Use: `low`, `medium`, `high`, or `ultra`.",
+                )
             }
         }
         "mediation_cooldown" => {
             if COOLDOWN_VALUES.contains(&value) {
                 (true, "")
             } else {
-                (false, "Invalid cooldown. Use: `1`, `5`, `10`, `15`, `30`, or `60` (minutes).")
+                (
+                    false,
+                    "Invalid cooldown. Use: `1`, `5`, `10`, `15`, `30`, or `60` (minutes).",
+                )
             }
         }
         "max_context_messages" => {
             if CONTEXT_MESSAGE_VALUES.contains(&value) {
                 (true, "")
             } else {
-                (false, "Invalid context size. Use: `10`, `20`, `40`, or `60` (messages).")
+                (
+                    false,
+                    "Invalid context size. Use: `10`, `20`, `40`, or `60` (messages).",
+                )
             }
         }
         "audio_transcription_mode" => {
@@ -368,7 +403,10 @@ pub fn validate_guild_setting(setting: &str, value: &str) -> (bool, &'static str
             if AUDIO_OUTPUT_VALUES.contains(&value) {
                 (true, "")
             } else {
-                (false, "Invalid output mode. Use: `transcription_only` or `with_commentary`.")
+                (
+                    false,
+                    "Invalid output mode. Use: `transcription_only` or `with_commentary`.",
+                )
             }
         }
         "startup_notification" => {
@@ -383,7 +421,10 @@ pub fn validate_guild_setting(setting: &str, value: &str) -> (bool, &'static str
             if !value.is_empty() && value.parse::<u64>().is_ok() {
                 (true, "")
             } else {
-                (false, "Invalid user ID. Enter a valid Discord user ID (numeric).")
+                (
+                    false,
+                    "Invalid user ID. Enter a valid Discord user ID (numeric).",
+                )
             }
         }
         "startup_notify_channel_id" => {
@@ -391,7 +432,10 @@ pub fn validate_guild_setting(setting: &str, value: &str) -> (bool, &'static str
             if !value.is_empty() && value.parse::<u64>().is_ok() {
                 (true, "")
             } else {
-                (false, "Invalid channel ID. Enter a valid Discord channel ID (numeric).")
+                (
+                    false,
+                    "Invalid channel ID. Enter a valid Discord channel ID (numeric).",
+                )
             }
         }
         "startup_dm_commit_count" | "startup_channel_commit_count" => {

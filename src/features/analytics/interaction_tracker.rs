@@ -212,7 +212,11 @@ impl InteractionTracker {
 
         // Create new session
         let session_id = Uuid::new_v4().to_string();
-        let session = SessionState::new(session_id.clone(), user_id.to_string(), channel_id.to_string());
+        let session = SessionState::new(
+            session_id.clone(),
+            user_id.to_string(),
+            channel_id.to_string(),
+        );
         self.active_sessions.insert(key, session);
 
         // Emit session start event
@@ -365,8 +369,12 @@ impl InteractionTracker {
                 user_id,
                 channel_id,
             } => {
-                database.create_dm_session(&session_id, &user_id, &channel_id).await?;
-                database.log_dm_event(&session_id, "session_start", &user_id, &channel_id, None).await?;
+                database
+                    .create_dm_session(&session_id, &user_id, &channel_id)
+                    .await?;
+                database
+                    .log_dm_event(&session_id, "session_start", &user_id, &channel_id, None)
+                    .await?;
                 debug!("Session started: {session_id}");
             }
 
@@ -390,8 +398,18 @@ impl InteractionTracker {
                             )
                             .await?;
 
-                        database.end_dm_session(&session_id, reason.as_str()).await?;
-                        database.log_dm_event(&session_id, "session_end", &session.user_id, &session.channel_id, Some(reason.as_str())).await?;
+                        database
+                            .end_dm_session(&session_id, reason.as_str())
+                            .await?;
+                        database
+                            .log_dm_event(
+                                &session_id,
+                                "session_end",
+                                &session.user_id,
+                                &session.channel_id,
+                                Some(reason.as_str()),
+                            )
+                            .await?;
                         debug!("Session ended: {session_id} (reason: {:?})", reason);
                     }
                 }
@@ -412,8 +430,19 @@ impl InteractionTracker {
                 }
 
                 // Log event
-                let event_data = format!(r#"{{"message_id":"{}","chars":{},"attachments":{}}}"#, message_id, character_count, has_attachments);
-                database.log_dm_event(&session_id, "message_received", &user_id, &channel_id, Some(&event_data)).await?;
+                let event_data = format!(
+                    r#"{{"message_id":"{}","chars":{},"attachments":{}}}"#,
+                    message_id, character_count, has_attachments
+                );
+                database
+                    .log_dm_event(
+                        &session_id,
+                        "message_received",
+                        &user_id,
+                        &channel_id,
+                        Some(&event_data),
+                    )
+                    .await?;
             }
 
             TrackingEvent::MessageSent {
@@ -431,8 +460,19 @@ impl InteractionTracker {
                 }
 
                 // Log event
-                let event_data = format!(r#"{{"message_id":"{}","chars":{},"response_time_ms":{}}}"#, message_id, character_count, response_time_ms);
-                database.log_dm_event(&session_id, "message_sent", &user_id, &channel_id, Some(&event_data)).await?;
+                let event_data = format!(
+                    r#"{{"message_id":"{}","chars":{},"response_time_ms":{}}}"#,
+                    message_id, character_count, response_time_ms
+                );
+                database
+                    .log_dm_event(
+                        &session_id,
+                        "message_sent",
+                        &user_id,
+                        &channel_id,
+                        Some(&event_data),
+                    )
+                    .await?;
             }
 
             TrackingEvent::ApiCall {
@@ -448,11 +488,20 @@ impl InteractionTracker {
                     ApiType::DallE => "dalle",
                 };
 
-                let event_data = format!(r#"{{"api_type":"{}","tokens":{},"cost":{}}}"#, api_type_str, tokens.unwrap_or(0), cost);
-                database.log_dm_event(&session_id, "api_call", &user_id, "", Some(&event_data)).await?;
+                let event_data = format!(
+                    r#"{{"api_type":"{}","tokens":{},"cost":{}}}"#,
+                    api_type_str,
+                    tokens.unwrap_or(0),
+                    cost
+                );
+                database
+                    .log_dm_event(&session_id, "api_call", &user_id, "", Some(&event_data))
+                    .await?;
 
                 // Update session metrics
-                database.update_dm_session_metrics(&session_id, api_type_str, tokens.unwrap_or(0), cost).await?;
+                database
+                    .update_dm_session_metrics(&session_id, api_type_str, tokens.unwrap_or(0), cost)
+                    .await?;
             }
 
             TrackingEvent::FeatureUsed {
@@ -466,11 +515,18 @@ impl InteractionTracker {
                     FeatureType::SlashCommand => "slash_command",
                 };
 
-                let event_data = format!(r#"{{"feature":"{}","detail":"{}"}}"#, feature_str, feature_detail);
-                database.log_dm_event(&session_id, "feature_used", &user_id, "", Some(&event_data)).await?;
+                let event_data = format!(
+                    r#"{{"feature":"{}","detail":"{}"}}"#,
+                    feature_str, feature_detail
+                );
+                database
+                    .log_dm_event(&session_id, "feature_used", &user_id, "", Some(&event_data))
+                    .await?;
 
                 // Update session metrics
-                database.increment_dm_session_feature(&session_id, feature_str).await?;
+                database
+                    .increment_dm_session_feature(&session_id, feature_str)
+                    .await?;
             }
         }
 

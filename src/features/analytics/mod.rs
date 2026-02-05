@@ -12,7 +12,7 @@ pub mod usage_tracker;
 
 pub use interaction_tracker::InteractionTracker;
 pub use system_info::{
-    metrics_collection_loop, format_bytes, format_bytes_signed, format_duration,
-    format_history, get_db_file_size, CurrentMetrics, DiskInfo, HistoricalSummary,
+    format_bytes, format_bytes_signed, format_duration, format_history, get_db_file_size,
+    metrics_collection_loop, CurrentMetrics, DiskInfo, HistoricalSummary,
 };
 pub use usage_tracker::UsageTracker;

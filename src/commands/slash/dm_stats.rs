@@ -5,10 +5,7 @@ use serenity::model::application::command::CommandOptionType;
 
 /// Creates DM stats commands
 pub fn create_commands() -> Vec<CreateApplicationCommand> {
-    vec![
-        create_dm_stats_command(),
-        create_session_history_command(),
-    ]
+    vec![create_dm_stats_command(), create_session_history_command()]
 }
 
 /// Creates the dm_stats command

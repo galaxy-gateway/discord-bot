@@ -62,8 +62,7 @@ pub mod pricing {
             (GPT35_TURBO_INPUT_PER_1K, GPT35_TURBO_OUTPUT_PER_1K)
         };
 
-        (input_tokens as f64 / 1000.0 * input_rate)
-            + (output_tokens as f64 / 1000.0 * output_rate)
+        (input_tokens as f64 / 1000.0 * input_rate) + (output_tokens as f64 / 1000.0 * output_rate)
     }
 
     /// Calculate cost for Whisper transcription

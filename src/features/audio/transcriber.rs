@@ -28,7 +28,8 @@ pub struct TranscriptionResult {
 }
 
 /// Formats that OpenAI Whisper supports natively (no conversion needed)
-const WHISPER_NATIVE_FORMATS: &[&str] = &[".mp3", ".mp4", ".m4a", ".wav", ".webm", ".mpeg", ".mpga"];
+const WHISPER_NATIVE_FORMATS: &[&str] =
+    &[".mp3", ".mp4", ".m4a", ".wav", ".webm", ".mpeg", ".mpga"];
 
 /// All formats we accept (will convert if not native)
 const SUPPORTED_FORMATS: &[&str] = &[
@@ -62,10 +63,14 @@ impl AudioTranscriber {
         let output = Command::new("curl")
             .args([
                 "https://api.openai.com/v1/audio/transcriptions",
-                "-H", &format!("Authorization: Bearer {}", self.openai_api_key),
-                "-H", "Content-Type: multipart/form-data",
-                "-F", &format!("file=@{file_path}"),
-                "-F", "model=whisper-1",
+                "-H",
+                &format!("Authorization: Bearer {}", self.openai_api_key),
+                "-H",
+                "Content-Type: multipart/form-data",
+                "-F",
+                &format!("file=@{file_path}"),
+                "-F",
+                "model=whisper-1",
             ])
             .output()?;
 
@@ -74,7 +79,10 @@ impl AudioTranscriber {
             let json: serde_json::Value = serde_json::from_str(&response)?;
 
             if let Some(text) = json.get("text").and_then(|t| t.as_str()) {
-                info!("Transcription successful, length: {} characters", text.len());
+                info!(
+                    "Transcription successful, length: {} characters",
+                    text.len()
+                );
                 Ok(text.to_string())
             } else if let Some(error) = json.get("error") {
                 error!("OpenAI API error: {error}");
@@ -93,13 +101,17 @@ impl AudioTranscriber {
     /// Check if file is a supported audio/video format
     fn is_audio_file(&self, file_path: &str) -> bool {
         let file_path_lower = file_path.to_lowercase();
-        SUPPORTED_FORMATS.iter().any(|ext| file_path_lower.ends_with(ext))
+        SUPPORTED_FORMATS
+            .iter()
+            .any(|ext| file_path_lower.ends_with(ext))
     }
 
     /// Check if file format needs conversion before sending to Whisper
     fn needs_conversion(&self, filename: &str) -> bool {
         let lower = filename.to_lowercase();
-        !WHISPER_NATIVE_FORMATS.iter().any(|ext| lower.ends_with(ext))
+        !WHISPER_NATIVE_FORMATS
+            .iter()
+            .any(|ext| lower.ends_with(ext))
     }
 
     /// Convert audio/video file to mp3 using ffmpeg
@@ -116,11 +128,14 @@ impl AudioTranscriber {
 
         let output = Command::new("ffmpeg")
             .args([
-                "-i", input_path,
-                "-vn",              // No video output
-                "-acodec", "libmp3lame",
-                "-q:a", "2",        // High quality (VBR ~190kbps)
-                "-y",               // Overwrite output file
+                "-i",
+                input_path,
+                "-vn", // No video output
+                "-acodec",
+                "libmp3lame",
+                "-q:a",
+                "2",  // High quality (VBR ~190kbps)
+                "-y", // Overwrite output file
                 &output_path,
             ])
             .output()?;
@@ -159,20 +174,21 @@ impl AudioTranscriber {
     fn get_audio_duration(file_path: &str) -> f64 {
         let output = Command::new("ffprobe")
             .args([
-                "-v", "error",
-                "-show_entries", "format=duration",
-                "-of", "default=noprint_wrappers=1:nokey=1",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
                 file_path,
             ])
             .output();
 
         match output {
-            Ok(out) if out.status.success() => {
-                String::from_utf8(out.stdout)
-                    .ok()
-                    .and_then(|s| s.trim().parse::<f64>().ok())
-                    .unwrap_or(0.0)
-            }
+            Ok(out) if out.status.success() => String::from_utf8(out.stdout)
+                .ok()
+                .and_then(|s| s.trim().parse::<f64>().ok())
+                .unwrap_or(0.0),
             Ok(out) => {
                 let stderr = String::from_utf8_lossy(&out.stderr);
                 debug!("ffprobe failed: {}", stderr);
@@ -186,7 +202,11 @@ impl AudioTranscriber {
     }
 
     /// Download and transcribe with duration tracking
-    pub async fn download_and_transcribe_with_duration(&self, url: &str, filename: &str) -> Result<TranscriptionResult> {
+    pub async fn download_and_transcribe_with_duration(
+        &self,
+        url: &str,
+        filename: &str,
+    ) -> Result<TranscriptionResult> {
         let temp_file = format!("/tmp/discord_audio_{filename}");
         let mut converted_file: Option<String> = None;
 
@@ -245,8 +265,14 @@ impl AudioTranscriber {
     }
 
     /// Legacy method for backwards compatibility
-    pub async fn download_and_transcribe_attachment(&self, url: &str, filename: &str) -> Result<String> {
-        let result = self.download_and_transcribe_with_duration(url, filename).await?;
+    pub async fn download_and_transcribe_attachment(
+        &self,
+        url: &str,
+        filename: &str,
+    ) -> Result<String> {
+        let result = self
+            .download_and_transcribe_with_duration(url, filename)
+            .await?;
         Ok(result.text)
     }
 }

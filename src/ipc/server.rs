@@ -16,13 +16,13 @@
 //! - 1.0.0: Initial IPC implementation with Unix socket protocol
 
 use crate::database::Database;
-use crate::ipc::protocol::{
-    BotEvent, TuiCommand, encode_message, GuildInfo, DisplayMessage,
-    UserSummary, UserStats, DmSessionInfo, ErrorInfo, TopUser, ChannelHistorySummary,
-};
 use crate::ipc::get_socket_path;
-use chrono::{DateTime, Utc, NaiveDateTime};
+use crate::ipc::protocol::{
+    encode_message, BotEvent, ChannelHistorySummary, DisplayMessage, DmSessionInfo, ErrorInfo,
+    GuildInfo, TopUser, TuiCommand, UserStats, UserSummary,
+};
 use anyhow::Result;
+use chrono::{DateTime, NaiveDateTime, Utc};
 use log::{debug, error, info, warn};
 use serenity::http::Http;
 use serenity::model::id::ChannelId;
@@ -129,7 +129,10 @@ impl IpcServer {
                     Ok((stream, _addr)) => {
                         let client_count = *server.client_count.read().await;
                         if client_count >= MAX_CLIENTS {
-                            warn!("Maximum IPC clients reached ({}), rejecting connection", MAX_CLIENTS);
+                            warn!(
+                                "Maximum IPC clients reached ({}), rejecting connection",
+                                MAX_CLIENTS
+                            );
                             continue;
                         }
 
@@ -167,23 +170,21 @@ impl IpcServer {
         let write_handle = tokio::spawn(async move {
             loop {
                 match event_rx.recv().await {
-                    Ok(event) => {
-                        match encode_message(&event) {
-                            Ok(data) => {
-                                if let Err(e) = writer.write_all(&data).await {
-                                    debug!("Failed to write to client: {}", e);
-                                    break;
-                                }
-                                if let Err(e) = writer.flush().await {
-                                    debug!("Failed to flush to client: {}", e);
-                                    break;
-                                }
+                    Ok(event) => match encode_message(&event) {
+                        Ok(data) => {
+                            if let Err(e) = writer.write_all(&data).await {
+                                debug!("Failed to write to client: {}", e);
+                                break;
                             }
-                            Err(e) => {
-                                error!("Failed to encode event: {}", e);
+                            if let Err(e) = writer.flush().await {
+                                debug!("Failed to flush to client: {}", e);
+                                break;
                             }
                         }
-                    }
+                        Err(e) => {
+                            error!("Failed to encode event: {}", e);
+                        }
+                    },
                     Err(broadcast::error::RecvError::Closed) => break,
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         warn!("Client lagged behind by {} events", n);
@@ -349,7 +350,10 @@ impl IpcServer {
     /// Cache a Discord user's information for TUI display
     pub async fn cache_user(&self, user_id: u64, username: &str, discriminator: u16, is_bot: bool) {
         if let Some(ref db) = self.database {
-            if let Err(e) = db.cache_user(user_id, username, discriminator, is_bot).await {
+            if let Err(e) = db
+                .cache_user(user_id, username, discriminator, is_bot)
+                .await
+            {
                 warn!("Failed to cache user {}: {}", user_id, e);
             }
         }
@@ -372,7 +376,10 @@ impl IpcServer {
             TuiCommand::GetGuilds => {
                 let guilds = self.get_guilds().await;
                 let bot_user_id = self.get_bot_user_id().await.unwrap_or(0);
-                let bot_username = self.get_bot_username().await.unwrap_or_else(|| "Unknown".to_string());
+                let bot_username = self
+                    .get_bot_username()
+                    .await
+                    .unwrap_or_else(|| "Unknown".to_string());
                 self.broadcast(BotEvent::Ready {
                     guilds,
                     bot_user_id,
@@ -386,12 +393,19 @@ impl IpcServer {
             }
             TuiCommand::UnwatchChannel { channel_id } => {
                 // Already handled in handle_client, but log it
-                debug!("UnwatchChannel command processed for channel {}", channel_id);
+                debug!(
+                    "UnwatchChannel command processed for channel {}",
+                    channel_id
+                );
             }
             TuiCommand::Pong { timestamp } => {
                 debug!("Received Pong with timestamp {}", timestamp);
             }
-            TuiCommand::SendMessage { request_id, channel_id, content } => {
+            TuiCommand::SendMessage {
+                request_id,
+                channel_id,
+                content,
+            } => {
                 let http_guard = self.http.read().await;
                 if let Some(http) = http_guard.as_ref() {
                     let http = http.clone();
@@ -400,7 +414,10 @@ impl IpcServer {
                     let channel = ChannelId(channel_id);
                     match channel.say(&http, &content).await {
                         Ok(msg) => {
-                            info!("Message sent to channel {} (msg id: {})", channel_id, msg.id);
+                            info!(
+                                "Message sent to channel {} (msg id: {})",
+                                channel_id, msg.id
+                            );
                             self.broadcast(BotEvent::CommandResponse {
                                 request_id,
                                 success: true,
@@ -423,37 +440,56 @@ impl IpcServer {
                     self.broadcast(BotEvent::CommandResponse {
                         request_id,
                         success: false,
-                        message: Some("HTTP client not configured - bot may not be ready".to_string()),
+                        message: Some(
+                            "HTTP client not configured - bot may not be ready".to_string(),
+                        ),
                         data: None,
                     });
                 }
             }
-            TuiCommand::SetFeature { request_id, feature, enabled, guild_id } => {
+            TuiCommand::SetFeature {
+                request_id,
+                feature,
+                enabled,
+                guild_id,
+            } => {
                 if let Some(ref db) = self.database {
                     let guild_id_str = guild_id.map(|id| id.to_string());
 
                     // Set the feature flag
-                    match db.set_feature_flag(
-                        &feature,
-                        enabled,
-                        None, // user_id - global toggle
-                        guild_id_str.as_deref(),
-                    ).await {
+                    match db
+                        .set_feature_flag(
+                            &feature,
+                            enabled,
+                            None, // user_id - global toggle
+                            guild_id_str.as_deref(),
+                        )
+                        .await
+                    {
                         Ok(_) => {
                             // Record the toggle in audit trail
-                            let _ = db.record_feature_toggle(
-                                &feature,
-                                "1.0.0", // version - could look up from FEATURES
-                                guild_id_str.as_deref(),
-                                "TUI", // toggled_by
-                                enabled,
-                            ).await;
+                            let _ = db
+                                .record_feature_toggle(
+                                    &feature,
+                                    "1.0.0", // version - could look up from FEATURES
+                                    guild_id_str.as_deref(),
+                                    "TUI", // toggled_by
+                                    enabled,
+                                )
+                                .await;
 
-                            info!("Feature '{}' set to {} for guild {:?}", feature, enabled, guild_id);
+                            info!(
+                                "Feature '{}' set to {} for guild {:?}",
+                                feature, enabled, guild_id
+                            );
                             self.broadcast(BotEvent::CommandResponse {
                                 request_id,
                                 success: true,
-                                message: Some(format!("Feature '{}' {}", feature, if enabled { "enabled" } else { "disabled" })),
+                                message: Some(format!(
+                                    "Feature '{}' {}",
+                                    feature,
+                                    if enabled { "enabled" } else { "disabled" }
+                                )),
                                 data: None,
                             });
                         }
@@ -477,12 +513,31 @@ impl IpcServer {
                     });
                 }
             }
-            TuiCommand::SetChannelPersona { request_id, guild_id, channel_id, persona } => {
+            TuiCommand::SetChannelPersona {
+                request_id,
+                guild_id,
+                channel_id,
+                persona,
+            } => {
                 if let Some(ref db) = self.database {
-                    let persona_opt = if persona.is_empty() { None } else { Some(persona.as_str()) };
-                    match db.set_channel_persona(&guild_id.to_string(), &channel_id.to_string(), persona_opt).await {
+                    let persona_opt = if persona.is_empty() {
+                        None
+                    } else {
+                        Some(persona.as_str())
+                    };
+                    match db
+                        .set_channel_persona(
+                            &guild_id.to_string(),
+                            &channel_id.to_string(),
+                            persona_opt,
+                        )
+                        .await
+                    {
                         Ok(_) => {
-                            info!("Channel {} persona set to '{}' in guild {}", channel_id, persona, guild_id);
+                            info!(
+                                "Channel {} persona set to '{}' in guild {}",
+                                channel_id, persona, guild_id
+                            );
                             self.broadcast(BotEvent::CommandResponse {
                                 request_id,
                                 success: true,
@@ -510,11 +565,22 @@ impl IpcServer {
                     });
                 }
             }
-            TuiCommand::SetGuildSetting { request_id, guild_id, key, value } => {
+            TuiCommand::SetGuildSetting {
+                request_id,
+                guild_id,
+                key,
+                value,
+            } => {
                 if let Some(ref db) = self.database {
-                    match db.set_guild_setting(&guild_id.to_string(), &key, &value).await {
+                    match db
+                        .set_guild_setting(&guild_id.to_string(), &key, &value)
+                        .await
+                    {
                         Ok(_) => {
-                            info!("Guild setting '{}' set to '{}' for guild {}", key, value, guild_id);
+                            info!(
+                                "Guild setting '{}' set to '{}' for guild {}",
+                                key, value, guild_id
+                            );
                             self.broadcast(BotEvent::CommandResponse {
                                 request_id,
                                 success: true,
@@ -545,15 +611,22 @@ impl IpcServer {
             TuiCommand::GetChannelHistory { channel_id, limit } => {
                 // Fetch from database conversation_history
                 if let Some(ref db) = self.database {
-                    match db.get_channel_messages(&channel_id.to_string(), limit).await {
+                    match db
+                        .get_channel_messages(&channel_id.to_string(), limit)
+                        .await
+                    {
                         Ok(messages) => {
                             let msg_count = messages.len();
-                            let mut display_messages: Vec<DisplayMessage> = Vec::with_capacity(msg_count);
+                            let mut display_messages: Vec<DisplayMessage> =
+                                Vec::with_capacity(msg_count);
 
                             for m in messages {
-                                let timestamp = NaiveDateTime::parse_from_str(&m.timestamp, "%Y-%m-%d %H:%M:%S")
-                                    .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc))
-                                    .unwrap_or_else(|_| Utc::now());
+                                let timestamp = NaiveDateTime::parse_from_str(
+                                    &m.timestamp,
+                                    "%Y-%m-%d %H:%M:%S",
+                                )
+                                .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc))
+                                .unwrap_or_else(|_| Utc::now());
 
                                 // Look up cached username, fallback to user_id
                                 let author_name = match db.get_cached_username(&m.user_id).await {
@@ -591,10 +664,23 @@ impl IpcServer {
             TuiCommand::GetUsageStats { period_days } => {
                 if let Some(ref db) = self.database {
                     match db.get_global_usage_stats(period_days).await {
-                        Ok((total_cost, period_cost, total_tokens, total_calls, cost_by_service, daily_breakdown, top_users_raw)) => {
+                        Ok((
+                            total_cost,
+                            period_cost,
+                            total_tokens,
+                            total_calls,
+                            cost_by_service,
+                            daily_breakdown,
+                            top_users_raw,
+                        )) => {
                             // Convert (user_id, username, cost) tuples to TopUser structs
-                            let top_users: Vec<TopUser> = top_users_raw.into_iter()
-                                .map(|(user_id, username, cost)| TopUser { user_id, username, cost })
+                            let top_users: Vec<TopUser> = top_users_raw
+                                .into_iter()
+                                .map(|(user_id, username, cost)| TopUser {
+                                    user_id,
+                                    username,
+                                    cost,
+                                })
                                 .collect();
                             self.broadcast(BotEvent::UsageStatsUpdate {
                                 total_cost,
@@ -647,14 +733,19 @@ impl IpcServer {
 
                 // Also log performance metrics to database for historical tracking
                 if let Some(ref db) = self.database {
-                    let _ = db.log_performance_metric("cpu", cpu_percent as f64, Some("%"), None).await;
-                    let _ = db.log_performance_metric("memory", memory_bytes as f64, Some("bytes"), None).await;
+                    let _ = db
+                        .log_performance_metric("cpu", cpu_percent as f64, Some("%"), None)
+                        .await;
+                    let _ = db
+                        .log_performance_metric("memory", memory_bytes as f64, Some("bytes"), None)
+                        .await;
                 }
             }
             TuiCommand::GetChannelInfo { channel_id } => {
                 // Look up channel in cached guilds
                 let guilds = self.get_guilds().await;
-                let channel_info = guilds.iter()
+                let channel_info = guilds
+                    .iter()
                     .flat_map(|g| g.channels.iter().map(move |c| (c, g.id, &g.name)))
                     .find(|(c, _, _)| c.id == channel_id);
 
@@ -700,22 +791,30 @@ impl IpcServer {
                 if let Some(ref db) = self.database {
                     match db.get_user_list(limit).await {
                         Ok(entries) => {
-                            let users: Vec<UserSummary> = entries.into_iter().map(|e| {
-                                let last_activity = e.last_activity.and_then(|s| {
-                                    NaiveDateTime::parse_from_str(&format!("{} 00:00:00", s), "%Y-%m-%d %H:%M:%S")
-                                        .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc))
+                            let users: Vec<UserSummary> = entries
+                                .into_iter()
+                                .map(|e| {
+                                    let last_activity = e.last_activity.and_then(|s| {
+                                        NaiveDateTime::parse_from_str(
+                                            &format!("{} 00:00:00", s),
+                                            "%Y-%m-%d %H:%M:%S",
+                                        )
+                                        .map(|dt| {
+                                            DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc)
+                                        })
                                         .ok()
-                                });
-                                UserSummary {
-                                    user_id: e.user_id,
-                                    username: e.username,
-                                    message_count: 0, // Could add if needed
-                                    total_cost: e.total_cost,
-                                    total_tokens: e.total_tokens,
-                                    session_count: e.dm_session_count,
-                                    last_activity,
-                                }
-                            }).collect();
+                                    });
+                                    UserSummary {
+                                        user_id: e.user_id,
+                                        username: e.username,
+                                        message_count: 0, // Could add if needed
+                                        total_cost: e.total_cost,
+                                        total_tokens: e.total_tokens,
+                                        session_count: e.dm_session_count,
+                                        last_activity,
+                                    }
+                                })
+                                .collect();
                             self.broadcast(BotEvent::UserListResponse { users });
                             debug!("Sent UserListResponse");
                         }
@@ -730,14 +829,20 @@ impl IpcServer {
                     match db.get_user_details(&user_id).await {
                         Ok(details) => {
                             let first_seen = details.first_seen.and_then(|s| {
-                                NaiveDateTime::parse_from_str(&format!("{} 00:00:00", s), "%Y-%m-%d %H:%M:%S")
-                                    .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc))
-                                    .ok()
+                                NaiveDateTime::parse_from_str(
+                                    &format!("{} 00:00:00", s),
+                                    "%Y-%m-%d %H:%M:%S",
+                                )
+                                .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc))
+                                .ok()
                             });
                             let last_activity = details.last_activity.and_then(|s| {
-                                NaiveDateTime::parse_from_str(&format!("{} 00:00:00", s), "%Y-%m-%d %H:%M:%S")
-                                    .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc))
-                                    .ok()
+                                NaiveDateTime::parse_from_str(
+                                    &format!("{} 00:00:00", s),
+                                    "%Y-%m-%d %H:%M:%S",
+                                )
+                                .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc))
+                                .ok()
                             });
 
                             let stats = UserStats {
@@ -758,24 +863,36 @@ impl IpcServer {
 
                             // Also get DM sessions
                             let dm_sessions = match db.get_user_dm_sessions(&user_id, 20).await {
-                                Ok(sessions) => sessions.into_iter().map(|s| {
-                                    let started_at = NaiveDateTime::parse_from_str(&s.started_at, "%Y-%m-%d %H:%M:%S")
-                                        .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc))
+                                Ok(sessions) => sessions
+                                    .into_iter()
+                                    .map(|s| {
+                                        let started_at = NaiveDateTime::parse_from_str(
+                                            &s.started_at,
+                                            "%Y-%m-%d %H:%M:%S",
+                                        )
+                                        .map(|dt| {
+                                            DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc)
+                                        })
                                         .unwrap_or_else(|_| Utc::now());
-                                    let ended_at = s.ended_at.and_then(|e| {
-                                        NaiveDateTime::parse_from_str(&e, "%Y-%m-%d %H:%M:%S")
-                                            .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc))
-                                            .ok()
-                                    });
-                                    DmSessionInfo {
-                                        session_id: s.session_id,
-                                        started_at,
-                                        ended_at,
-                                        message_count: s.message_count,
-                                        api_cost: s.api_cost,
-                                        total_tokens: s.total_tokens,
-                                    }
-                                }).collect(),
+                                        let ended_at = s.ended_at.and_then(|e| {
+                                            NaiveDateTime::parse_from_str(&e, "%Y-%m-%d %H:%M:%S")
+                                                .map(|dt| {
+                                                    DateTime::<Utc>::from_naive_utc_and_offset(
+                                                        dt, Utc,
+                                                    )
+                                                })
+                                                .ok()
+                                        });
+                                        DmSessionInfo {
+                                            session_id: s.session_id,
+                                            started_at,
+                                            ended_at,
+                                            message_count: s.message_count,
+                                            api_cost: s.api_cost,
+                                            total_tokens: s.total_tokens,
+                                        }
+                                    })
+                                    .collect(),
                                 Err(_) => vec![],
                             };
 
@@ -796,21 +913,27 @@ impl IpcServer {
                 if let Some(ref db) = self.database {
                     match db.get_recent_errors(limit).await {
                         Ok(entries) => {
-                            let errors: Vec<ErrorInfo> = entries.into_iter().map(|e| {
-                                let timestamp = NaiveDateTime::parse_from_str(&e.timestamp, "%Y-%m-%d %H:%M:%S")
+                            let errors: Vec<ErrorInfo> = entries
+                                .into_iter()
+                                .map(|e| {
+                                    let timestamp = NaiveDateTime::parse_from_str(
+                                        &e.timestamp,
+                                        "%Y-%m-%d %H:%M:%S",
+                                    )
                                     .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc))
                                     .unwrap_or_else(|_| Utc::now());
-                                ErrorInfo {
-                                    id: e.id,
-                                    error_type: e.error_type,
-                                    error_message: e.error_message,
-                                    stack_trace: e.stack_trace,
-                                    user_id: e.user_id,
-                                    channel_id: e.channel_id,
-                                    command: e.command,
-                                    timestamp,
-                                }
-                            }).collect();
+                                    ErrorInfo {
+                                        id: e.id,
+                                        error_type: e.error_type,
+                                        error_message: e.error_message,
+                                        stack_trace: e.stack_trace,
+                                        user_id: e.user_id,
+                                        channel_id: e.channel_id,
+                                        command: e.command,
+                                        timestamp,
+                                    }
+                                })
+                                .collect();
                             self.broadcast(BotEvent::RecentErrorsResponse { errors });
                             debug!("Sent RecentErrorsResponse");
                         }
@@ -824,24 +947,32 @@ impl IpcServer {
                 if let Some(ref db) = self.database {
                     match db.get_user_dm_sessions(&user_id, limit).await {
                         Ok(sessions) => {
-                            let dm_sessions: Vec<DmSessionInfo> = sessions.into_iter().map(|s| {
-                                let started_at = NaiveDateTime::parse_from_str(&s.started_at, "%Y-%m-%d %H:%M:%S")
+                            let dm_sessions: Vec<DmSessionInfo> = sessions
+                                .into_iter()
+                                .map(|s| {
+                                    let started_at = NaiveDateTime::parse_from_str(
+                                        &s.started_at,
+                                        "%Y-%m-%d %H:%M:%S",
+                                    )
                                     .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc))
                                     .unwrap_or_else(|_| Utc::now());
-                                let ended_at = s.ended_at.and_then(|e| {
-                                    NaiveDateTime::parse_from_str(&e, "%Y-%m-%d %H:%M:%S")
-                                        .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc))
-                                        .ok()
-                                });
-                                DmSessionInfo {
-                                    session_id: s.session_id,
-                                    started_at,
-                                    ended_at,
-                                    message_count: s.message_count,
-                                    api_cost: s.api_cost,
-                                    total_tokens: s.total_tokens,
-                                }
-                            }).collect();
+                                    let ended_at = s.ended_at.and_then(|e| {
+                                        NaiveDateTime::parse_from_str(&e, "%Y-%m-%d %H:%M:%S")
+                                            .map(|dt| {
+                                                DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc)
+                                            })
+                                            .ok()
+                                    });
+                                    DmSessionInfo {
+                                        session_id: s.session_id,
+                                        started_at,
+                                        ended_at,
+                                        message_count: s.message_count,
+                                        api_cost: s.api_cost,
+                                        total_tokens: s.total_tokens,
+                                    }
+                                })
+                                .collect();
 
                             // Get user stats for the response
                             match db.get_user_details(&user_id).await {
@@ -901,7 +1032,10 @@ impl IpcServer {
             TuiCommand::GetFeatureStates { guild_id } => {
                 if let Some(ref db) = self.database {
                     let guild_id_str = guild_id.map(|id| id.to_string());
-                    match db.get_guild_feature_flags(guild_id_str.as_deref().unwrap_or("global")).await {
+                    match db
+                        .get_guild_feature_flags(guild_id_str.as_deref().unwrap_or("global"))
+                        .await
+                    {
                         Ok(states) => {
                             // Ensure all toggleable features have a state (default to true if not set)
                             let mut full_states = std::collections::HashMap::new();
@@ -945,35 +1079,48 @@ impl IpcServer {
                             // Enrich with channel/guild names from cached guilds
                             let guilds = self.get_guilds().await;
 
-                            let channels: Vec<ChannelHistorySummary> = entries.into_iter().map(|e| {
-                                let channel_id = e.channel_id.parse().unwrap_or(0);
-                                let db_guild_id = e.guild_id.as_ref().and_then(|g| g.parse::<u64>().ok());
+                            let channels: Vec<ChannelHistorySummary> = entries
+                                .into_iter()
+                                .map(|e| {
+                                    let channel_id = e.channel_id.parse().unwrap_or(0);
+                                    let db_guild_id =
+                                        e.guild_id.as_ref().and_then(|g| g.parse::<u64>().ok());
 
-                                // Look up channel and guild names from cache
-                                let (channel_name, guild_name, found_guild_id) = guilds.iter()
-                                    .find_map(|g| {
-                                        g.channels.iter()
-                                            .find(|c| c.id == channel_id)
-                                            .map(|c| (Some(c.name.clone()), Some(g.name.clone()), Some(g.id)))
-                                    })
-                                    .unwrap_or((None, None, db_guild_id));
+                                    // Look up channel and guild names from cache
+                                    let (channel_name, guild_name, found_guild_id) = guilds
+                                        .iter()
+                                        .find_map(|g| {
+                                            g.channels.iter().find(|c| c.id == channel_id).map(
+                                                |c| {
+                                                    (
+                                                        Some(c.name.clone()),
+                                                        Some(g.name.clone()),
+                                                        Some(g.id),
+                                                    )
+                                                },
+                                            )
+                                        })
+                                        .unwrap_or((None, None, db_guild_id));
 
-                                // Parse last_activity to DateTime
-                                let last_activity = e.last_activity.and_then(|s| {
-                                    NaiveDateTime::parse_from_str(&s, "%Y-%m-%d %H:%M:%S")
-                                        .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc))
-                                        .ok()
-                                });
+                                    // Parse last_activity to DateTime
+                                    let last_activity = e.last_activity.and_then(|s| {
+                                        NaiveDateTime::parse_from_str(&s, "%Y-%m-%d %H:%M:%S")
+                                            .map(|dt| {
+                                                DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc)
+                                            })
+                                            .ok()
+                                    });
 
-                                ChannelHistorySummary {
-                                    channel_id,
-                                    channel_name,
-                                    guild_id: found_guild_id,
-                                    guild_name,
-                                    message_count: e.message_count as u64,
-                                    last_activity,
-                                }
-                            }).collect();
+                                    ChannelHistorySummary {
+                                        channel_id,
+                                        channel_name,
+                                        guild_id: found_guild_id,
+                                        guild_name,
+                                        message_count: e.message_count as u64,
+                                        last_activity,
+                                    }
+                                })
+                                .collect();
 
                             let count = channels.len();
                             self.broadcast(BotEvent::ChannelsWithHistoryResponse { channels });
@@ -982,7 +1129,9 @@ impl IpcServer {
                         Err(e) => {
                             warn!("Failed to get channels with history: {}", e);
                             // Send empty response on error
-                            self.broadcast(BotEvent::ChannelsWithHistoryResponse { channels: vec![] });
+                            self.broadcast(BotEvent::ChannelsWithHistoryResponse {
+                                channels: vec![],
+                            });
                         }
                     }
                 } else {

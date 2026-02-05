@@ -2,23 +2,24 @@
 //!
 //! Creates a threaded debate between two personas on a given topic.
 //!
-//! - **Version**: 1.0.0
+//! - **Version**: 2.0.0
 //! - **Since**: 3.27.0
 //!
 //! ## Changelog
+//! - 2.0.0: Added rules parameter, opening-only default, interactive controls
 //! - 1.0.0: Initial implementation
 
 use serenity::builder::CreateApplicationCommand;
 use serenity::model::application::command::CommandOptionType;
 
-/// Default number of responses in a debate (3 exchanges per persona)
-pub const DEFAULT_RESPONSES: i64 = 6;
+/// Default number of responses in a debate (opening statements only)
+pub const DEFAULT_RESPONSES: i64 = 2;
 
 /// Maximum allowed responses to prevent runaway costs
 pub const MAX_RESPONSES: i64 = 20;
 
-/// Minimum responses (at least one exchange each)
-pub const MIN_RESPONSES: i64 = 2;
+/// Minimum responses (0 means opening statements only, controlled interactively)
+pub const MIN_RESPONSES: i64 = 0;
 
 /// All available persona choices for debate
 const PERSONA_CHOICES: &[(&str, &str)] = &[
@@ -84,11 +85,19 @@ fn create_debate_command() -> CreateApplicationCommand {
         .create_option(|option| {
             option
                 .name("rounds")
-                .description("Number of responses (default: 6, max: 20)")
+                .description("Number of responses (default: 2 opening, 0 for interactive only)")
                 .kind(CommandOptionType::Integer)
                 .required(false)
                 .min_int_value(MIN_RESPONSES as u64)
                 .max_int_value(MAX_RESPONSES as u64)
+        })
+        .create_option(|option| {
+            option
+                .name("rules")
+                .description("Ground rules and term definitions for the debate")
+                .kind(CommandOptionType::String)
+                .required(false)
+                .max_length(1000)
         });
     command
 }
@@ -117,6 +126,7 @@ mod tests {
     fn test_response_limits() {
         assert!(DEFAULT_RESPONSES >= MIN_RESPONSES);
         assert!(DEFAULT_RESPONSES <= MAX_RESPONSES);
-        assert!(MIN_RESPONSES >= 2); // At least one exchange
+        assert!(MIN_RESPONSES == 0); // Opening only can be 0 for interactive mode
+        assert!(DEFAULT_RESPONSES == 2); // Default is opening statements only
     }
 }

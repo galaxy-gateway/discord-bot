@@ -99,11 +99,20 @@ impl OutputHandler {
         auto_archive_minutes: u64,
     ) -> Result<GuildChannel> {
         // First send a message to attach the thread to
-        let message = channel_id.say(http, starter_message).await
+        let message = channel_id
+            .say(http, starter_message)
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to send starter message: {}", e))?;
 
         // Then create a thread from that message
-        self.create_output_thread(http, channel_id, message.id, thread_name, auto_archive_minutes).await
+        self.create_output_thread(
+            http,
+            channel_id,
+            message.id,
+            thread_name,
+            auto_archive_minutes,
+        )
+        .await
     }
 
     /// Post result to a channel with optional file attachment
@@ -126,7 +135,15 @@ impl OutputHandler {
         if use_file {
             // Generate summary if configured
             let summary = if let Some(ref prompt) = config.summary_prompt {
-                match self.generate_summary_with_tracking(output, prompt, user_context, Some("result_summary")).await {
+                match self
+                    .generate_summary_with_tracking(
+                        output,
+                        prompt,
+                        user_context,
+                        Some("result_summary"),
+                    )
+                    .await
+                {
                     Ok(s) => s,
                     Err(e) => {
                         warn!("Failed to generate summary: {}", e);
@@ -232,7 +249,10 @@ impl OutputHandler {
 
         // 2. Generate and post the summary
         if let Some(ref prompt) = config.summary_prompt {
-            match self.generate_summary_with_tracking(output, prompt, user_context, Some("video_summary")).await {
+            match self
+                .generate_summary_with_tracking(output, prompt, user_context, Some("video_summary"))
+                .await
+            {
                 Ok(summary) => {
                     // Post summary, splitting if needed
                     let summary_chunks = split_message(&summary, 1900);
@@ -261,11 +281,14 @@ impl OutputHandler {
         let file_bytes = output.as_bytes().to_vec();
         channel_id
             .send_message(http, |m| {
-                m.content(format!("📄 **Full transcript** ({} characters)", output.len()))
-                    .add_file(AttachmentType::Bytes {
-                        data: Cow::Owned(file_bytes),
-                        filename,
-                    })
+                m.content(format!(
+                    "📄 **Full transcript** ({} characters)",
+                    output.len()
+                ))
+                .add_file(AttachmentType::Bytes {
+                    data: Cow::Owned(file_bytes),
+                    filename,
+                })
             })
             .await?;
 
@@ -295,7 +318,10 @@ impl OutputHandler {
 
         let content = format!(
             "⏳ **Processing playlist:** {}/{} videos | Currently: \"{}\" | ETA: {}",
-            current_index, total, truncate_str(current_title, 40), eta_str
+            current_index,
+            total,
+            truncate_str(current_title, 40),
+            eta_str
         );
 
         if let Some(msg_id) = progress_message_id {
@@ -339,7 +365,15 @@ impl OutputHandler {
 
         // Generate and post summary if configured
         if let Some(ref prompt) = config.summary_prompt {
-            match self.generate_summary_with_tracking(output, prompt, user_context, Some("playlist_video_summary")).await {
+            match self
+                .generate_summary_with_tracking(
+                    output,
+                    prompt,
+                    user_context,
+                    Some("playlist_video_summary"),
+                )
+                .await
+            {
                 Ok(summary) => {
                     let summary_chunks = split_message(&summary, 1900);
                     for chunk in summary_chunks {
@@ -354,7 +388,11 @@ impl OutputHandler {
         }
 
         // Post transcript file
-        let filename = format!("transcript_{:03}_{}.txt", index, sanitize_filename(video_title));
+        let filename = format!(
+            "transcript_{:03}_{}.txt",
+            index,
+            sanitize_filename(video_title)
+        );
         let file_bytes = output.as_bytes().to_vec();
 
         channel_id
@@ -384,7 +422,11 @@ impl OutputHandler {
     ) -> Result<()> {
         let content = format!(
             "---\n**[{}/{}] {}** ❌\n{}\n*Error: {}*",
-            index, total, video_title, video_url, truncate_str(error, 200)
+            index,
+            total,
+            video_title,
+            video_url,
+            truncate_str(error, 200)
         );
         channel_id.say(http, &content).await?;
         Ok(())
@@ -424,11 +466,14 @@ impl OutputHandler {
 
             channel_id
                 .send_message(http, |m| {
-                    m.content(format!("📚 **Combined transcripts** ({} chars)", transcript.len()))
-                        .add_file(AttachmentType::Bytes {
-                            data: Cow::Owned(file_bytes),
-                            filename,
-                        })
+                    m.content(format!(
+                        "📚 **Combined transcripts** ({} chars)",
+                        transcript.len()
+                    ))
+                    .add_file(AttachmentType::Bytes {
+                        data: Cow::Owned(file_bytes),
+                        filename,
+                    })
                 })
                 .await?;
 
@@ -520,10 +565,7 @@ impl OutputHandler {
             })
             .unwrap_or_default();
 
-        let content = format!(
-            "**Part {} of {}**{}",
-            chunk_num, total_chunks, preview
-        );
+        let content = format!("**Part {} of {}**{}", chunk_num, total_chunks, preview);
 
         channel_id.say(http, &content).await?;
         Ok(())
@@ -540,7 +582,9 @@ impl OutputHandler {
     ) -> Result<()> {
         let content = format!(
             "⚠️ **Part {}/{}** failed: {}",
-            chunk_num, total_chunks, truncate_str(error, 200)
+            chunk_num,
+            total_chunks,
+            truncate_str(error, 200)
         );
 
         channel_id.say(http, &content).await?;
@@ -572,8 +616,12 @@ impl OutputHandler {
              • Parts: {}/{} successful\n\
              • Words: {}\n\
              • Runtime: {}",
-            status_emoji, truncate_str(video_title, 60),
-            completed_chunks, total_chunks, word_count_str, runtime_str
+            status_emoji,
+            truncate_str(video_title, 60),
+            completed_chunks,
+            total_chunks,
+            word_count_str,
+            runtime_str
         );
 
         channel_id.say(http, &summary).await?;
@@ -581,7 +629,15 @@ impl OutputHandler {
         // Generate and post AI summary if we have transcript
         if let Some(transcript) = combined_transcript {
             if let Some(ref prompt) = config.summary_prompt {
-                match self.generate_summary_with_tracking(transcript, prompt, user_context, Some("chunked_final_summary")).await {
+                match self
+                    .generate_summary_with_tracking(
+                        transcript,
+                        prompt,
+                        user_context,
+                        Some("chunked_final_summary"),
+                    )
+                    .await
+                {
                     Ok(ai_summary) => {
                         let summary_chunks = split_message(&ai_summary, 1900);
                         for chunk in summary_chunks {
@@ -697,7 +753,8 @@ impl OutputHandler {
         text: &str,
         prompt_template: &str,
     ) -> Option<String> {
-        self.generate_summary_for_text_with_context(text, prompt_template, None, None).await
+        self.generate_summary_for_text_with_context(text, prompt_template, None, None)
+            .await
     }
 
     /// Generate an AI summary for a text with user context for usage tracking
@@ -710,7 +767,10 @@ impl OutputHandler {
         user_context: Option<&UserContext>,
         request_context: Option<&str>,
     ) -> Option<String> {
-        match self.generate_summary_with_tracking(text, prompt_template, user_context, request_context).await {
+        match self
+            .generate_summary_with_tracking(text, prompt_template, user_context, request_context)
+            .await
+        {
             Ok(summary) => Some(summary),
             Err(e) => {
                 warn!("Failed to generate summary: {}", e);
@@ -771,7 +831,9 @@ impl OutputHandler {
         .await?;
 
         // Log usage if tracker and user context are available
-        if let (Some(tracker), Some(ctx), Some(usage)) = (&self.usage_tracker, user_context, &completion.usage) {
+        if let (Some(tracker), Some(ctx), Some(usage)) =
+            (&self.usage_tracker, user_context, &completion.usage)
+        {
             let request_id = request_context.map(|c| format!("plugin_{}", c));
             tracker.log_chat(
                 &self.openai_model,
@@ -840,7 +902,11 @@ fn create_progress_bar(current: usize, total: usize) -> String {
         "[{}{}] {}%",
         "█".repeat(filled),
         "░".repeat(empty),
-        if total > 0 { (current * 100) / total } else { 0 }
+        if total > 0 {
+            (current * 100) / total
+        } else {
+            0
+        }
     )
 }
 

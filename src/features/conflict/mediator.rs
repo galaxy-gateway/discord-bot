@@ -80,7 +80,10 @@ impl ConflictMediator {
         let now = Instant::now();
         let one_hour_ago = now - Duration::from_secs(3600);
 
-        let mut count_ref = self.hourly_counts.entry(channel_id.to_string()).or_default();
+        let mut count_ref = self
+            .hourly_counts
+            .entry(channel_id.to_string())
+            .or_default();
 
         // Clean up old entries
         count_ref.retain(|&time| time > one_hour_ago);
@@ -92,9 +95,13 @@ impl ConflictMediator {
     /// Record an intervention in this channel
     pub fn record_intervention(&self, channel_id: &str) {
         let now = Instant::now();
-        self.channel_interventions.insert(channel_id.to_string(), now);
+        self.channel_interventions
+            .insert(channel_id.to_string(), now);
 
-        let mut count_ref = self.hourly_counts.entry(channel_id.to_string()).or_default();
+        let mut count_ref = self
+            .hourly_counts
+            .entry(channel_id.to_string())
+            .or_default();
         count_ref.push(now);
     }
 
@@ -188,12 +195,18 @@ mod tests {
         let mediator = ConflictMediator::new(3, 0); // 0 minute cooldown for testing
         let channel = "test_channel";
 
-        assert!(mediator.can_intervene(channel), "Should allow first intervention");
+        assert!(
+            mediator.can_intervene(channel),
+            "Should allow first intervention"
+        );
 
         mediator.record_intervention(channel);
 
         // With 0 cooldown, should immediately allow again
-        assert!(mediator.can_intervene(channel), "Should allow with 0 cooldown");
+        assert!(
+            mediator.can_intervene(channel),
+            "Should allow with 0 cooldown"
+        );
     }
 
     #[test]
@@ -204,7 +217,10 @@ mod tests {
         mediator.record_intervention(channel);
         mediator.record_intervention(channel);
 
-        assert!(!mediator.can_intervene(channel), "Should block after hitting limit");
+        assert!(
+            !mediator.can_intervene(channel),
+            "Should block after hitting limit"
+        );
     }
 
     #[test]

@@ -24,20 +24,16 @@ use tokio::time::timeout;
 
 /// Dangerous characters that could enable shell injection
 const DANGEROUS_CHARS: &[char] = &[
-    '|',  // Pipe
-    ';',  // Command separator
-    '&',  // Background/AND
-    '$',  // Variable expansion
-    '`',  // Command substitution
-    '(',  // Subshell
-    ')',
-    '{',  // Brace expansion
-    '}',
-    '<',  // Redirection
-    '>',
-    '\n', // Newline injection
-    '\r',
-    '\0', // Null byte
+    '|', // Pipe
+    ';', // Command separator
+    '&', // Background/AND
+    '$', // Variable expansion
+    '`', // Command substitution
+    '(', // Subshell
+    ')', '{', // Brace expansion
+    '}', '<', // Redirection
+    '>', '\n', // Newline injection
+    '\r', '\0', // Null byte
 ];
 
 /// Result of a CLI command execution
@@ -164,18 +160,12 @@ impl PluginExecutor {
                 Err(anyhow::anyhow!("Failed to execute command: {}", e))
             }
             Err(_) => {
-                warn!(
-                    "Command timed out after {} seconds",
-                    config.timeout_seconds
-                );
+                warn!("Command timed out after {} seconds", config.timeout_seconds);
                 Ok(ExecutionResult {
                     success: false,
                     exit_code: None,
                     stdout: String::new(),
-                    stderr: format!(
-                        "Command timed out after {} seconds",
-                        config.timeout_seconds
-                    ),
+                    stderr: format!("Command timed out after {} seconds", config.timeout_seconds),
                     timed_out: true,
                 })
             }
@@ -197,8 +187,7 @@ impl PluginExecutor {
         params: &HashMap<String, String>,
     ) -> Result<ExecutionResult> {
         // Get the file command or fall back to docker whisper command
-        let command = chunking_config.file_command.as_deref()
-            .unwrap_or("sh");
+        let command = chunking_config.file_command.as_deref().unwrap_or("sh");
 
         // Verify command is in allowlist
         if !self.allowed_commands.contains(command) {
@@ -238,7 +227,8 @@ rm -rf "$TMPDIR" "$ERRFILE""#,
         let args: Vec<String> = default_args
             .iter()
             .map(|arg| {
-                let mut result = arg.replace("${file}", &file_str)
+                let mut result = arg
+                    .replace("${file}", &file_str)
                     .replace("${output_dir}", &output_str);
                 // Substitute user params (like ${language})
                 for (key, value) in params {
@@ -340,9 +330,8 @@ rm -rf "$TMPDIR" "$ERRFILE""#,
     ) -> Result<Vec<String>> {
         // Validate user-supplied params BEFORE substitution
         for (key, value) in params {
-            self.validate_argument(value).map_err(|e| {
-                anyhow::anyhow!("Invalid parameter '{}': {}", key, e)
-            })?;
+            self.validate_argument(value)
+                .map_err(|e| anyhow::anyhow!("Invalid parameter '{}': {}", key, e))?;
         }
 
         args.iter()
@@ -447,7 +436,9 @@ mod tests {
     fn test_validate_argument_safe() {
         let executor = create_test_executor();
         assert!(executor.validate_argument("safe-argument").is_ok());
-        assert!(executor.validate_argument("https://example.com/path?q=1").is_ok());
+        assert!(executor
+            .validate_argument("https://example.com/path?q=1")
+            .is_ok());
         assert!(executor.validate_argument("file.txt").is_ok());
     }
 
@@ -549,7 +540,10 @@ mod tests {
 
         let result = executor.substitute_params(&args, &params);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Invalid parameter"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid parameter"));
     }
 
     #[test]

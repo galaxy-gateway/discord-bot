@@ -21,8 +21,8 @@
 //! - 1.0.0: Initial release with DM and channel support, rich embeds
 
 use crate::database::Database;
-use crate::features::plugins::Plugin;
 use crate::features::get_bot_version;
+use crate::features::plugins::Plugin;
 use log::{info, warn};
 use serenity::builder::CreateEmbed;
 use serenity::http::Http;
@@ -281,7 +281,10 @@ impl StartupNotifier {
 
         // Send to owner DM (includes commit messages inline since DMs can't have threads)
         if let Some(oid) = owner_id {
-            if let Err(e) = self.send_to_owner(http, oid, embed.clone(), &notification_text).await {
+            if let Err(e) = self
+                .send_to_owner(http, oid, embed.clone(), &notification_text)
+                .await
+            {
                 warn!("Failed to send startup DM to owner {}: {}", oid, e);
             }
         }
@@ -381,7 +384,9 @@ impl StartupNotifier {
         let version = get_bot_version();
         let mut text = format!(
             "🟢 **{} is Online!**\n\nVersion: v{}\nConnected to {} guild(s)",
-            ready.user.name, version, ready.guilds.len()
+            ready.user.name,
+            version,
+            ready.guilds.len()
         );
 
         // Include updateMessage.txt content if it exists
@@ -404,7 +409,10 @@ impl StartupNotifier {
                 .iter()
                 .map(|p| format!("/{} v{}", p.command.name, p.version))
                 .collect();
-            text.push_str(&format!("\n\n**Enabled Plugins:** {}", plugin_list.join(", ")));
+            text.push_str(&format!(
+                "\n\n**Enabled Plugins:** {}",
+                plugin_list.join(", ")
+            ));
         }
 
         // Include recent commits summary
@@ -431,7 +439,13 @@ impl StartupNotifier {
     }
 
     /// Sends the embed to the bot owner via DM with inline commit details
-    async fn send_to_owner(&self, http: &Http, owner_id: u64, embed: CreateEmbed, notification_text: &str) -> anyhow::Result<()> {
+    async fn send_to_owner(
+        &self,
+        http: &Http,
+        owner_id: u64,
+        embed: CreateEmbed,
+        notification_text: &str,
+    ) -> anyhow::Result<()> {
         let user = UserId(owner_id);
         let dm = user.create_dm_channel(http).await?;
         dm.send_message(http, |m| m.set_embed(embed)).await?;
@@ -440,14 +454,21 @@ impl StartupNotifier {
         // Store the notification in conversation history so bot can reference it later
         let user_id_str = owner_id.to_string();
         let channel_id_str = dm.id.0.to_string();
-        if let Err(e) = self.database.store_message(
-            &user_id_str,
-            &channel_id_str,
-            "assistant",
-            notification_text,
-            None,
-        ).await {
-            warn!("Failed to store startup notification in conversation history: {}", e);
+        if let Err(e) = self
+            .database
+            .store_message(
+                &user_id_str,
+                &channel_id_str,
+                "assistant",
+                notification_text,
+                None,
+            )
+            .await
+        {
+            warn!(
+                "Failed to store startup notification in conversation history: {}",
+                e
+            );
         }
 
         // Get configurable commit count (default 5)
@@ -471,14 +492,21 @@ impl StartupNotifier {
                     info!("Sent detailed commit info to owner {} via DM", owner_id);
 
                     // Store commit details in conversation history
-                    if let Err(e) = self.database.store_message(
-                        &user_id_str,
-                        &channel_id_str,
-                        "assistant",
-                        &commit_text,
-                        None,
-                    ).await {
-                        warn!("Failed to store commit details in conversation history: {}", e);
+                    if let Err(e) = self
+                        .database
+                        .store_message(
+                            &user_id_str,
+                            &channel_id_str,
+                            "assistant",
+                            &commit_text,
+                            None,
+                        )
+                        .await
+                    {
+                        warn!(
+                            "Failed to store commit details in conversation history: {}",
+                            e
+                        );
                     }
                 }
             }
@@ -585,13 +613,24 @@ impl StartupNotifier {
                     );
 
                     // Post each commit as a separate message in the thread
-                    Self::post_detailed_commits_to_thread(http, ChannelId(thread.id.0), &commits, repo_url.as_deref())
-                        .await;
+                    Self::post_detailed_commits_to_thread(
+                        http,
+                        ChannelId(thread.id.0),
+                        &commits,
+                        repo_url.as_deref(),
+                    )
+                    .await;
                 }
                 Err(e) => {
                     warn!("Failed to create thread for commit details: {}", e);
                     // Fall back to posting in the channel directly
-                    Self::post_detailed_commits_to_channel(http, channel, &commits, repo_url.as_deref()).await;
+                    Self::post_detailed_commits_to_channel(
+                        http,
+                        channel,
+                        &commits,
+                        repo_url.as_deref(),
+                    )
+                    .await;
                 }
             }
         }
@@ -660,14 +699,18 @@ impl StartupNotifier {
             warn!("Failed to post commit details to channel: {}", e);
         }
     }
-
 }
 
 /// Adds items as multiple inline embed fields for column layout
 ///
 /// Splits items into the specified number of columns (max 3 for Discord inline).
 /// Each column gets a portion of the items, creating a multi-column appearance.
-fn add_multi_column_fields(embed: &mut CreateEmbed, title: &str, items: &[String], max_columns: usize) {
+fn add_multi_column_fields(
+    embed: &mut CreateEmbed,
+    title: &str,
+    items: &[String],
+    max_columns: usize,
+) {
     if items.is_empty() {
         return;
     }
@@ -814,7 +857,8 @@ mod tests {
             files: vec![],
         }];
 
-        let formatted = StartupNotifier::format_commits_for_dm(&commits, Some("https://github.com/user/repo"));
+        let formatted =
+            StartupNotifier::format_commits_for_dm(&commits, Some("https://github.com/user/repo"));
         assert!(formatted.contains("[`abc1234`](https://github.com/user/repo/commit/abc1234)"));
     }
 

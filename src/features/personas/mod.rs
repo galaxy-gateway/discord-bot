@@ -8,4 +8,4 @@
 
 pub mod manager;
 
-pub use manager::{PersonaManager, Persona};
+pub use manager::{Persona, PersonaManager};

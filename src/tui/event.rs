@@ -187,8 +187,12 @@ pub fn map_key_event(key: KeyEvent, in_edit_mode: bool) -> KeyAction {
             (KeyCode::End, _) | (KeyCode::Char('G'), KeyModifiers::SHIFT) => KeyAction::End,
 
             // Tab navigation (for Settings screen tabs)
-            (KeyCode::Left, KeyModifiers::NONE) | (KeyCode::Char('h'), KeyModifiers::NONE) => KeyAction::TabLeft,
-            (KeyCode::Right, KeyModifiers::NONE) | (KeyCode::Char('l'), KeyModifiers::NONE) => KeyAction::TabRight,
+            (KeyCode::Left, KeyModifiers::NONE) | (KeyCode::Char('h'), KeyModifiers::NONE) => {
+                KeyAction::TabLeft
+            }
+            (KeyCode::Right, KeyModifiers::NONE) | (KeyCode::Char('l'), KeyModifiers::NONE) => {
+                KeyAction::TabRight
+            }
             (KeyCode::Tab, KeyModifiers::NONE) => KeyAction::TabRight,
             (KeyCode::BackTab, _) => KeyAction::TabLeft,
 

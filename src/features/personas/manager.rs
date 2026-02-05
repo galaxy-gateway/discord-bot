@@ -65,29 +65,38 @@ impl PersonaManager {
             color: 0xFF6B35, // Warm orange - Muppet energy
         });
 
-        personas.insert("chef".to_string(), Persona {
-            name: "Chef".to_string(),
-            system_prompt: include_str!("../../../prompt/chef.md").to_string(),
-            description: "A passionate chef who shares recipes and cooking wisdom".to_string(),
-            portrait_url: None,
-            color: 0xE74C3C, // Culinary red
-        });
+        personas.insert(
+            "chef".to_string(),
+            Persona {
+                name: "Chef".to_string(),
+                system_prompt: include_str!("../../../prompt/chef.md").to_string(),
+                description: "A passionate chef who shares recipes and cooking wisdom".to_string(),
+                portrait_url: None,
+                color: 0xE74C3C, // Culinary red
+            },
+        );
 
-        personas.insert("teacher".to_string(), Persona {
-            name: "Teacher".to_string(),
-            system_prompt: include_str!("../../../prompt/teacher.md").to_string(),
-            description: "A patient teacher who explains things clearly".to_string(),
-            portrait_url: None,
-            color: 0x27AE60, // Educational green
-        });
+        personas.insert(
+            "teacher".to_string(),
+            Persona {
+                name: "Teacher".to_string(),
+                system_prompt: include_str!("../../../prompt/teacher.md").to_string(),
+                description: "A patient teacher who explains things clearly".to_string(),
+                portrait_url: None,
+                color: 0x27AE60, // Educational green
+            },
+        );
 
-        personas.insert("analyst".to_string(), Persona {
-            name: "Step-by-Step Analyst".to_string(),
-            system_prompt: include_str!("../../../prompt/analyst.md").to_string(),
-            description: "An analyst who breaks things down into clear steps".to_string(),
-            portrait_url: None,
-            color: 0x3498DB, // Professional blue
-        });
+        personas.insert(
+            "analyst".to_string(),
+            Persona {
+                name: "Step-by-Step Analyst".to_string(),
+                system_prompt: include_str!("../../../prompt/analyst.md").to_string(),
+                description: "An analyst who breaks things down into clear steps".to_string(),
+                portrait_url: None,
+                color: 0x3498DB, // Professional blue
+            },
+        );
 
         personas.insert("visionary".to_string(), Persona {
             name: "The Visionary".to_string(),
@@ -97,94 +106,145 @@ impl PersonaManager {
             color: 0x9B59B6, // Futuristic purple
         });
 
-        personas.insert("noir".to_string(), Persona {
-            name: "Noir Detective".to_string(),
-            system_prompt: include_str!("../../../prompt/noir.md").to_string(),
-            description: "A hard-boiled 1940s detective who treats every question like a case to crack".to_string(),
-            portrait_url: None,
-            color: 0x2C3E50, // Dark noir gray
-        });
+        personas.insert(
+            "noir".to_string(),
+            Persona {
+                name: "Noir Detective".to_string(),
+                system_prompt: include_str!("../../../prompt/noir.md").to_string(),
+                description:
+                    "A hard-boiled 1940s detective who treats every question like a case to crack"
+                        .to_string(),
+                portrait_url: None,
+                color: 0x2C3E50, // Dark noir gray
+            },
+        );
 
-        personas.insert("zen".to_string(), Persona {
-            name: "Zen Master".to_string(),
-            system_prompt: include_str!("../../../prompt/zen.md").to_string(),
-            description: "A contemplative sage who brings calm wisdom and mindful perspective".to_string(),
-            portrait_url: None,
-            color: 0x1ABC9C, // Peaceful teal
-        });
+        personas.insert(
+            "zen".to_string(),
+            Persona {
+                name: "Zen Master".to_string(),
+                system_prompt: include_str!("../../../prompt/zen.md").to_string(),
+                description: "A contemplative sage who brings calm wisdom and mindful perspective"
+                    .to_string(),
+                portrait_url: None,
+                color: 0x1ABC9C, // Peaceful teal
+            },
+        );
 
-        personas.insert("bard".to_string(), Persona {
-            name: "The Bard".to_string(),
-            system_prompt: include_str!("../../../prompt/bard.md").to_string(),
-            description: "A charismatic storyteller who weaves narrative magic into every conversation".to_string(),
-            portrait_url: None,
-            color: 0xF39C12, // Fantasy gold
-        });
+        personas.insert(
+            "bard".to_string(),
+            Persona {
+                name: "The Bard".to_string(),
+                system_prompt: include_str!("../../../prompt/bard.md").to_string(),
+                description:
+                    "A charismatic storyteller who weaves narrative magic into every conversation"
+                        .to_string(),
+                portrait_url: None,
+                color: 0xF39C12, // Fantasy gold
+            },
+        );
 
-        personas.insert("coach".to_string(), Persona {
-            name: "The Coach".to_string(),
-            system_prompt: include_str!("../../../prompt/coach.md").to_string(),
-            description: "A motivational coach who helps you get in the game and reach your potential".to_string(),
-            portrait_url: None,
-            color: 0xE67E22, // Energetic orange
-        });
+        personas.insert(
+            "coach".to_string(),
+            Persona {
+                name: "The Coach".to_string(),
+                system_prompt: include_str!("../../../prompt/coach.md").to_string(),
+                description:
+                    "A motivational coach who helps you get in the game and reach your potential"
+                        .to_string(),
+                portrait_url: None,
+                color: 0xE67E22, // Energetic orange
+            },
+        );
 
-        personas.insert("scientist".to_string(), Persona {
-            name: "The Scientist".to_string(),
-            system_prompt: include_str!("../../../prompt/scientist.md").to_string(),
-            description: "A curious researcher who loves explaining how things work".to_string(),
-            portrait_url: None,
-            color: 0x00CED1, // Scientific cyan
-        });
+        personas.insert(
+            "scientist".to_string(),
+            Persona {
+                name: "The Scientist".to_string(),
+                system_prompt: include_str!("../../../prompt/scientist.md").to_string(),
+                description: "A curious researcher who loves explaining how things work"
+                    .to_string(),
+                portrait_url: None,
+                color: 0x00CED1, // Scientific cyan
+            },
+        );
 
-        personas.insert("gamer".to_string(), Persona {
-            name: "The Gamer".to_string(),
-            system_prompt: include_str!("../../../prompt/gamer.md").to_string(),
-            description: "A friendly gamer who speaks the language of gaming culture".to_string(),
-            portrait_url: None,
-            color: 0x9146FF, // Twitch purple
-        });
+        personas.insert(
+            "gamer".to_string(),
+            Persona {
+                name: "The Gamer".to_string(),
+                system_prompt: include_str!("../../../prompt/gamer.md").to_string(),
+                description: "A friendly gamer who speaks the language of gaming culture"
+                    .to_string(),
+                portrait_url: None,
+                color: 0x9146FF, // Twitch purple
+            },
+        );
 
         // Software Development & Design Personas
-        personas.insert("architect".to_string(), Persona {
-            name: "The Architect".to_string(),
-            system_prompt: include_str!("../../../prompt/architect.md").to_string(),
-            description: "A systems thinker who designs for scale, trade-offs, and the long game".to_string(),
-            portrait_url: None,
-            color: 0x34495E, // Blueprint slate
-        });
+        personas.insert(
+            "architect".to_string(),
+            Persona {
+                name: "The Architect".to_string(),
+                system_prompt: include_str!("../../../prompt/architect.md").to_string(),
+                description:
+                    "A systems thinker who designs for scale, trade-offs, and the long game"
+                        .to_string(),
+                portrait_url: None,
+                color: 0x34495E, // Blueprint slate
+            },
+        );
 
-        personas.insert("debugger".to_string(), Persona {
-            name: "The Debugger".to_string(),
-            system_prompt: include_str!("../../../prompt/debugger.md").to_string(),
-            description: "A tenacious bug hunter who tracks down root causes with methodical precision".to_string(),
-            portrait_url: None,
-            color: 0xC0392B, // Error red
-        });
+        personas.insert(
+            "debugger".to_string(),
+            Persona {
+                name: "The Debugger".to_string(),
+                system_prompt: include_str!("../../../prompt/debugger.md").to_string(),
+                description:
+                    "A tenacious bug hunter who tracks down root causes with methodical precision"
+                        .to_string(),
+                portrait_url: None,
+                color: 0xC0392B, // Error red
+            },
+        );
 
-        personas.insert("reviewer".to_string(), Persona {
-            name: "The Reviewer".to_string(),
-            system_prompt: include_str!("../../../prompt/reviewer.md").to_string(),
-            description: "A thoughtful code reviewer who makes code better and helps developers grow".to_string(),
-            portrait_url: None,
-            color: 0x27AE60, // Approval green
-        });
+        personas.insert(
+            "reviewer".to_string(),
+            Persona {
+                name: "The Reviewer".to_string(),
+                system_prompt: include_str!("../../../prompt/reviewer.md").to_string(),
+                description:
+                    "A thoughtful code reviewer who makes code better and helps developers grow"
+                        .to_string(),
+                portrait_url: None,
+                color: 0x27AE60, // Approval green
+            },
+        );
 
-        personas.insert("devops".to_string(), Persona {
-            name: "The DevOps".to_string(),
-            system_prompt: include_str!("../../../prompt/devops.md").to_string(),
-            description: "An automation expert who makes deployments boring and systems observable".to_string(),
-            portrait_url: None,
-            color: 0x2980B9, // Pipeline blue
-        });
+        personas.insert(
+            "devops".to_string(),
+            Persona {
+                name: "The DevOps".to_string(),
+                system_prompt: include_str!("../../../prompt/devops.md").to_string(),
+                description:
+                    "An automation expert who makes deployments boring and systems observable"
+                        .to_string(),
+                portrait_url: None,
+                color: 0x2980B9, // Pipeline blue
+            },
+        );
 
-        personas.insert("designer".to_string(), Persona {
-            name: "The Designer".to_string(),
-            system_prompt: include_str!("../../../prompt/designer.md").to_string(),
-            description: "A UX advocate who designs with empathy, clarity, and accessibility".to_string(),
-            portrait_url: None,
-            color: 0xE91E63, // Creative pink
-        });
+        personas.insert(
+            "designer".to_string(),
+            Persona {
+                name: "The Designer".to_string(),
+                system_prompt: include_str!("../../../prompt/designer.md").to_string(),
+                description: "A UX advocate who designs with empathy, clarity, and accessibility"
+                    .to_string(),
+                portrait_url: None,
+                color: 0xE91E63, // Creative pink
+            },
+        );
 
         PersonaManager { personas }
     }
@@ -239,8 +299,14 @@ impl PersonaManager {
     }
 
     /// Get system prompt with verbosity level applied
-    pub fn get_system_prompt_with_verbosity(&self, persona_name: &str, modifier: Option<&str>, verbosity: &str) -> String {
-        let base_prompt = self.personas
+    pub fn get_system_prompt_with_verbosity(
+        &self,
+        persona_name: &str,
+        modifier: Option<&str>,
+        verbosity: &str,
+    ) -> String {
+        let base_prompt = self
+            .personas
             .get(persona_name)
             .map(|p| p.system_prompt.clone())
             .unwrap_or_else(|| "You are a helpful assistant.".to_string());
@@ -305,19 +371,19 @@ mod tests {
     #[test]
     fn test_get_system_prompt_with_modifiers() {
         let manager = PersonaManager::new();
-        
+
         let base_prompt = manager.get_system_prompt("muppet", None);
         assert!(base_prompt.contains("warm, enthusiastic friend"));
-        
+
         let explain_prompt = manager.get_system_prompt("muppet", Some("explain"));
         assert!(explain_prompt.contains("clear explanations"));
-        
+
         let simple_prompt = manager.get_system_prompt("muppet", Some("simple"));
         assert!(simple_prompt.contains("analogies"));
-        
+
         let steps_prompt = manager.get_system_prompt("muppet", Some("steps"));
         assert!(steps_prompt.contains("actionable steps"));
-        
+
         let recipe_prompt = manager.get_system_prompt("muppet", Some("recipe"));
         assert!(recipe_prompt.contains("recipe"));
     }
@@ -354,20 +420,27 @@ mod tests {
     #[test]
     fn test_obi_wan_prompt_loaded() {
         let manager = PersonaManager::new();
-        let obi = manager.get_persona("obi").expect("obi persona should exist");
+        let obi = manager
+            .get_persona("obi")
+            .expect("obi persona should exist");
 
         // Verify the prompt contains Obi-Wan specific phrases
         assert!(obi.system_prompt.contains("Obi-Wan Kenobi"));
         assert!(obi.system_prompt.contains("certain point of view"));
         assert!(obi.system_prompt.contains("Philosophical"));
         assert!(obi.system_prompt.contains("Diplomatic Restraint"));
-        assert!(obi.system_prompt.len() > 100, "Prompt should be substantial");
+        assert!(
+            obi.system_prompt.len() > 100,
+            "Prompt should be substantial"
+        );
     }
 
     #[test]
     fn test_visionary_prompt_loaded() {
         let manager = PersonaManager::new();
-        let visionary = manager.get_persona("visionary").expect("visionary persona should exist");
+        let visionary = manager
+            .get_persona("visionary")
+            .expect("visionary persona should exist");
 
         // Verify the prompt contains Visionary specific phrases
         assert!(visionary.system_prompt.contains("The Visionary"));
@@ -375,63 +448,99 @@ mod tests {
         assert!(visionary.system_prompt.contains("Future-Focused"));
         assert!(visionary.system_prompt.contains("Transformation Energy"));
         assert!(visionary.system_prompt.contains("Hardcore Intensity"));
-        assert!(visionary.system_prompt.len() > 100, "Prompt should be substantial");
+        assert!(
+            visionary.system_prompt.len() > 100,
+            "Prompt should be substantial"
+        );
     }
 
     #[test]
     fn test_architect_prompt_loaded() {
         let manager = PersonaManager::new();
-        let architect = manager.get_persona("architect").expect("architect persona should exist");
+        let architect = manager
+            .get_persona("architect")
+            .expect("architect persona should exist");
 
         assert!(architect.system_prompt.contains("The Architect"));
         assert!(architect.system_prompt.contains("Systems Thinker"));
         assert!(architect.system_prompt.contains("trade-offs"));
-        assert!(architect.system_prompt.contains("scalability") || architect.system_prompt.contains("scale"));
-        assert!(architect.system_prompt.len() > 100, "Prompt should be substantial");
+        assert!(
+            architect.system_prompt.contains("scalability")
+                || architect.system_prompt.contains("scale")
+        );
+        assert!(
+            architect.system_prompt.len() > 100,
+            "Prompt should be substantial"
+        );
     }
 
     #[test]
     fn test_debugger_prompt_loaded() {
         let manager = PersonaManager::new();
-        let debugger = manager.get_persona("debugger").expect("debugger persona should exist");
+        let debugger = manager
+            .get_persona("debugger")
+            .expect("debugger persona should exist");
 
         assert!(debugger.system_prompt.contains("The Debugger"));
         assert!(debugger.system_prompt.contains("root cause"));
         assert!(debugger.system_prompt.contains("Evidence-Driven"));
-        assert!(debugger.system_prompt.len() > 100, "Prompt should be substantial");
+        assert!(
+            debugger.system_prompt.len() > 100,
+            "Prompt should be substantial"
+        );
     }
 
     #[test]
     fn test_reviewer_prompt_loaded() {
         let manager = PersonaManager::new();
-        let reviewer = manager.get_persona("reviewer").expect("reviewer persona should exist");
+        let reviewer = manager
+            .get_persona("reviewer")
+            .expect("reviewer persona should exist");
 
         assert!(reviewer.system_prompt.contains("The Reviewer"));
         assert!(reviewer.system_prompt.contains("code review"));
         assert!(reviewer.system_prompt.contains("Constructively Critical"));
-        assert!(reviewer.system_prompt.len() > 100, "Prompt should be substantial");
+        assert!(
+            reviewer.system_prompt.len() > 100,
+            "Prompt should be substantial"
+        );
     }
 
     #[test]
     fn test_devops_prompt_loaded() {
         let manager = PersonaManager::new();
-        let devops = manager.get_persona("devops").expect("devops persona should exist");
+        let devops = manager
+            .get_persona("devops")
+            .expect("devops persona should exist");
 
         assert!(devops.system_prompt.contains("The DevOps"));
         assert!(devops.system_prompt.contains("Automation"));
-        assert!(devops.system_prompt.contains("CI/CD") || devops.system_prompt.contains("pipeline"));
-        assert!(devops.system_prompt.len() > 100, "Prompt should be substantial");
+        assert!(
+            devops.system_prompt.contains("CI/CD") || devops.system_prompt.contains("pipeline")
+        );
+        assert!(
+            devops.system_prompt.len() > 100,
+            "Prompt should be substantial"
+        );
     }
 
     #[test]
     fn test_designer_prompt_loaded() {
         let manager = PersonaManager::new();
-        let designer = manager.get_persona("designer").expect("designer persona should exist");
+        let designer = manager
+            .get_persona("designer")
+            .expect("designer persona should exist");
 
         assert!(designer.system_prompt.contains("The Designer"));
-        assert!(designer.system_prompt.contains("UX") || designer.system_prompt.contains("user experience"));
+        assert!(
+            designer.system_prompt.contains("UX")
+                || designer.system_prompt.contains("user experience")
+        );
         assert!(designer.system_prompt.contains("Accessibility"));
-        assert!(designer.system_prompt.len() > 100, "Prompt should be substantial");
+        assert!(
+            designer.system_prompt.len() > 100,
+            "Prompt should be substantial"
+        );
     }
 
     #[test]
@@ -495,7 +604,10 @@ mod tests {
 
     #[test]
     fn test_get_portrait_url_trailing_slash() {
-        env::set_var("PERSONA_PORTRAIT_BASE_URL", "https://example.com/portraits/");
+        env::set_var(
+            "PERSONA_PORTRAIT_BASE_URL",
+            "https://example.com/portraits/",
+        );
 
         let manager = PersonaManager::new();
         let url = manager.get_portrait_url("muppet");
@@ -518,7 +630,10 @@ mod tests {
         let p = persona.unwrap();
         assert_eq!(p.name, "Chef");
         assert!(p.portrait_url.is_some());
-        assert_eq!(p.portrait_url.unwrap(), "https://cdn.example.com/img/chef.png");
+        assert_eq!(
+            p.portrait_url.unwrap(),
+            "https://cdn.example.com/img/chef.png"
+        );
 
         env::remove_var("PERSONA_PORTRAIT_BASE_URL");
     }

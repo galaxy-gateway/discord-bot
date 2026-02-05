@@ -8,4 +8,4 @@
 
 pub mod generator;
 
-pub use generator::{ImageGenerator, ImageSize, ImageStyle, GeneratedImage};
+pub use generator::{GeneratedImage, ImageGenerator, ImageSize, ImageStyle};

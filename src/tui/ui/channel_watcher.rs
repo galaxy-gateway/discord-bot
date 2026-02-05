@@ -14,9 +14,9 @@
 //! - 1.1.0: Add guild names to watched channel list, add browse mode for guild/channel selection
 //! - 1.0.0: Initial release with channel watching and message display
 
-use crate::tui::App;
 use crate::tui::app::InputMode;
 use crate::tui::ui::titled_block;
+use crate::tui::App;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
 
@@ -25,8 +25,8 @@ pub fn render_channels(frame: &mut Frame, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),   // Help bar
-            Constraint::Min(0),      // Main content
+            Constraint::Length(3), // Help bar
+            Constraint::Min(0),    // Main content
         ])
         .split(area);
 
@@ -42,8 +42,8 @@ pub fn render_channels(frame: &mut Frame, app: &App, area: Rect) {
     let main_chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Length(36),  // Channel list (wider for guild names)
-            Constraint::Min(0),      // Messages
+            Constraint::Length(36), // Channel list (wider for guild names)
+            Constraint::Min(0),     // Messages
         ])
         .split(chunks[1]);
 
@@ -111,7 +111,9 @@ fn render_channel_list(frame: &mut Frame, app: &App, area: Rect) {
     let scroll = app.channel_list_scroll();
 
     // Build list items from visible items (respecting scroll)
-    let items: Vec<ListItem> = visible_items.iter().enumerate()
+    let items: Vec<ListItem> = visible_items
+        .iter()
+        .enumerate()
         .skip(scroll)
         .take(visible_height)
         .map(|(i, &(is_header, guild_id, channel_id))| {
@@ -123,19 +125,27 @@ fn render_channel_list(frame: &mut Frame, app: &App, area: Rect) {
                 let collapse_icon = if is_collapsed { "▶" } else { "▼" };
 
                 // Find guild name and channel count
-                let (guild_name, channel_count) = groups.iter()
+                let (guild_name, channel_count) = groups
+                    .iter()
                     .find(|(gid, _, _)| *gid == guild_id)
                     .map(|(_, name, channels)| (name.clone(), channels.len()))
                     .unwrap_or_else(|| ("Unknown".to_string(), 0));
 
                 let style = if is_cursor {
-                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD)
                 } else {
-                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD)
                 };
 
                 let prefix = if is_cursor { ">" } else { " " };
-                let display = format!("{}[{}] {} ({} ch)", prefix, collapse_icon, guild_name, channel_count);
+                let display = format!(
+                    "{}[{}] {} ({} ch)",
+                    prefix, collapse_icon, guild_name, channel_count
+                );
                 ListItem::new(display).style(style)
             } else {
                 // Render channel
@@ -144,42 +154,68 @@ fn render_channel_list(frame: &mut Frame, app: &App, area: Rect) {
                 // Get message count from current buffer
                 let buffer_count = app.channel_state.message_count(channel_id);
                 // Get DB history count if available
-                let db_count = app.db_channel_history.get(&channel_id).map(|s| s.message_count as usize);
-                let display_count = db_count.map(|d| d.max(buffer_count)).unwrap_or(buffer_count);
+                let db_count = app
+                    .db_channel_history
+                    .get(&channel_id)
+                    .map(|s| s.message_count as usize);
+                let display_count = db_count
+                    .map(|d| d.max(buffer_count))
+                    .unwrap_or(buffer_count);
 
                 // Get channel name - prefer db_channel_history first (authoritative)
-                let channel_name = app.db_channel_history.get(&channel_id)
+                let channel_name = app
+                    .db_channel_history
+                    .get(&channel_id)
                     .and_then(|s| s.channel_name.clone())
                     .or_else(|| {
-                        app.channel_state.get_metadata(channel_id).map(|m| m.name.clone())
+                        app.channel_state
+                            .get_metadata(channel_id)
+                            .map(|m| m.name.clone())
                     })
                     .or_else(|| {
-                        app.guilds.iter()
-                            .find_map(|g| g.channels.iter().find(|c| c.id == channel_id).map(|c| c.name.clone()))
+                        app.guilds.iter().find_map(|g| {
+                            g.channels
+                                .iter()
+                                .find(|c| c.id == channel_id)
+                                .map(|c| c.name.clone())
+                        })
                     })
                     .unwrap_or_else(|| format!("{}", channel_id));
 
                 let style = if is_viewing {
-                    Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD)
                 } else if is_cursor {
-                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default().fg(Color::White)
                 };
 
                 let prefix = if is_viewing || is_cursor { " >" } else { "  " };
                 let status = if is_viewing { " [viewing]" } else { "" };
-                let display = format!("{}  #{} ({}){}", prefix, channel_name, display_count, status);
+                let display = format!(
+                    "{}  #{} ({}){}",
+                    prefix, channel_name, display_count, status
+                );
                 ListItem::new(display).style(style)
             }
-        }).collect();
+        })
+        .collect();
 
     // Count total watched channels
     let total_channels: usize = groups.iter().map(|(_, _, channels)| channels.len()).sum();
 
     // Show scroll position in title if scrolled or list is larger than visible
     let title = if scroll > 0 || total_items > visible_height {
-        format!("Channels [{}-{}/{}]", scroll + 1, (scroll + visible_height).min(total_items), total_channels)
+        format!(
+            "Channels [{}-{}/{}]",
+            scroll + 1,
+            (scroll + visible_height).min(total_items),
+            total_channels
+        )
     } else {
         format!("Channels ({})", total_channels)
     };
@@ -206,7 +242,10 @@ fn render_channel_list(frame: &mut Frame, app: &App, area: Rect) {
         .style(Style::default().fg(Color::DarkGray))
         .alignment(Alignment::Center);
 
-        let inner = area.inner(Margin { vertical: 2, horizontal: 1 });
+        let inner = area.inner(Margin {
+            vertical: 2,
+            horizontal: 1,
+        });
         frame.render_widget(hint, inner);
     }
 }
@@ -217,8 +256,8 @@ fn render_message_area(frame: &mut Frame, app: &App, area: Rect) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Min(0),      // Messages
-                Constraint::Length(3),   // Input
+                Constraint::Min(0),    // Messages
+                Constraint::Length(3), // Input
             ])
             .split(area);
 
@@ -272,7 +311,8 @@ fn render_messages(frame: &mut Frame, app: &App, area: Rect) {
         let scroll = app.channel_state.scroll_offset();
         let total = messages.len();
 
-        let items: Vec<ListItem> = messages.iter()
+        let items: Vec<ListItem> = messages
+            .iter()
             .skip(scroll)
             .take(visible_height)
             .map(|msg| {
@@ -295,7 +335,10 @@ fn render_messages(frame: &mut Frame, app: &App, area: Rect) {
                     // Single line - render normally
                     let content = wrapped_lines.into_iter().next().unwrap_or_default();
                     let line = Line::from(vec![
-                        Span::styled(format!("[{}] ", timestamp), Style::default().fg(Color::DarkGray)),
+                        Span::styled(
+                            format!("[{}] ", timestamp),
+                            Style::default().fg(Color::DarkGray),
+                        ),
                         Span::styled(&msg.author_name, author_style),
                         Span::raw(": "),
                         Span::raw(content),
@@ -307,7 +350,10 @@ fn render_messages(frame: &mut Frame, app: &App, area: Rect) {
 
                     // First line with timestamp and author
                     lines.push(Line::from(vec![
-                        Span::styled(format!("[{}] ", timestamp), Style::default().fg(Color::DarkGray)),
+                        Span::styled(
+                            format!("[{}] ", timestamp),
+                            Style::default().fg(Color::DarkGray),
+                        ),
                         Span::styled(&msg.author_name, author_style),
                         Span::raw(": "),
                         Span::raw(wrapped_lines[0].clone()),
@@ -321,11 +367,18 @@ fn render_messages(frame: &mut Frame, app: &App, area: Rect) {
 
                     ListItem::new(lines)
                 }
-            }).collect();
+            })
+            .collect();
 
         // Show scroll position in title if scrolled
         let final_title = if scroll > 0 || total > visible_height {
-            format!("{} [{}-{}/{}]", title, scroll + 1, (scroll + visible_height).min(total), total)
+            format!(
+                "{} [{}-{}/{}]",
+                title,
+                scroll + 1,
+                (scroll + visible_height).min(total),
+                total
+            )
         } else {
             title.clone()
         };
@@ -339,7 +392,10 @@ fn render_messages(frame: &mut Frame, app: &App, area: Rect) {
         // No channel selected - show instructions
         let hint = Paragraph::new(vec![
             Line::from(""),
-            Line::from(Span::styled("No channel selected", Style::default().add_modifier(Modifier::BOLD))),
+            Line::from(Span::styled(
+                "No channel selected",
+                Style::default().add_modifier(Modifier::BOLD),
+            )),
             Line::from(""),
             Line::from("Use j/k to navigate the channel list"),
             Line::from("Press Enter to view a channel"),
@@ -358,12 +414,14 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
     use crate::tui::app::InputPurpose;
 
     let (title, style) = match app.input_purpose {
-        InputPurpose::SendMessage => {
-            (" Message (Enter to send, Esc to cancel) ", Style::default().fg(Color::Cyan))
-        }
-        InputPurpose::AddChannel => {
-            (" Channel ID (Enter to watch, Esc to cancel) ", Style::default().fg(Color::Yellow))
-        }
+        InputPurpose::SendMessage => (
+            " Message (Enter to send, Esc to cancel) ",
+            Style::default().fg(Color::Cyan),
+        ),
+        InputPurpose::AddChannel => (
+            " Channel ID (Enter to watch, Esc to cancel) ",
+            Style::default().fg(Color::Yellow),
+        ),
     };
 
     let input = Paragraph::new(app.input_buffer.as_str())
@@ -390,8 +448,8 @@ fn render_browse_mode(frame: &mut Frame, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Percentage(40),  // Guild list
-            Constraint::Percentage(60),  // Channel list
+            Constraint::Percentage(40), // Guild list
+            Constraint::Percentage(60), // Channel list
         ])
         .split(area);
 
@@ -403,45 +461,67 @@ fn render_browse_mode(frame: &mut Frame, app: &App, area: Rect) {
     };
 
     // Count channels with history per guild
-    let mut history_count_by_guild: std::collections::HashMap<u64, usize> = std::collections::HashMap::new();
+    let mut history_count_by_guild: std::collections::HashMap<u64, usize> =
+        std::collections::HashMap::new();
     for summary in app.db_channel_history.values() {
         if let Some(gid) = summary.guild_id {
             *history_count_by_guild.entry(gid).or_default() += 1;
         }
     }
 
-    let guild_items: Vec<ListItem> = app.guilds.iter().enumerate().map(|(i, guild)| {
-        let is_selected = i == app.browse_guild_index;
-        let channel_count = guild.channels.iter()
-            .filter(|c| matches!(c.channel_type, ChannelType::Text | ChannelType::News | ChannelType::Thread | ChannelType::Forum))
-            .count();
+    let guild_items: Vec<ListItem> = app
+        .guilds
+        .iter()
+        .enumerate()
+        .map(|(i, guild)| {
+            let is_selected = i == app.browse_guild_index;
+            let channel_count = guild
+                .channels
+                .iter()
+                .filter(|c| {
+                    matches!(
+                        c.channel_type,
+                        ChannelType::Text
+                            | ChannelType::News
+                            | ChannelType::Thread
+                            | ChannelType::Forum
+                    )
+                })
+                .count();
 
-        let history_count = history_count_by_guild.get(&guild.id).copied().unwrap_or(0);
+            let history_count = history_count_by_guild.get(&guild.id).copied().unwrap_or(0);
 
-        let style = if is_selected && !app.browse_channel_pane_active {
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-        } else if is_selected {
-            Style::default().fg(Color::Green)
-        } else {
-            Style::default().fg(Color::White)
-        };
+            let style = if is_selected && !app.browse_channel_pane_active {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else if is_selected {
+                Style::default().fg(Color::Green)
+            } else {
+                Style::default().fg(Color::White)
+            };
 
-        let prefix = if is_selected { "> " } else { "  " };
-        // Show channel count and history count if different
-        let display = if history_count > 0 {
-            format!("{}{} ({} ch, {} w/hist)", prefix, guild.name, channel_count, history_count)
-        } else {
-            format!("{}{} ({} ch)", prefix, guild.name, channel_count)
-        };
-        ListItem::new(display).style(style)
-    }).collect();
+            let prefix = if is_selected { "> " } else { "  " };
+            // Show channel count and history count if different
+            let display = if history_count > 0 {
+                format!(
+                    "{}{} ({} ch, {} w/hist)",
+                    prefix, guild.name, channel_count, history_count
+                )
+            } else {
+                format!("{}{} ({} ch)", prefix, guild.name, channel_count)
+            };
+            ListItem::new(display).style(style)
+        })
+        .collect();
 
     let guild_title = format!(" Guilds ({}) ", app.guilds.len());
-    let guild_list = List::new(guild_items)
-        .block(Block::default()
+    let guild_list = List::new(guild_items).block(
+        Block::default()
             .borders(Borders::ALL)
             .title(guild_title)
-            .border_style(guild_border_style));
+            .border_style(guild_border_style),
+    );
 
     frame.render_widget(guild_list, chunks[0]);
 
@@ -472,30 +552,39 @@ fn render_browse_mode(frame: &mut Frame, app: &App, area: Rect) {
         is_watched: bool,
     }
 
-    let mut merged_channels: Vec<MergedChannel> = discord_channels.iter().map(|channel| {
-        let msg_count = app.db_channel_history.get(&channel.id).map(|s| s.message_count);
-        let icon = match channel.channel_type {
-            ChannelType::Text => "#",
-            ChannelType::News => "!",
-            ChannelType::Thread => "@",
-            ChannelType::Forum => "F",
-            _ => "#",
-        };
-        MergedChannel {
-            id: channel.id,
-            name: channel.name.clone(),
-            channel_type_icon: icon,
-            message_count: msg_count,
-            is_watched: watched.contains(&channel.id),
-        }
-    }).collect();
+    let mut merged_channels: Vec<MergedChannel> = discord_channels
+        .iter()
+        .map(|channel| {
+            let msg_count = app
+                .db_channel_history
+                .get(&channel.id)
+                .map(|s| s.message_count);
+            let icon = match channel.channel_type {
+                ChannelType::Text => "#",
+                ChannelType::News => "!",
+                ChannelType::Thread => "@",
+                ChannelType::Forum => "F",
+                _ => "#",
+            };
+            MergedChannel {
+                id: channel.id,
+                name: channel.name.clone(),
+                channel_type_icon: icon,
+                message_count: msg_count,
+                is_watched: watched.contains(&channel.id),
+            }
+        })
+        .collect();
 
     // Add DB-only channels (channels with history but not in Discord cache for this guild)
     if let Some(guild_id) = selected_guild_id {
         for (channel_id, summary) in &app.db_channel_history {
             if summary.guild_id == Some(guild_id) && !discord_channel_ids.contains(channel_id) {
                 // Channel exists in DB but not in Discord cache (maybe deleted or hidden)
-                let name = summary.channel_name.clone().unwrap_or_else(|| format!("{}", channel_id));
+                let name = summary
+                    .channel_name
+                    .clone()
+                    .unwrap_or_else(|| format!("{}", channel_id));
                 merged_channels.push(MergedChannel {
                     id: *channel_id,
                     name,
@@ -517,47 +606,57 @@ fn render_browse_mode(frame: &mut Frame, app: &App, area: Rect) {
         }
     });
 
-    let channel_items: Vec<ListItem> = merged_channels.iter().enumerate().map(|(i, channel)| {
-        let is_selected = i == app.browse_channel_index && app.browse_channel_pane_active;
+    let channel_items: Vec<ListItem> = merged_channels
+        .iter()
+        .enumerate()
+        .map(|(i, channel)| {
+            let is_selected = i == app.browse_channel_index && app.browse_channel_pane_active;
 
-        let style = if is_selected {
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-        } else if channel.is_watched {
-            Style::default().fg(Color::Green)
-        } else if channel.message_count.is_some() {
-            Style::default().fg(Color::Cyan) // Has history
-        } else {
-            Style::default().fg(Color::White)
-        };
+            let style = if is_selected {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else if channel.is_watched {
+                Style::default().fg(Color::Green)
+            } else if channel.message_count.is_some() {
+                Style::default().fg(Color::Cyan) // Has history
+            } else {
+                Style::default().fg(Color::White)
+            };
 
-        let prefix = if is_selected { "> " } else { "  " };
-        let watched_marker = if channel.is_watched { " [watching]" } else { "" };
+            let prefix = if is_selected { "> " } else { "  " };
+            let watched_marker = if channel.is_watched {
+                " [watching]"
+            } else {
+                ""
+            };
 
-        // Show message count for channels with history
-        let count_str = match channel.message_count {
-            Some(count) if count > 0 => format!(" [{} msgs]", count),
-            Some(_) => String::new(), // 0 messages
-            None => " [new]".to_string(),
-        };
+            // Show message count for channels with history
+            let count_str = match channel.message_count {
+                Some(count) if count > 0 => format!(" [{} msgs]", count),
+                Some(_) => String::new(), // 0 messages
+                None => " [new]".to_string(),
+            };
 
-        ListItem::new(format!("{}{}{}{}{}",
-            prefix,
-            channel.channel_type_icon,
-            channel.name,
-            count_str,
-            watched_marker
-        )).style(style)
-    }).collect();
+            ListItem::new(format!(
+                "{}{}{}{}{}",
+                prefix, channel.channel_type_icon, channel.name, count_str, watched_marker
+            ))
+            .style(style)
+        })
+        .collect();
 
-    let guild_name = app.browse_selected_guild()
+    let guild_name = app
+        .browse_selected_guild()
         .map(|g| g.name.as_str())
         .unwrap_or("No guild");
     let channel_title = format!(" {} - Channels ({}) ", guild_name, merged_channels.len());
-    let channel_list = List::new(channel_items)
-        .block(Block::default()
+    let channel_list = List::new(channel_items).block(
+        Block::default()
             .borders(Borders::ALL)
             .title(channel_title)
-            .border_style(channel_border_style));
+            .border_style(channel_border_style),
+    );
 
     frame.render_widget(channel_list, chunks[1]);
 
@@ -574,7 +673,10 @@ fn render_browse_mode(frame: &mut Frame, app: &App, area: Rect) {
         .style(Style::default().fg(Color::DarkGray))
         .alignment(Alignment::Center);
 
-        let inner = chunks[0].inner(Margin { vertical: 2, horizontal: 1 });
+        let inner = chunks[0].inner(Margin {
+            vertical: 2,
+            horizontal: 1,
+        });
         frame.render_widget(hint, inner);
     }
 
@@ -589,7 +691,10 @@ fn render_browse_mode(frame: &mut Frame, app: &App, area: Rect) {
         .style(Style::default().fg(Color::DarkGray))
         .alignment(Alignment::Center);
 
-        let inner = chunks[1].inner(Margin { vertical: 2, horizontal: 1 });
+        let inner = chunks[1].inner(Margin {
+            vertical: 2,
+            horizontal: 1,
+        });
         frame.render_widget(hint, inner);
     }
 }
@@ -616,7 +721,11 @@ fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
                     let take: String = remaining.chars().take(max_width).collect();
                     let taken_len = take.chars().count();
                     lines.push(take);
-                    remaining = &remaining[remaining.char_indices().nth(taken_len).map(|(i, _)| i).unwrap_or(remaining.len())..];
+                    remaining = &remaining[remaining
+                        .char_indices()
+                        .nth(taken_len)
+                        .map(|(i, _)| i)
+                        .unwrap_or(remaining.len())..];
                 }
             } else {
                 current_line = word.to_string();
@@ -640,7 +749,11 @@ fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
                     let taken_len = take.chars().count();
                     if remaining.chars().count() > max_width {
                         lines.push(take);
-                        remaining = &remaining[remaining.char_indices().nth(taken_len).map(|(i, _)| i).unwrap_or(remaining.len())..];
+                        remaining = &remaining[remaining
+                            .char_indices()
+                            .nth(taken_len)
+                            .map(|(i, _)| i)
+                            .unwrap_or(remaining.len())..];
                     } else {
                         current_line = take;
                         current_width = taken_len;

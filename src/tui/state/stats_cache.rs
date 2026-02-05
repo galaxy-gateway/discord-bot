@@ -2,8 +2,8 @@
 //!
 //! Cached statistics from the database.
 
-use std::time::Instant;
 use crate::ipc::TopUser;
+use std::time::Instant;
 
 /// Cached usage statistics
 #[derive(Debug, Clone, Default)]
@@ -190,7 +190,9 @@ impl StatsCache {
 
     /// Get CPU history as sparkline data (values only)
     pub fn cpu_sparkline_data(&self) -> Vec<u64> {
-        self.historical.cpu_history.iter()
+        self.historical
+            .cpu_history
+            .iter()
             .map(|(_, v)| *v as u64)
             .collect()
     }
@@ -199,11 +201,15 @@ impl StatsCache {
     pub fn memory_sparkline_data(&self) -> Vec<u64> {
         let total = self.system.memory_total as f64;
         if total > 0.0 {
-            self.historical.memory_history.iter()
+            self.historical
+                .memory_history
+                .iter()
                 .map(|(_, v)| ((v / total) * 100.0) as u64)
                 .collect()
         } else {
-            self.historical.memory_history.iter()
+            self.historical
+                .memory_history
+                .iter()
                 .map(|(_, v)| *v as u64)
                 .collect()
         }
@@ -212,7 +218,9 @@ impl StatsCache {
     /// Get cost history as sparkline data
     pub fn cost_sparkline_data(&self) -> Vec<u64> {
         // Scale costs to visible range (multiply by 10000 for small values)
-        self.usage.daily_breakdown.iter()
+        self.usage
+            .daily_breakdown
+            .iter()
             .map(|(_, cost)| (cost * 10000.0) as u64)
             .collect()
     }

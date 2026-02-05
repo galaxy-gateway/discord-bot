@@ -99,7 +99,10 @@ impl ErrorsState {
         for err in &self.errors {
             *counts.entry(&err.error_type).or_insert(0) += 1;
         }
-        let mut result: Vec<_> = counts.into_iter().map(|(k, v)| (k.to_string(), v)).collect();
+        let mut result: Vec<_> = counts
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect();
         result.sort_by(|a, b| b.1.cmp(&a.1));
         result
     }
