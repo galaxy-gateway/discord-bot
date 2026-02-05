@@ -5665,99 +5665,146 @@ Use the buttons below for more help or to try custom prompts!"#;
 
             (channel_id, Some(thread_history), Some((prev_p1, prev_p2)))
         } else {
-            // Check if the current channel is a thread (by trying to get channel info)
-            // For now, we'll always create a new thread if there's no existing debate
-            info!(
-                "[{request_id}] Starting debate: {} vs {} on '{}' ({} rounds)",
-                persona1_name, persona2_name, topic, rounds
-            );
-
-            // Send initial response message (we'll create a thread from this)
-            command
-                .create_interaction_response(&ctx.http, |r| {
-                    r.kind(serenity::model::application::interaction::InteractionResponseType::ChannelMessageWithSource)
-                        .interaction_response_data(|m| {
-                            m.content(format!(
-                                "**Debate Starting!**\n\n\
-                                **Topic:** {}\n\
-                                **Debaters:** {} vs {}\n\
-                                **Rounds:** {}",
-                                topic, persona1_name, persona2_name, rounds
-                            ))
-                        })
-                })
-                .await?;
-
-            // Get the message we just sent to create a thread from it
-            let message = command.get_interaction_response(&ctx.http).await?;
-
-            // Create the debate thread from the message
-            let thread_name = format!(
-                "{} vs {} - {}",
-                persona1_name,
-                persona2_name,
-                if topic.len() > 40 {
-                    format!("{}...", &topic[..37])
-                } else {
-                    topic.clone()
-                }
-            );
-
-            let thread = match channel_id
-                .create_public_thread(&ctx.http, message.id, |t| {
-                    t.name(&thread_name).auto_archive_duration(60) // Archive after 1 hour of inactivity
-                })
+            // Check if we're already in a thread (without an existing debate)
+            let in_thread = self
+                .is_in_thread_channel(ctx, channel_id)
                 .await
-            {
-                Ok(t) => t,
-                Err(e) => {
-                    error!("[{request_id}] Failed to create debate thread: {e}");
-                    command
-                        .edit_original_interaction_response(&ctx.http, |r| {
-                            r.content(format!(
-                                "**Debate Failed**\n\n\
-                                Could not create thread. Make sure I have permission to create threads.\n\
-                                Error: {}",
-                                e
-                            ))
-                        })
-                        .await?;
-                    return Ok(());
-                }
-            };
+                .unwrap_or(false);
 
-            // Update the original message
-            command
-                .edit_original_interaction_response(&ctx.http, |r| {
-                    r.content(format!(
-                        "**Debate Started!**\n\n\
-                        **Topic:** {}\n\
-                        **Debaters:** {} vs {}\n\
-                        **Rounds:** {}\n\n\
-                        The debate is happening in the thread below!",
+            if in_thread {
+                // Already in a thread - run debate directly here
+                info!(
+                    "[{request_id}] Starting debate in existing thread: {} vs {} on '{}' ({} rounds)",
+                    persona1_name, persona2_name, topic, rounds
+                );
+
+                // Send response message (no thread creation)
+                command
+                    .create_interaction_response(&ctx.http, |r| {
+                        r.kind(serenity::model::application::interaction::InteractionResponseType::ChannelMessageWithSource)
+                            .interaction_response_data(|m| {
+                                m.content(format!(
+                                    "**Debate Starting!**\n\n\
+                                    **Topic:** {}\n\
+                                    **Debaters:** {} vs {}\n\
+                                    **Rounds:** {}",
+                                    topic, persona1_name, persona2_name, rounds
+                                ))
+                            })
+                    })
+                    .await?;
+
+                // Post introduction embed in the current thread
+                let intro_embed = serenity::builder::CreateEmbed::default()
+                    .title("Debate Beginning")
+                    .description(format!(
+                        "**Topic:** {}\n\n\
+                        **{} vs {}**\n\n\
+                        {} rounds of debate ahead. Let the discourse begin!",
                         topic, persona1_name, persona2_name, rounds
                     ))
-                })
-                .await?;
+                    .color(0x7289DA) // Discord blurple
+                    .to_owned();
 
-            // Post introduction in the thread
-            let intro_embed = serenity::builder::CreateEmbed::default()
-                .title("Debate Beginning")
-                .description(format!(
-                    "**Topic:** {}\n\n\
-                    **{} vs {}**\n\n\
-                    {} rounds of debate ahead. Let the discourse begin!",
-                    topic, persona1_name, persona2_name, rounds
-                ))
-                .color(0x7289DA) // Discord blurple
-                .to_owned();
+                let _ = channel_id
+                    .send_message(&ctx.http, |m| m.set_embed(intro_embed))
+                    .await;
 
-            let _ = thread
-                .id
-                .send_message(&ctx.http, |m| m.set_embed(intro_embed))
-                .await;
+                (channel_id, None, None)
+            } else {
+                // Not in a thread - create one
+                info!(
+                    "[{request_id}] Starting debate: {} vs {} on '{}' ({} rounds)",
+                    persona1_name, persona2_name, topic, rounds
+                );
 
-            (thread.id, None, None)
+                // Send initial response message (we'll create a thread from this)
+                command
+                    .create_interaction_response(&ctx.http, |r| {
+                        r.kind(serenity::model::application::interaction::InteractionResponseType::ChannelMessageWithSource)
+                            .interaction_response_data(|m| {
+                                m.content(format!(
+                                    "**Debate Starting!**\n\n\
+                                    **Topic:** {}\n\
+                                    **Debaters:** {} vs {}\n\
+                                    **Rounds:** {}",
+                                    topic, persona1_name, persona2_name, rounds
+                                ))
+                            })
+                    })
+                    .await?;
+
+                // Get the message we just sent to create a thread from it
+                let message = command.get_interaction_response(&ctx.http).await?;
+
+                // Create the debate thread from the message
+                let thread_name = format!(
+                    "{} vs {} - {}",
+                    persona1_name,
+                    persona2_name,
+                    if topic.len() > 40 {
+                        format!("{}...", &topic[..37])
+                    } else {
+                        topic.clone()
+                    }
+                );
+
+                let thread = match channel_id
+                    .create_public_thread(&ctx.http, message.id, |t| {
+                        t.name(&thread_name).auto_archive_duration(60) // Archive after 1 hour of inactivity
+                    })
+                    .await
+                {
+                    Ok(t) => t,
+                    Err(e) => {
+                        error!("[{request_id}] Failed to create debate thread: {e}");
+                        command
+                            .edit_original_interaction_response(&ctx.http, |r| {
+                                r.content(format!(
+                                    "**Debate Failed**\n\n\
+                                    Could not create thread. Make sure I have permission to create threads.\n\
+                                    Error: {}",
+                                    e
+                                ))
+                            })
+                            .await?;
+                        return Ok(());
+                    }
+                };
+
+                // Update the original message
+                command
+                    .edit_original_interaction_response(&ctx.http, |r| {
+                        r.content(format!(
+                            "**Debate Started!**\n\n\
+                            **Topic:** {}\n\
+                            **Debaters:** {} vs {}\n\
+                            **Rounds:** {}\n\n\
+                            The debate is happening in the thread below!",
+                            topic, persona1_name, persona2_name, rounds
+                        ))
+                    })
+                    .await?;
+
+                // Post introduction in the thread
+                let intro_embed = serenity::builder::CreateEmbed::default()
+                    .title("Debate Beginning")
+                    .description(format!(
+                        "**Topic:** {}\n\n\
+                        **{} vs {}**\n\n\
+                        {} rounds of debate ahead. Let the discourse begin!",
+                        topic, persona1_name, persona2_name, rounds
+                    ))
+                    .color(0x7289DA) // Discord blurple
+                    .to_owned();
+
+                let _ = thread
+                    .id
+                    .send_message(&ctx.http, |m| m.set_embed(intro_embed))
+                    .await;
+
+                (thread.id, None, None)
+            }
         };
 
         // Check for prior discussion context (interoperability with council)
@@ -6193,93 +6240,159 @@ Use the buttons below for more help or to try custom prompts!"#;
             prompt.chars().take(50).collect::<String>()
         );
 
-        // Send initial response
-        command
-            .create_interaction_response(&ctx.http, |r| {
-                r.kind(InteractionResponseType::ChannelMessageWithSource)
-                    .interaction_response_data(|m| {
-                        m.content(format!(
-                            "**Council Convening!**\n\n\
-                            **Topic:** {}\n\
-                            **Council Members:** {}\n\n\
-                            Creating thread for the council discussion...",
-                            prompt, persona_list
-                        ))
-                    })
-            })
-            .await?;
-
-        // Get the message we sent to create a thread from it
-        let message = command.get_interaction_response(&ctx.http).await?;
-
-        // Create the council thread
-        let thread_name = format!(
-            "Council: {}",
-            if prompt.len() > 50 {
-                format!("{}...", &prompt[..47])
-            } else {
-                prompt.clone()
-            }
-        );
-
-        let thread = match channel_id
-            .create_public_thread(&ctx.http, message.id, |t| {
-                t.name(&thread_name).auto_archive_duration(60) // Archive after 1 hour of inactivity
-            })
+        // Check if we're already in a thread
+        let in_thread = self
+            .is_in_thread_channel(ctx, channel_id)
             .await
-        {
-            Ok(t) => t,
-            Err(e) => {
-                error!("[{request_id}] Failed to create council thread: {e}");
+            .unwrap_or(false);
+
+        // Check for existing council in this channel
+        let existing_council = get_active_councils().contains_key(&channel_id.0);
+
+        // Determine the thread_id to use (either current channel if in thread, or create new)
+        let thread_id = if in_thread {
+            if existing_council {
+                // Error: council already active in this thread
                 command
-                    .edit_original_interaction_response(&ctx.http, |r| {
-                        r.content(format!(
-                            "**Council Failed**\n\n\
-                            Could not create thread. Make sure I have permission to create threads.\n\
-                            Error: {}",
-                            e
-                        ))
+                    .create_interaction_response(&ctx.http, |r| {
+                        r.kind(InteractionResponseType::ChannelMessageWithSource)
+                            .interaction_response_data(|m| {
+                                m.content("A council is already active in this thread.")
+                                    .ephemeral(true)
+                            })
                     })
                     .await?;
                 return Ok(());
             }
-        };
 
-        // Update original message
-        command
-            .edit_original_interaction_response(&ctx.http, |r| {
-                r.content(format!(
-                    "**Council Convened!**\n\n\
-                    **Topic:** {}\n\
+            // Run council directly in existing thread
+            info!("[{request_id}] Running council in existing thread");
+
+            // Send response (no thread creation)
+            command
+                .create_interaction_response(&ctx.http, |r| {
+                    r.kind(InteractionResponseType::ChannelMessageWithSource)
+                        .interaction_response_data(|m| {
+                            m.content(format!(
+                                "**Council Convening!**\n\n\
+                                **Topic:** {}\n\
+                                **Council Members:** {}",
+                                prompt, persona_list
+                            ))
+                        })
+                })
+                .await?;
+
+            // Post intro embed in current channel
+            let intro_embed = serenity::builder::CreateEmbed::default()
+                .title("Council in Session")
+                .description(format!(
+                    "**Topic:** {}\n\n\
                     **Council Members:** {}\n\n\
-                    The council is deliberating in the thread below!",
+                    Each council member will now share their perspective.",
                     prompt, persona_list
                 ))
-            })
-            .await?;
+                .color(0x9B59B6) // Purple for council
+                .to_owned();
 
-        // Post introduction in the thread
-        let intro_embed = serenity::builder::CreateEmbed::default()
-            .title("Council in Session")
-            .description(format!(
-                "**Topic:** {}\n\n\
-                **Council Members:** {}\n\n\
-                Each council member will now share their perspective.",
-                prompt, persona_list
-            ))
-            .color(0x9B59B6) // Purple for council
-            .to_owned();
+            let _ = channel_id
+                .send_message(&ctx.http, |m| m.set_embed(intro_embed))
+                .await;
 
-        let _ = thread
-            .id
-            .send_message(&ctx.http, |m| m.set_embed(intro_embed))
-            .await;
+            // Use channel_id as thread_id
+            channel_id
+        } else {
+            // Not in a thread - create one
+            // Send initial response
+            command
+                .create_interaction_response(&ctx.http, |r| {
+                    r.kind(InteractionResponseType::ChannelMessageWithSource)
+                        .interaction_response_data(|m| {
+                            m.content(format!(
+                                "**Council Convening!**\n\n\
+                                **Topic:** {}\n\
+                                **Council Members:** {}\n\n\
+                                Creating thread for the council discussion...",
+                                prompt, persona_list
+                            ))
+                        })
+                })
+                .await?;
+
+            // Get the message we sent to create a thread from it
+            let message = command.get_interaction_response(&ctx.http).await?;
+
+            // Create the council thread
+            let thread_name = format!(
+                "Council: {}",
+                if prompt.len() > 50 {
+                    format!("{}...", &prompt[..47])
+                } else {
+                    prompt.clone()
+                }
+            );
+
+            let thread = match channel_id
+                .create_public_thread(&ctx.http, message.id, |t| {
+                    t.name(&thread_name).auto_archive_duration(60) // Archive after 1 hour of inactivity
+                })
+                .await
+            {
+                Ok(t) => t,
+                Err(e) => {
+                    error!("[{request_id}] Failed to create council thread: {e}");
+                    command
+                        .edit_original_interaction_response(&ctx.http, |r| {
+                            r.content(format!(
+                                "**Council Failed**\n\n\
+                                Could not create thread. Make sure I have permission to create threads.\n\
+                                Error: {}",
+                                e
+                            ))
+                        })
+                        .await?;
+                    return Ok(());
+                }
+            };
+
+            // Update original message
+            command
+                .edit_original_interaction_response(&ctx.http, |r| {
+                    r.content(format!(
+                        "**Council Convened!**\n\n\
+                        **Topic:** {}\n\
+                        **Council Members:** {}\n\n\
+                        The council is deliberating in the thread below!",
+                        prompt, persona_list
+                    ))
+                })
+                .await?;
+
+            // Post introduction in the thread
+            let intro_embed = serenity::builder::CreateEmbed::default()
+                .title("Council in Session")
+                .description(format!(
+                    "**Topic:** {}\n\n\
+                    **Council Members:** {}\n\n\
+                    Each council member will now share their perspective.",
+                    prompt, persona_list
+                ))
+                .color(0x9B59B6) // Purple for council
+                .to_owned();
+
+            let _ = thread
+                .id
+                .send_message(&ctx.http, |m| m.set_embed(intro_embed))
+                .await;
+
+            thread.id
+        };
 
         // Log usage
         self.database.log_usage(&user_id, "council", None).await?;
 
         // Check for prior discussion context in this thread (interoperability)
-        let prior_context = crate::features::detect_thread_context(thread.id.0);
+        let prior_context = crate::features::detect_thread_context(thread_id.0);
         let prior_context_text = prior_context
             .as_ref()
             .map(|ctx| crate::features::format_prior_context(ctx, &self.persona_manager));
@@ -6292,14 +6405,13 @@ Use the buttons below for more help or to try custom prompts!"#;
             guild_id.clone(),
             rules.clone(),
         );
-        get_active_councils().insert(thread.id.0, council_state);
+        get_active_councils().insert(thread_id.0, council_state);
 
         // Clone values needed for the async task
         let openai_model = self.openai_model.clone();
         let usage_tracker = self.usage_tracker.clone();
         let persona_manager = self.persona_manager.clone();
         let ctx_clone = ctx.clone();
-        let thread_id = thread.id;
         let prompt_clone = prompt.clone();
         let guild_id_clone = guild_id.clone();
         let channel_id_str = channel_id.to_string();

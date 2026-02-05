@@ -1,113 +1,60 @@
-# Persona Bot v3.31.0 - The Council Assembles
+# Persona Bot v3.35.0 - Conversations Without Borders
 
-*Fellow architects of the digital realm,*
+*Fellow seekers of seamless discourse,*
 
-Why settle for one perspective when wisdom flows from many streams? Today we introduce `/council` - gather multiple personas around a single question, and continue the conversation with follow-up questions.
+Why should existing threads be barriers to new discussions? Today we remove the invisible walls that prevented `/debate` and `/council` from running within threads.
 
-## What's New
+## What's Fixed
 
-### The `/council` Command
+### Thread Compatibility for `/debate` and `/council`
 
-Convene a council of up to 6 personas to share their unique perspectives on any topic. Each council member responds in a dedicated thread, and the conversation can continue with follow-ups.
+Both commands now detect when invoked inside an existing thread and adapt accordingly:
 
-```
-/council prompt:"Should we refactor this monolith into microservices?" persona1:analyst persona2:visionary
-/council prompt:"How should I approach learning Rust?" persona1:teacher persona2:coach persona3:scientist
-/council prompt:"What makes a great user experience?" persona1:zen persona2:bard persona3:analyst persona4:gamer
-```
+- **In a thread**: Run the discussion directly in that thread (no nested thread creation)
+- **In a channel**: Create a new thread as before
 
-**Parameters:**
-- `prompt` (required): The question or topic for the council (5-1000 characters)
-- `persona1` (required): First council member
-- `persona2` (required): Second council member
-- `persona3-6` (optional): Additional council members
+This enables powerful workflows:
+- Start a council in a debate thread to gather broader perspectives
+- Start a debate in a council thread to dive deeper on a point
+- Run debates and councils in *any* existing thread
 
-### Follow-up Questions
-
-The council remembers the entire conversation! After the initial responses:
-1. **Mention the bot** with your follow-up question in the council thread
-2. All council members respond with **full context** of what was discussed
-3. Ask as many follow-ups as you need - the conversation builds on itself
+### Before This Fix
 
 ```
-@Bot What about the security implications?
-@Bot Can you elaborate on the testing strategy?
-@Bot How would this work with our current tech stack?
+/debate ... (in a thread)
+-> Error: Cannot execute action on this channel type
 ```
 
-### How It Works
-
-1. Invoke `/council` with your prompt and select 2-6 personas
-2. A thread is created for the council discussion
-3. Each persona shares their perspective in sequence
-4. Council adjourns with a closing message
-5. **Mention the bot** for follow-up questions - the council reconvenes!
-6. Each persona responds with awareness of the full discussion history
-
-### Council Features
-
-- **Conversation Memory**: Full discussion history maintained for context-aware follow-ups
-- **Duplicate Prevention**: Same persona cannot be selected twice
-- **Unique Perspectives**: Each persona receives council context to stay in character
-- **Natural Pacing**: Brief delays between responses for readability
-- **Styled Responses**: Full embed treatment with name, icon, and accent color
-- **Thread Organization**: All council wisdom contained in one dedicated thread
-
-## Technical Harmony
-
-- **New Feature Module**: `src/features/council/` with state tracking
-- **Active Council Tracking**: Global state map for follow-up support
-- **Context Summary**: History formatted for system prompt injection
-- **Message Handler Integration**: Detects mentions in council threads
-- **Usage Tracking**: All API calls logged with full context
-
-### Architecture
+### After This Fix
 
 ```
-/council command received
-    -> Validate 2+ unique personas
-    -> Create interaction response
-    -> Create public thread
-    -> Initialize CouncilState with personas and topic
-    -> Store state in ACTIVE_COUNCILS map
-    -> Spawn async task for council session
-        -> Add user prompt to history
-        -> For each persona:
-            -> Build council-aware system prompt
-            -> Call OpenAI API
-            -> Add response to history
-            -> Post styled embed response
-        -> Post council adjournment message
-
-Follow-up question (mention in thread)
-    -> Detect active council thread
-    -> Retrieve CouncilState with full history
-    -> Add user question to history
-    -> Post "Council Reconvening" message
-    -> For each persona:
-        -> Build context-aware prompt with history summary
-        -> Call OpenAI API
-        -> Add response to history
-        -> Post styled embed response
+/debate ... (in a thread)
+-> Debate runs directly in the current thread
 ```
+
+## Technical Details
+
+Both `handle_slash_debate()` and `handle_slash_council()` now:
+1. Check if already inside a thread using `is_in_thread_channel()`
+2. If in thread: post messages directly to the current channel
+3. If not in thread: create a new thread (existing behavior)
+
+For councils, attempting to start a new council in a thread that already has an active council shows an appropriate error message.
 
 ## The Vision
 
-No decision exists in isolation. The analyst sees the metrics, the visionary sees the horizon, the coach sees the growth opportunity, and the zen master sees the underlying truth. Now they can discuss, respond, and build on each other's insights through your follow-up questions.
+Conversations should flow where they need to flow. Whether sparked by a debate that needs council input, or a council discussion that needs focused debate, the architecture now supports seamless composition. The thread is your canvas - paint across it freely.
 
-*Many voices, one continuous thread of wisdom...*
+*Borders exist only in the mind...*
 
 ---
-Council Command: 1.0.0 (NEW)
-- Gather 2-6 personas to respond to a single prompt
-- All 12 personas available as council members
-- **Follow-up questions supported** - mention bot in thread
-- Full conversation history maintained for context
-- Threaded discussion with styled persona embeds
-- Duplicate persona prevention
-- Council context injection for character consistency
+Debate Command: 1.1.0
+- **Thread compatibility** - run debates inside existing threads
+- Tag-team debates continue to work (join existing debate in progress)
 
-Ask Command: 1.0.0 (previous release)
-- Ask any persona a question with optional context
+Council Command: 1.1.0
+- **Thread compatibility** - run councils inside existing threads
+- Active council detection prevents duplicate councils in same thread
+- Interoperability with debates maintained
 
 *~ The Visionary*
