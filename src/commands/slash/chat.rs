@@ -25,6 +25,15 @@ fn create_hey_command() -> CreateApplicationCommand {
                 .kind(CommandOptionType::String)
                 .required(true)
         })
+        .create_option(|option| {
+            option
+                .name("paragraphs")
+                .description("Maximum paragraphs in response (0=unlimited, 1-10)")
+                .kind(CommandOptionType::Integer)
+                .required(false)
+                .min_int_value(0)
+                .max_int_value(10)
+        })
         .to_owned()
 }
 
@@ -39,6 +48,15 @@ fn create_explain_command() -> CreateApplicationCommand {
                 .description("What you want explained")
                 .kind(CommandOptionType::String)
                 .required(true)
+        })
+        .create_option(|option| {
+            option
+                .name("paragraphs")
+                .description("Maximum paragraphs in response (0=unlimited, 1-10)")
+                .kind(CommandOptionType::Integer)
+                .required(false)
+                .min_int_value(0)
+                .max_int_value(10)
         })
         .to_owned()
 }
@@ -55,6 +73,15 @@ fn create_simple_command() -> CreateApplicationCommand {
                 .kind(CommandOptionType::String)
                 .required(true)
         })
+        .create_option(|option| {
+            option
+                .name("paragraphs")
+                .description("Maximum paragraphs in response (0=unlimited, 1-10)")
+                .kind(CommandOptionType::Integer)
+                .required(false)
+                .min_int_value(0)
+                .max_int_value(10)
+        })
         .to_owned()
 }
 
@@ -69,6 +96,15 @@ fn create_steps_command() -> CreateApplicationCommand {
                 .description("What you want broken down into steps")
                 .kind(CommandOptionType::String)
                 .required(true)
+        })
+        .create_option(|option| {
+            option
+                .name("paragraphs")
+                .description("Maximum paragraphs in response (0=unlimited, 1-10)")
+                .kind(CommandOptionType::Integer)
+                .required(false)
+                .min_int_value(0)
+                .max_int_value(10)
         })
         .to_owned()
 }

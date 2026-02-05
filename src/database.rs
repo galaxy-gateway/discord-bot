@@ -390,6 +390,24 @@ impl Database {
             conn.execute("ALTER TABLE channel_settings ADD COLUMN default_persona TEXT")?;
         }
 
+        // Add max_paragraphs column to channel_settings if it doesn't exist
+        let has_max_paragraphs: bool = {
+            let mut stmt = conn.prepare("PRAGMA table_info(channel_settings)")?;
+            let mut found = false;
+            while let Ok(State::Row) = stmt.next() {
+                let col_name: String = stmt.read(1)?;
+                if col_name == "max_paragraphs" {
+                    found = true;
+                    break;
+                }
+            }
+            found
+        };
+
+        if !has_max_paragraphs {
+            conn.execute("ALTER TABLE channel_settings ADD COLUMN max_paragraphs INTEGER DEFAULT 0")?;
+        }
+
         // Bot Settings (for global bot configuration, not per-guild)
         conn.execute(
             "CREATE TABLE IF NOT EXISTS bot_settings (
@@ -1895,6 +1913,46 @@ impl Database {
         statement.bind((3, if enabled { 1i64 } else { 0i64 }))?;
         statement.next()?;
         info!("Set conflict_enabled for channel {channel_id} to {enabled}");
+        Ok(())
+    }
+
+    /// Get max_paragraphs for a channel (0 = no limit)
+    pub async fn get_channel_max_paragraphs(&self, guild_id: &str, channel_id: &str) -> Result<i64> {
+        let conn = self.connection.lock().await;
+        let mut statement = conn.prepare(
+            "SELECT max_paragraphs FROM channel_settings WHERE guild_id = ? AND channel_id = ?",
+        )?;
+        statement.bind((1, guild_id))?;
+        statement.bind((2, channel_id))?;
+
+        if let Ok(State::Row) = statement.next() {
+            let value: Option<i64> = statement.read(0)?;
+            Ok(value.unwrap_or(0))
+        } else {
+            Ok(0) // Default: no limit
+        }
+    }
+
+    /// Set max_paragraphs for a channel (0 = no limit, 1-10 = enforced limit)
+    pub async fn set_channel_max_paragraphs(
+        &self,
+        guild_id: &str,
+        channel_id: &str,
+        max_paragraphs: i64,
+    ) -> Result<()> {
+        let conn = self.connection.lock().await;
+        let mut statement = conn.prepare(
+            "INSERT INTO channel_settings (guild_id, channel_id, max_paragraphs, updated_at)
+             VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+             ON CONFLICT(guild_id, channel_id) DO UPDATE SET
+             max_paragraphs = excluded.max_paragraphs,
+             updated_at = CURRENT_TIMESTAMP",
+        )?;
+        statement.bind((1, guild_id))?;
+        statement.bind((2, channel_id))?;
+        statement.bind((3, max_paragraphs))?;
+        statement.next()?;
+        info!("Set max_paragraphs for channel {channel_id} to {max_paragraphs}");
         Ok(())
     }
 

@@ -67,6 +67,15 @@ fn create_ask_command() -> CreateApplicationCommand {
                 .description("Skip fetching channel/thread history (default: false)")
                 .kind(CommandOptionType::Boolean)
                 .required(false)
+        })
+        .create_option(|option| {
+            option
+                .name("paragraphs")
+                .description("Maximum paragraphs in response (0=unlimited, 1-10)")
+                .kind(CommandOptionType::Integer)
+                .required(false)
+                .min_int_value(0)
+                .max_int_value(10)
         });
     command
 }

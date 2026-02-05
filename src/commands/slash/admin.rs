@@ -223,7 +223,7 @@ fn create_usage_command() -> CreateApplicationCommand {
 pub const USER_SETTINGS: &[&str] = &["persona"];
 
 /// Valid channel settings
-pub const CHANNEL_SETTINGS: &[&str] = &["verbosity", "persona", "conflict_mediation"];
+pub const CHANNEL_SETTINGS: &[&str] = &["verbosity", "persona", "conflict_mediation", "max_paragraphs"];
 
 /// Valid guild settings
 pub const GUILD_SETTINGS: &[&str] = &[
@@ -325,6 +325,17 @@ pub fn validate_channel_setting(setting: &str, value: &str) -> (bool, &'static s
                 (true, "")
             } else {
                 (false, "Invalid value. Use: `enabled` or `disabled`.")
+            }
+        }
+        "max_paragraphs" => {
+            if let Ok(num) = value.parse::<i64>() {
+                if num == 0 || (1..=10).contains(&num) {
+                    (true, "")
+                } else {
+                    (false, "Invalid value. Use: `0` (unlimited) or `1`-`10`.")
+                }
+            } else {
+                (false, "Invalid value. Use: `0` (unlimited) or `1`-`10`.")
             }
         }
         _ => (false, "Unknown channel setting."),
@@ -562,6 +573,27 @@ mod tests {
         assert!(msg.contains("Unknown"));
     }
 
+    #[test]
+    fn test_validate_channel_max_paragraphs_valid() {
+        assert!(validate_channel_setting("max_paragraphs", "0").0);
+        assert!(validate_channel_setting("max_paragraphs", "1").0);
+        assert!(validate_channel_setting("max_paragraphs", "5").0);
+        assert!(validate_channel_setting("max_paragraphs", "10").0);
+    }
+
+    #[test]
+    fn test_validate_channel_max_paragraphs_invalid() {
+        let (valid, msg) = validate_channel_setting("max_paragraphs", "11");
+        assert!(!valid);
+        assert!(msg.contains("0") && msg.contains("10"));
+
+        let (valid2, _) = validate_channel_setting("max_paragraphs", "-1");
+        assert!(!valid2);
+
+        let (valid3, _) = validate_channel_setting("max_paragraphs", "abc");
+        assert!(!valid3);
+    }
+
     // ==================== Guild Setting Validation Tests ====================
 
     #[test]
@@ -678,10 +710,11 @@ mod tests {
 
     #[test]
     fn test_channel_settings_list() {
-        assert_eq!(CHANNEL_SETTINGS.len(), 3);
+        assert_eq!(CHANNEL_SETTINGS.len(), 4);
         assert!(CHANNEL_SETTINGS.contains(&"verbosity"));
         assert!(CHANNEL_SETTINGS.contains(&"persona"));
         assert!(CHANNEL_SETTINGS.contains(&"conflict_mediation"));
+        assert!(CHANNEL_SETTINGS.contains(&"max_paragraphs"));
     }
 
     #[test]

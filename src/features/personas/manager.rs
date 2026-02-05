@@ -340,6 +340,19 @@ impl PersonaManager {
     }
 }
 
+/// Apply paragraph limit to system prompt.
+/// 0 = no limit (returns prompt unchanged), 1-10 = enforced limit
+pub fn apply_paragraph_limit(prompt: &str, max_paragraphs: i64) -> String {
+    if max_paragraphs > 0 {
+        format!(
+            "{}\n\nIMPORTANT: Limit your response to {} paragraph(s) maximum.",
+            prompt, max_paragraphs
+        )
+    } else {
+        prompt.to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -636,5 +649,27 @@ mod tests {
         );
 
         env::remove_var("PERSONA_PORTRAIT_BASE_URL");
+    }
+
+    #[test]
+    fn test_apply_paragraph_limit_no_limit() {
+        let prompt = "Test prompt";
+        let result = apply_paragraph_limit(prompt, 0);
+        assert_eq!(result, "Test prompt");
+    }
+
+    #[test]
+    fn test_apply_paragraph_limit_with_limit() {
+        let prompt = "Test prompt";
+        let result = apply_paragraph_limit(prompt, 3);
+        assert!(result.contains("Test prompt"));
+        assert!(result.contains("IMPORTANT: Limit your response to 3 paragraph(s) maximum."));
+    }
+
+    #[test]
+    fn test_apply_paragraph_limit_single_paragraph() {
+        let prompt = "Test prompt";
+        let result = apply_paragraph_limit(prompt, 1);
+        assert!(result.contains("IMPORTANT: Limit your response to 1 paragraph(s) maximum."));
     }
 }

@@ -10,7 +10,7 @@ use crate::features::council::{get_active_councils, CouncilState};
 use crate::features::debate::{get_active_debates, orchestrator::DebateConfig, DebateOrchestrator};
 use crate::features::image_gen::generator::{ImageGenerator, ImageSize, ImageStyle};
 use crate::features::introspection::get_component_snippet;
-use crate::features::personas::{Persona, PersonaManager};
+use crate::features::personas::{apply_paragraph_limit, Persona, PersonaManager};
 use crate::features::plugins::PluginManager;
 use crate::features::rate_limiting::RateLimiter;
 use crate::message_components::MessageComponentHandler;
@@ -2203,12 +2203,31 @@ Use the buttons below for more help or to try custom prompts!"#;
             "concise".to_string() // Default to concise for DMs
         };
 
-        debug!("[{request_id}] 📝 Building system prompt | Persona: {user_persona} | Modifier: {modifier:?} | Verbosity: {verbosity}");
+        // Get max_paragraphs: per-request overrides channel default; 0 = no limit
+        let max_paragraphs = get_integer_option(&command.data.options, "paragraphs")
+            .unwrap_or_else(|| {
+                if let Some(guild_id) = command.guild_id {
+                    // Use block_in_place to safely call async from sync context
+                    tokio::task::block_in_place(|| {
+                        tokio::runtime::Handle::current().block_on(async {
+                            self.database
+                                .get_channel_max_paragraphs(&guild_id.to_string(), &channel_id)
+                                .await
+                                .unwrap_or(0)
+                        })
+                    })
+                } else {
+                    0 // No limit for DMs by default
+                }
+            });
+
+        debug!("[{request_id}] 📝 Building system prompt | Persona: {user_persona} | Modifier: {modifier:?} | Verbosity: {verbosity} | MaxParagraphs: {max_paragraphs}");
         let system_prompt = self.persona_manager.get_system_prompt_with_verbosity(
             &user_persona,
             modifier,
             &verbosity,
         );
+        let system_prompt = apply_paragraph_limit(&system_prompt, max_paragraphs);
         debug!(
             "[{}] ✅ System prompt generated | Length: {} chars",
             request_id,
@@ -3889,6 +3908,18 @@ Use the buttons below for more help or to try custom prompts!"#;
                     "Disabled ❌"
                 };
                 format!("✅ Conflict mediation for <#{target_channel_id}> is now **{status}**")
+            }
+            "max_paragraphs" => {
+                let max_paragraphs: i64 = value.parse().unwrap_or(0);
+                self.database
+                    .set_channel_max_paragraphs(&guild_id, &target_channel_id, max_paragraphs)
+                    .await?;
+                info!("[{request_id}] Set max_paragraphs for channel {target_channel_id} to {max_paragraphs}");
+                if max_paragraphs == 0 {
+                    format!("✅ Max paragraphs for <#{target_channel_id}> set to **unlimited**")
+                } else {
+                    format!("✅ Max paragraphs for <#{target_channel_id}> set to **{max_paragraphs}**")
+                }
             }
             _ => {
                 format!("❌ Unknown setting: {setting}")
@@ -5902,8 +5933,27 @@ Use the buttons below for more help or to try custom prompts!"#;
         }
         let persona = persona.unwrap();
 
-        // Get system prompt for the persona
+        // Get max_paragraphs: per-request overrides channel default; 0 = no limit
+        let max_paragraphs = get_integer_option(&command.data.options, "paragraphs")
+            .unwrap_or_else(|| {
+                if let Some(gid) = command.guild_id {
+                    tokio::task::block_in_place(|| {
+                        tokio::runtime::Handle::current().block_on(async {
+                            self.database
+                                .get_channel_max_paragraphs(&gid.to_string(), &channel_id.to_string())
+                                .await
+                                .unwrap_or(0)
+                        })
+                    })
+                } else {
+                    0
+                }
+            });
+
+        // Get system prompt for the persona with paragraph limit applied
         let system_prompt = self.persona_manager.get_system_prompt(&persona_id, None);
+        let system_prompt = apply_paragraph_limit(&system_prompt, max_paragraphs);
+        debug!("[{request_id}] System prompt with paragraph limit | MaxParagraphs: {max_paragraphs}");
 
         // Defer the interaction (required for AI calls that may take time)
         info!("[{request_id}] Deferring interaction response");
