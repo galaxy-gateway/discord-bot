@@ -13,7 +13,7 @@
 //! - 1.0.0: Initial release with time parsing (30m, 2h, 1d, 1h30m) and persona delivery
 
 use crate::database::Database;
-use crate::features::analytics::UsageTracker;
+use crate::features::analytics::{CostBucket, UsageTracker};
 use crate::features::personas::PersonaManager;
 use anyhow::Result;
 use log::{debug, error, info, warn};
@@ -187,6 +187,7 @@ impl ReminderScheduler {
                         None, // Reminders don't have guild context stored
                         Some(channel_id),
                         None,
+                        CostBucket::Reminder,
                     );
                 }
 

@@ -1,60 +1,53 @@
-# Persona Bot v3.35.0 - Conversations Without Borders
+# Persona Bot v3.36.0 - Illuminating the Path of Costs
 
-*Fellow seekers of seamless discourse,*
+*Seekers of fiscal clarity,*
 
-Why should existing threads be barriers to new discussions? Today we remove the invisible walls that prevented `/debate` and `/council` from running within threads.
+Every API call tells a story, but until now, we could not distinguish which features drove our costs. Today we add a new lens to see the true sources of our OpenAI spending.
 
-## What's Fixed
+## What's New
 
-### Thread Compatibility for `/debate` and `/council`
+### Cost Bucket Categorization
 
-Both commands now detect when invoked inside an existing thread and adapt accordingly:
+All OpenAI API usage is now tagged with its purpose:
 
-- **In a thread**: Run the discussion directly in that thread (no nested thread creation)
-- **In a channel**: Create a new thread as before
+| Bucket | Source |
+|--------|--------|
+| `ask` | Generic /ask conversations |
+| `debate` | /debate persona turns |
+| `council` | /council discussions |
+| `mediation` | Conflict mediation interventions |
+| `introspect` | /introspect self-reflection |
+| `reminder` | Scheduled reminder messages |
+| `plugin` | CLI plugin AI summaries |
+| `transcription` | Whisper audio processing |
+| `imagine` | DALL-E image generation |
+| `unknown` | Legacy/historical data |
 
-This enables powerful workflows:
-- Start a council in a debate thread to gather broader perspectives
-- Start a debate in a council thread to dive deeper on a point
-- Run debates and councils in *any* existing thread
+### Database Migration
 
-### Before This Fix
+Existing usage data gracefully migrates with `cost_bucket = 'unknown'`. New queries enable analysis like:
 
+```sql
+SELECT cost_bucket, SUM(estimated_cost_usd)
+FROM openai_usage
+GROUP BY cost_bucket
+ORDER BY 2 DESC
 ```
-/debate ... (in a thread)
--> Error: Cannot execute action on this channel type
-```
 
-### After This Fix
+### No Breaking Changes
 
-```
-/debate ... (in a thread)
--> Debate runs directly in the current thread
-```
-
-## Technical Details
-
-Both `handle_slash_debate()` and `handle_slash_council()` now:
-1. Check if already inside a thread using `is_in_thread_channel()`
-2. If in thread: post messages directly to the current channel
-3. If not in thread: create a new thread (existing behavior)
-
-For councils, attempting to start a new council in a thread that already has an active council shows an appropriate error message.
+All existing functionality preserved. The new parameter is added seamlessly to the tracking pipeline.
 
 ## The Vision
 
-Conversations should flow where they need to flow. Whether sparked by a debate that needs council input, or a council discussion that needs focused debate, the architecture now supports seamless composition. The thread is your canvas - paint across it freely.
+To optimize, we must first observe. Cost buckets transform raw numbers into actionable insight. Which features deliver value? Which consume resources disproportionately? Now we can see. The path to efficiency begins with measurement.
 
-*Borders exist only in the mind...*
+*What you cannot measure, you cannot improve...*
 
 ---
-Debate Command: 1.1.0
-- **Thread compatibility** - run debates inside existing threads
-- Tag-team debates continue to work (join existing debate in progress)
-
-Council Command: 1.1.0
-- **Thread compatibility** - run councils inside existing threads
-- Active council detection prevents duplicate councils in same thread
-- Interoperability with debates maintained
+Usage Tracking: 1.1.0
+- **Cost buckets** - track API usage by feature purpose
+- **Database migration** - adds cost_bucket column with proper indexing
+- **Query support** - new get_cost_by_bucket() for analysis
 
 *~ The Visionary*

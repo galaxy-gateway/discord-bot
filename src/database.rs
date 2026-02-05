@@ -481,6 +481,23 @@ impl Database {
              ON openai_usage_daily(user_id, date)",
         )?;
 
+        // Migration: add cost_bucket column for tracking usage by feature
+        // Uses ALTER TABLE which silently fails if column already exists
+        let _ = conn.execute(
+            "ALTER TABLE openai_usage ADD COLUMN cost_bucket TEXT NOT NULL DEFAULT 'unknown'",
+        );
+        let _ = conn.execute(
+            "ALTER TABLE openai_usage_daily ADD COLUMN cost_bucket TEXT NOT NULL DEFAULT 'unknown'",
+        );
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_openai_usage_bucket
+             ON openai_usage(cost_bucket, timestamp)",
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_openai_daily_bucket
+             ON openai_usage_daily(cost_bucket, date)",
+        )?;
+
         // DM Interaction Tracking Tables
         conn.execute(
             "CREATE TABLE IF NOT EXISTS dm_sessions (
@@ -1984,6 +2001,7 @@ impl Database {
         guild_id: Option<&str>,
         channel_id: Option<&str>,
         request_id: Option<&str>,
+        cost_bucket: &str,
     ) -> Result<()> {
         let conn = self.connection.lock().await;
         let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
@@ -1992,8 +2010,8 @@ impl Database {
         let mut statement = conn.prepare(
             "INSERT INTO openai_usage
              (request_id, user_id, guild_id, channel_id, service_type, model,
-              input_tokens, output_tokens, total_tokens, estimated_cost_usd)
-             VALUES (?, ?, ?, ?, 'chat', ?, ?, ?, ?, ?)",
+              input_tokens, output_tokens, total_tokens, estimated_cost_usd, cost_bucket)
+             VALUES (?, ?, ?, ?, 'chat', ?, ?, ?, ?, ?, ?)",
         )?;
         statement.bind((1, request_id.unwrap_or("")))?;
         statement.bind((2, user_id))?;
@@ -2004,14 +2022,15 @@ impl Database {
         statement.bind((7, output_tokens as i64))?;
         statement.bind((8, total_tokens as i64))?;
         statement.bind((9, estimated_cost))?;
+        statement.bind((10, cost_bucket))?;
         statement.next()?;
 
         // Update daily aggregate
         drop(statement);
         let mut agg_stmt = conn.prepare(
             "INSERT INTO openai_usage_daily
-             (date, guild_id, user_id, service_type, request_count, total_tokens, total_cost_usd)
-             VALUES (?, ?, ?, 'chat', 1, ?, ?)
+             (date, guild_id, user_id, service_type, request_count, total_tokens, total_cost_usd, cost_bucket)
+             VALUES (?, ?, ?, 'chat', 1, ?, ?, ?)
              ON CONFLICT(date, guild_id, user_id, service_type) DO UPDATE SET
              request_count = request_count + 1,
              total_tokens = total_tokens + excluded.total_tokens,
@@ -2022,6 +2041,7 @@ impl Database {
         agg_stmt.bind((3, user_id))?;
         agg_stmt.bind((4, total_tokens as i64))?;
         agg_stmt.bind((5, estimated_cost))?;
+        agg_stmt.bind((6, cost_bucket))?;
         agg_stmt.next()?;
 
         Ok(())
@@ -2035,6 +2055,7 @@ impl Database {
         user_id: &str,
         guild_id: Option<&str>,
         channel_id: Option<&str>,
+        cost_bucket: &str,
     ) -> Result<()> {
         let conn = self.connection.lock().await;
         let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
@@ -2043,32 +2064,34 @@ impl Database {
         let mut statement = conn.prepare(
             "INSERT INTO openai_usage
              (user_id, guild_id, channel_id, service_type, model,
-              audio_duration_seconds, estimated_cost_usd)
-             VALUES (?, ?, ?, 'whisper', 'whisper-1', ?, ?)",
+              audio_duration_seconds, estimated_cost_usd, cost_bucket)
+             VALUES (?, ?, ?, 'whisper', 'whisper-1', ?, ?, ?)",
         )?;
         statement.bind((1, user_id))?;
         statement.bind((2, guild_id.unwrap_or("")))?;
         statement.bind((3, channel_id.unwrap_or("")))?;
         statement.bind((4, audio_duration_seconds))?;
         statement.bind((5, estimated_cost))?;
+        statement.bind((6, cost_bucket))?;
         statement.next()?;
 
         // Update daily aggregate
         drop(statement);
         let mut agg_stmt = conn.prepare(
             "INSERT INTO openai_usage_daily
-             (date, guild_id, user_id, service_type, request_count, total_audio_seconds, total_cost_usd)
-             VALUES (?, ?, ?, 'whisper', 1, ?, ?)
+             (date, guild_id, user_id, service_type, request_count, total_audio_seconds, total_cost_usd, cost_bucket)
+             VALUES (?, ?, ?, 'whisper', 1, ?, ?, ?)
              ON CONFLICT(date, guild_id, user_id, service_type) DO UPDATE SET
              request_count = request_count + 1,
              total_audio_seconds = total_audio_seconds + excluded.total_audio_seconds,
-             total_cost_usd = total_cost_usd + excluded.total_cost_usd"
+             total_cost_usd = total_cost_usd + excluded.total_cost_usd",
         )?;
         agg_stmt.bind((1, date.as_str()))?;
         agg_stmt.bind((2, guild_id.unwrap_or("")))?;
         agg_stmt.bind((3, user_id))?;
         agg_stmt.bind((4, audio_duration_seconds))?;
         agg_stmt.bind((5, estimated_cost))?;
+        agg_stmt.bind((6, cost_bucket))?;
         agg_stmt.next()?;
 
         Ok(())
@@ -2083,6 +2106,7 @@ impl Database {
         user_id: &str,
         guild_id: Option<&str>,
         channel_id: Option<&str>,
+        cost_bucket: &str,
     ) -> Result<()> {
         let conn = self.connection.lock().await;
         let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
@@ -2091,8 +2115,8 @@ impl Database {
         let mut statement = conn.prepare(
             "INSERT INTO openai_usage
              (user_id, guild_id, channel_id, service_type, model,
-              image_count, image_size, estimated_cost_usd)
-             VALUES (?, ?, ?, 'dalle', 'dall-e-3', ?, ?, ?)",
+              image_count, image_size, estimated_cost_usd, cost_bucket)
+             VALUES (?, ?, ?, 'dalle', 'dall-e-3', ?, ?, ?, ?)",
         )?;
         statement.bind((1, user_id))?;
         statement.bind((2, guild_id.unwrap_or("")))?;
@@ -2100,14 +2124,15 @@ impl Database {
         statement.bind((4, image_count as i64))?;
         statement.bind((5, image_size))?;
         statement.bind((6, estimated_cost))?;
+        statement.bind((7, cost_bucket))?;
         statement.next()?;
 
         // Update daily aggregate
         drop(statement);
         let mut agg_stmt = conn.prepare(
             "INSERT INTO openai_usage_daily
-             (date, guild_id, user_id, service_type, request_count, total_images, total_cost_usd)
-             VALUES (?, ?, ?, 'dalle', 1, ?, ?)
+             (date, guild_id, user_id, service_type, request_count, total_images, total_cost_usd, cost_bucket)
+             VALUES (?, ?, ?, 'dalle', 1, ?, ?, ?)
              ON CONFLICT(date, guild_id, user_id, service_type) DO UPDATE SET
              request_count = request_count + 1,
              total_images = total_images + excluded.total_images,
@@ -2118,9 +2143,53 @@ impl Database {
         agg_stmt.bind((3, user_id))?;
         agg_stmt.bind((4, image_count as i64))?;
         agg_stmt.bind((5, estimated_cost))?;
+        agg_stmt.bind((6, cost_bucket))?;
         agg_stmt.next()?;
 
         Ok(())
+    }
+
+    /// Get total cost grouped by cost bucket
+    /// Returns Vec of (bucket_name, total_cost_usd)
+    pub async fn get_cost_by_bucket(&self, period_days: Option<u32>) -> Result<Vec<(String, f64)>> {
+        let conn = self.connection.lock().await;
+
+        let query = match period_days {
+            Some(days) => {
+                let mut stmt = conn.prepare(
+                    "SELECT cost_bucket, SUM(estimated_cost_usd) as cost
+                     FROM openai_usage
+                     WHERE timestamp >= datetime('now', ? || ' days')
+                     GROUP BY cost_bucket
+                     ORDER BY cost DESC",
+                )?;
+                stmt.bind((1, -(days as i64)))?;
+                let mut results = Vec::new();
+                while let sqlite::State::Row = stmt.next()? {
+                    let bucket: String = stmt.read(0)?;
+                    let cost: f64 = stmt.read(1)?;
+                    results.push((bucket, cost));
+                }
+                results
+            }
+            None => {
+                let mut stmt = conn.prepare(
+                    "SELECT cost_bucket, SUM(estimated_cost_usd) as cost
+                     FROM openai_usage
+                     GROUP BY cost_bucket
+                     ORDER BY cost DESC",
+                )?;
+                let mut results = Vec::new();
+                while let sqlite::State::Row = stmt.next()? {
+                    let bucket: String = stmt.read(0)?;
+                    let cost: f64 = stmt.read(1)?;
+                    results.push((bucket, cost));
+                }
+                results
+            }
+        };
+
+        Ok(query)
     }
 
     /// Get usage statistics for a user within a date range

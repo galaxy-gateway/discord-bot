@@ -16,7 +16,7 @@
 //! - 1.1.0: Added structured output posting (URL -> summary -> file)
 //! - 1.0.0: Initial release
 
-use crate::features::analytics::UsageTracker;
+use crate::features::analytics::{CostBucket, UsageTracker};
 use crate::features::plugins::config::OutputConfig;
 use anyhow::Result;
 use log::{info, warn};
@@ -844,6 +844,7 @@ impl OutputHandler {
                 ctx.guild_id.as_deref(),
                 ctx.channel_id.as_deref(),
                 request_id.as_deref(),
+                CostBucket::Plugin,
             );
             info!(
                 "Logged plugin AI usage: {} tokens for user {} ({})",

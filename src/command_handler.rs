@@ -2,8 +2,7 @@ use crate::commands::slash::{
     get_bool_option, get_channel_option, get_integer_option, get_role_option, get_string_option,
 };
 use crate::database::Database;
-use crate::features::analytics::InteractionTracker;
-use crate::features::analytics::UsageTracker;
+use crate::features::analytics::{CostBucket, InteractionTracker, UsageTracker};
 use crate::features::audio::transcriber::AudioTranscriber;
 use crate::features::conflict::{ConflictDetector, ConflictMediator};
 use crate::features::council::{get_active_councils, CouncilState};
@@ -2586,6 +2585,7 @@ Use the buttons below for more help or to try custom prompts!"#;
                     &user_id,
                     guild_id_opt,
                     Some(&channel_id_str),
+                    CostBucket::Imagine,
                 );
 
                 // Download the image
@@ -3219,6 +3219,7 @@ Use the buttons below for more help or to try custom prompts!"#;
                 guild_id,
                 channel_id,
                 Some(&request_id.to_string()),
+                CostBucket::Ask,
             );
         }
 
@@ -3292,6 +3293,7 @@ Use the buttons below for more help or to try custom prompts!"#;
                             &user_id,
                             guild_id_opt,
                             Some(&msg.channel_id.to_string()),
+                            CostBucket::Transcription,
                         );
 
                         if transcription.trim().is_empty() {
@@ -4629,6 +4631,7 @@ Use the buttons below for more help or to try custom prompts!"#;
                         guild_id.as_deref(),
                         Some(&channel_id_str),
                         Some(&request_id.to_string()),
+                        CostBucket::Introspect,
                     );
                 }
                 completion
@@ -5330,6 +5333,7 @@ Use the buttons below for more help or to try custom prompts!"#;
                 guild_id,
                 Some(channel_id),
                 None,
+                CostBucket::Mediation,
             );
         }
 
@@ -5905,6 +5909,7 @@ Use the buttons below for more help or to try custom prompts!"#;
                             gid.as_deref(),
                             Some(&cid),
                             None, // No request_id for debate turns
+                            CostBucket::Debate,
                         );
                     }
 
@@ -6491,6 +6496,7 @@ Use the buttons below for more help or to try custom prompts!"#;
                                 guild_id_clone.as_deref(),
                                 Some(&channel_id_str),
                                 Some(&request_id.to_string()),
+                                CostBucket::Council,
                             );
                         }
 
@@ -6712,6 +6718,7 @@ Use the buttons below for more help or to try custom prompts!"#;
                                 guild_id.as_deref(),
                                 Some(&channel_id_str),
                                 Some(&request_id.to_string()),
+                                CostBucket::Council,
                             );
                         }
 

@@ -9,6 +9,7 @@ use serenity::prelude::Context;
 
 use crate::commands::CommandHandler;
 use crate::database::Database;
+use crate::features::analytics::CostBucket;
 use crate::features::personas::PersonaManager;
 
 /// Handler for all message component interactions
@@ -739,6 +740,7 @@ impl MessageComponentHandler {
                             gid.as_deref(),
                             Some(&cid),
                             None,
+                            CostBucket::Debate,
                         );
                     }
 
@@ -944,6 +946,7 @@ impl MessageComponentHandler {
                             gid.as_deref(),
                             Some(&cid),
                             None,
+                            CostBucket::Debate,
                         );
                     }
 
@@ -1130,6 +1133,7 @@ impl MessageComponentHandler {
                             guild_id.as_deref(),
                             Some(&thread_id.to_string()),
                             None,
+                            CostBucket::Council,
                         );
                     }
                     completion
@@ -1321,6 +1325,7 @@ impl MessageComponentHandler {
                                 guild_id.as_deref(),
                                 Some(&thread_id.to_string()),
                                 None,
+                                CostBucket::Council,
                             );
                         }
                         completion

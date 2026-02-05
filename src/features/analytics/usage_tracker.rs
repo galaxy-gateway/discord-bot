@@ -3,11 +3,12 @@
 //! Captures and stores OpenAI API usage metrics for cost analysis and monitoring.
 //! Supports ChatCompletion tokens, Whisper audio duration, and DALL-E image generation.
 //!
-//! - **Version**: 1.0.0
+//! - **Version**: 1.1.0
 //! - **Since**: 0.5.0
 //! - **Toggleable**: false
 //!
 //! ## Changelog
+//! - 1.1.0: Added CostBucket categorization to track usage by feature purpose
 //! - 1.0.0: Initial release with async background logging
 
 use crate::database::Database;
@@ -86,6 +87,49 @@ pub mod pricing {
     }
 }
 
+/// Categorizes API usage by the feature/purpose that triggered it
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CostBucket {
+    /// Generic /ask responses
+    Ask,
+    /// /introspect command
+    Introspect,
+    /// Conflict mediation
+    Mediation,
+    /// /debate turns
+    Debate,
+    /// /council responses
+    Council,
+    /// Scheduled reminders
+    Reminder,
+    /// CLI plugin responses
+    Plugin,
+    /// Whisper audio transcription
+    Transcription,
+    /// DALL-E image generation
+    Imagine,
+    /// Legacy data or unknown source
+    Unknown,
+}
+
+impl CostBucket {
+    /// Get the string representation for database storage
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            CostBucket::Ask => "ask",
+            CostBucket::Introspect => "introspect",
+            CostBucket::Mediation => "mediation",
+            CostBucket::Debate => "debate",
+            CostBucket::Council => "council",
+            CostBucket::Reminder => "reminder",
+            CostBucket::Plugin => "plugin",
+            CostBucket::Transcription => "transcription",
+            CostBucket::Imagine => "imagine",
+            CostBucket::Unknown => "unknown",
+        }
+    }
+}
+
 /// Types of OpenAI API usage events
 #[derive(Debug, Clone)]
 pub enum UsageEvent {
@@ -99,6 +143,7 @@ pub enum UsageEvent {
         guild_id: Option<String>,
         channel_id: Option<String>,
         request_id: Option<String>,
+        cost_bucket: CostBucket,
     },
     /// Whisper transcription API
     Whisper {
@@ -106,6 +151,7 @@ pub enum UsageEvent {
         user_id: String,
         guild_id: Option<String>,
         channel_id: Option<String>,
+        cost_bucket: CostBucket,
     },
     /// DALL-E image generation API
     DallE {
@@ -115,6 +161,7 @@ pub enum UsageEvent {
         user_id: String,
         guild_id: Option<String>,
         channel_id: Option<String>,
+        cost_bucket: CostBucket,
     },
 }
 
@@ -136,6 +183,7 @@ impl UsageTracker {
     }
 
     /// Log a ChatCompletion usage event (non-blocking)
+    #[allow(clippy::too_many_arguments)]
     pub fn log_chat(
         &self,
         model: &str,
@@ -146,6 +194,7 @@ impl UsageTracker {
         guild_id: Option<&str>,
         channel_id: Option<&str>,
         request_id: Option<&str>,
+        cost_bucket: CostBucket,
     ) {
         let event = UsageEvent::Chat {
             model: model.to_string(),
@@ -156,6 +205,7 @@ impl UsageTracker {
             guild_id: guild_id.map(String::from),
             channel_id: channel_id.map(String::from),
             request_id: request_id.map(String::from),
+            cost_bucket,
         };
 
         if let Err(e) = self.sender.send(event) {
@@ -170,12 +220,14 @@ impl UsageTracker {
         user_id: &str,
         guild_id: Option<&str>,
         channel_id: Option<&str>,
+        cost_bucket: CostBucket,
     ) {
         let event = UsageEvent::Whisper {
             audio_duration_seconds,
             user_id: user_id.to_string(),
             guild_id: guild_id.map(String::from),
             channel_id: channel_id.map(String::from),
+            cost_bucket,
         };
 
         if let Err(e) = self.sender.send(event) {
@@ -192,6 +244,7 @@ impl UsageTracker {
         user_id: &str,
         guild_id: Option<&str>,
         channel_id: Option<&str>,
+        cost_bucket: CostBucket,
     ) {
         let event = UsageEvent::DallE {
             size: size.to_string(),
@@ -200,6 +253,7 @@ impl UsageTracker {
             user_id: user_id.to_string(),
             guild_id: guild_id.map(String::from),
             channel_id: channel_id.map(String::from),
+            cost_bucket,
         };
 
         if let Err(e) = self.sender.send(event) {
@@ -231,6 +285,7 @@ impl UsageTracker {
                 guild_id,
                 channel_id,
                 request_id,
+                cost_bucket,
             } => {
                 let cost = pricing::calculate_chat_cost(model, *input_tokens, *output_tokens);
 
@@ -245,12 +300,13 @@ impl UsageTracker {
                         guild_id.as_deref(),
                         channel_id.as_deref(),
                         request_id.as_deref(),
+                        cost_bucket.as_str(),
                     )
                     .await?;
 
                 debug!(
-                    "Logged chat usage: {} tokens (model: {}, cost: ${:.6})",
-                    total_tokens, model, cost
+                    "Logged chat usage: {} tokens (model: {}, bucket: {}, cost: ${:.6})",
+                    total_tokens, model, cost_bucket.as_str(), cost
                 );
             }
             UsageEvent::Whisper {
@@ -258,6 +314,7 @@ impl UsageTracker {
                 user_id,
                 guild_id,
                 channel_id,
+                cost_bucket,
             } => {
                 let cost = pricing::calculate_whisper_cost(*audio_duration_seconds);
 
@@ -268,12 +325,13 @@ impl UsageTracker {
                         user_id,
                         guild_id.as_deref(),
                         channel_id.as_deref(),
+                        cost_bucket.as_str(),
                     )
                     .await?;
 
                 debug!(
-                    "Logged Whisper usage: {:.1}s audio (cost: ${:.6})",
-                    audio_duration_seconds, cost
+                    "Logged Whisper usage: {:.1}s audio (bucket: {}, cost: ${:.6})",
+                    audio_duration_seconds, cost_bucket.as_str(), cost
                 );
             }
             UsageEvent::DallE {
@@ -283,6 +341,7 @@ impl UsageTracker {
                 user_id,
                 guild_id,
                 channel_id,
+                cost_bucket,
             } => {
                 let cost = pricing::calculate_dalle_cost(size, quality, *image_count);
 
@@ -294,12 +353,13 @@ impl UsageTracker {
                         user_id,
                         guild_id.as_deref(),
                         channel_id.as_deref(),
+                        cost_bucket.as_str(),
                     )
                     .await?;
 
                 debug!(
-                    "Logged DALL-E usage: {} image(s) at {} (cost: ${:.4})",
-                    image_count, size, cost
+                    "Logged DALL-E usage: {} image(s) at {} (bucket: {}, cost: ${:.4})",
+                    image_count, size, cost_bucket.as_str(), cost
                 );
             }
         }
