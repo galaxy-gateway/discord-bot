@@ -60,6 +60,7 @@ pub enum BotEvent {
         total_tokens: u64,
         total_calls: u64,
         cost_by_service: Vec<(String, f64)>,
+        cost_by_bucket: Vec<(String, f64)>,
         daily_breakdown: Vec<(String, f64)>,
         top_users: Vec<TopUser>,
         period_days: Option<u32>,

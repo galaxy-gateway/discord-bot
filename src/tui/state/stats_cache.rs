@@ -18,6 +18,8 @@ pub struct UsageStats {
     pub total_calls: u64,
     /// Cost by service (e.g., "chat", "image", "whisper")
     pub cost_by_service: Vec<(String, f64)>,
+    /// Cost by bucket (e.g., "ask", "debate", "council")
+    pub cost_by_bucket: Vec<(String, f64)>,
     /// Daily breakdown (date string, cost)
     pub daily_breakdown: Vec<(String, f64)>,
     /// Top users by cost with optional username

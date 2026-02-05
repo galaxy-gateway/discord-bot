@@ -2309,7 +2309,8 @@ impl Database {
     }
 
     /// Get global usage statistics across all users and guilds
-    /// Returns (total_cost, period_cost, total_tokens, total_calls, cost_by_service, daily_breakdown, top_users)
+    /// Returns (total_cost, period_cost, total_tokens, total_calls, cost_by_service, cost_by_bucket, daily_breakdown, top_users)
+    #[allow(clippy::type_complexity)]
     pub async fn get_global_usage_stats(
         &self,
         period_days: Option<u32>,
@@ -2318,6 +2319,7 @@ impl Database {
         f64,
         u64,
         u64,
+        Vec<(String, f64)>,
         Vec<(String, f64)>,
         Vec<(String, f64)>,
         Vec<(String, Option<String>, f64)>,
@@ -2396,6 +2398,29 @@ impl Database {
             results
         };
 
+        // Cost by bucket (for period or all time)
+        let cost_by_bucket: Vec<(String, f64)> = {
+            let mut results = Vec::new();
+            let query = if let Some(days) = period_days {
+                format!(
+                    "SELECT cost_bucket, SUM(estimated_cost_usd) as cost FROM openai_usage \
+                     WHERE timestamp >= datetime('now', '-{} days') GROUP BY cost_bucket ORDER BY cost DESC",
+                    days
+                )
+            } else {
+                "SELECT cost_bucket, SUM(estimated_cost_usd) as cost FROM openai_usage \
+                 GROUP BY cost_bucket ORDER BY cost DESC"
+                    .to_string()
+            };
+            let mut stmt = conn.prepare(&query)?;
+            while let Ok(State::Row) = stmt.next() {
+                let bucket = stmt.read::<String, _>(0)?;
+                let cost = stmt.read::<f64, _>(1)?;
+                results.push((bucket, cost));
+            }
+            results
+        };
+
         // Daily breakdown (last 14 days or period)
         let daily_breakdown: Vec<(String, f64)> = {
             let mut results = Vec::new();
@@ -2449,6 +2474,7 @@ impl Database {
             total_tokens,
             total_calls,
             cost_by_service,
+            cost_by_bucket,
             daily_breakdown,
             top_users,
         ))

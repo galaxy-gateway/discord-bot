@@ -282,6 +282,7 @@ impl App {
                 total_tokens,
                 total_calls,
                 cost_by_service,
+                cost_by_bucket,
                 daily_breakdown,
                 top_users,
                 period_days: _,
@@ -291,6 +292,7 @@ impl App {
                 self.stats_cache.usage.total_tokens = total_tokens;
                 self.stats_cache.usage.total_calls = total_calls;
                 self.stats_cache.usage.cost_by_service = cost_by_service;
+                self.stats_cache.usage.cost_by_bucket = cost_by_bucket;
                 self.stats_cache.usage.daily_breakdown = daily_breakdown;
                 self.stats_cache.usage.top_users = top_users;
                 self.stats_cache.complete_refresh();

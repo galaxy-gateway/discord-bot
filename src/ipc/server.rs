@@ -670,6 +670,7 @@ impl IpcServer {
                             total_tokens,
                             total_calls,
                             cost_by_service,
+                            cost_by_bucket,
                             daily_breakdown,
                             top_users_raw,
                         )) => {
@@ -688,6 +689,7 @@ impl IpcServer {
                                 total_tokens,
                                 total_calls,
                                 cost_by_service,
+                                cost_by_bucket,
                                 daily_breakdown,
                                 top_users,
                                 period_days,

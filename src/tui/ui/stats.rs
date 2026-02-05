@@ -24,10 +24,14 @@ pub fn render_stats(frame: &mut Frame, app: &App, area: Rect) {
     // System metrics sparklines
     render_system_sparklines(frame, app, chunks[1]);
 
-    // Main content
+    // Main content: 3 columns
     let main_chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .constraints([
+            Constraint::Percentage(33), // Left: Cost summary + Service
+            Constraint::Percentage(34), // Center: Cost by bucket
+            Constraint::Percentage(33), // Right: Daily + Users
+        ])
         .split(chunks[2]);
 
     let left_chunks = Layout::default()
@@ -44,10 +48,11 @@ pub fn render_stats(frame: &mut Frame, app: &App, area: Rect) {
             Constraint::Length(10), // Daily chart
             Constraint::Min(0),     // Top users
         ])
-        .split(main_chunks[1]);
+        .split(main_chunks[2]);
 
     render_cost_summary(frame, app, left_chunks[0]);
     render_cost_by_service(frame, app, left_chunks[1]);
+    render_cost_by_bucket(frame, app, main_chunks[1]);
     render_daily_chart(frame, app, right_chunks[0]);
     render_top_users(frame, app, right_chunks[1]);
 }
@@ -200,6 +205,71 @@ fn render_cost_by_service(frame: &mut Frame, app: &App, area: Rect) {
 
     let list = List::new(items)
         .block(titled_block("Cost by Service"))
+        .style(Style::default().fg(Color::White));
+
+    frame.render_widget(list, area);
+}
+
+fn render_cost_by_bucket(frame: &mut Frame, app: &App, area: Rect) {
+    let stats = &app.stats_cache.usage;
+
+    if stats.cost_by_bucket.is_empty() {
+        let paragraph = Paragraph::new("No bucket data available")
+            .block(titled_block("Cost by Feature"))
+            .style(Style::default().fg(Color::DarkGray))
+            .alignment(Alignment::Center);
+        frame.render_widget(paragraph, area);
+        return;
+    }
+
+    // Calculate max cost for scaling bars
+    let max_cost = stats
+        .cost_by_bucket
+        .iter()
+        .map(|(_, c)| *c)
+        .fold(0.0f64, f64::max);
+
+    let items: Vec<ListItem> = stats
+        .cost_by_bucket
+        .iter()
+        .map(|(bucket, cost)| {
+            let bar_width = if max_cost > 0.0 {
+                ((cost / max_cost) * 15.0) as usize
+            } else {
+                0
+            };
+            let bar: String = "█".repeat(bar_width);
+
+            // Color code by bucket type
+            let bucket_color = match bucket.as_str() {
+                "ask" => Color::Cyan,
+                "debate" => Color::Yellow,
+                "council" => Color::Magenta,
+                "mediation" => Color::Red,
+                "introspect" => Color::Blue,
+                "reminder" => Color::Green,
+                "plugin" => Color::LightBlue,
+                "transcription" => Color::LightGreen,
+                "imagine" => Color::LightMagenta,
+                _ => Color::DarkGray,
+            };
+
+            ListItem::new(Line::from(vec![
+                Span::styled(
+                    format!("{:<14}", bucket),
+                    Style::default().fg(bucket_color),
+                ),
+                Span::styled(
+                    format!("{:>9} ", format_currency(*cost)),
+                    Style::default().fg(Color::Green),
+                ),
+                Span::styled(bar, Style::default().fg(bucket_color)),
+            ]))
+        })
+        .collect();
+
+    let list = List::new(items)
+        .block(titled_block("Cost by Feature"))
         .style(Style::default().fg(Color::White));
 
     frame.render_widget(list, area);
