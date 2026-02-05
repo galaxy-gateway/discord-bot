@@ -175,7 +175,7 @@ pub const FEATURES: &[Feature] = &[
     Feature {
         id: "usage_tracking",
         name: "Usage Tracking",
-        version: "1.1.0",
+        version: "1.2.0",
         since: "0.5.0",
         toggleable: false,
         description: "OpenAI API usage and cost tracking with /usage command",
