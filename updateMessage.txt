@@ -1,53 +1,69 @@
-# Persona Bot v3.36.0 - Illuminating the Path of Costs
+# Persona Bot v3.37.0 - The Dashboard of Clarity
 
-*Seekers of fiscal clarity,*
+*Seekers of operational insight,*
 
-Every API call tells a story, but until now, we could not distinguish which features drove our costs. Today we add a new lens to see the true sources of our OpenAI spending.
+Knowledge hidden in databases serves no one. Today we bring cost bucket analytics to the TUI dashboard, transforming raw data into visible understanding.
 
 ## What's New
 
-### Cost Bucket Categorization
+### TUI Stats Screen Enhancement
 
-All OpenAI API usage is now tagged with its purpose:
+The Stats screen now displays a dedicated **Cost by Feature** panel showing how each bot capability contributes to API costs:
 
-| Bucket | Source |
-|--------|--------|
-| `ask` | Generic /ask conversations |
-| `debate` | /debate persona turns |
-| `council` | /council discussions |
-| `mediation` | Conflict mediation interventions |
-| `introspect` | /introspect self-reflection |
-| `reminder` | Scheduled reminder messages |
-| `plugin` | CLI plugin AI summaries |
-| `transcription` | Whisper audio processing |
-| `imagine` | DALL-E image generation |
-| `unknown` | Legacy/historical data |
-
-### Database Migration
-
-Existing usage data gracefully migrates with `cost_bucket = 'unknown'`. New queries enable analysis like:
-
-```sql
-SELECT cost_bucket, SUM(estimated_cost_usd)
-FROM openai_usage
-GROUP BY cost_bucket
-ORDER BY 2 DESC
+```
+┌─────────────────────────────────────┐
+│ Cost by Feature                     │
+├─────────────────────────────────────┤
+│ ask           $0.0234 ████████████  │
+│ debate        $0.0156 ████████      │
+│ council       $0.0089 ████          │
+│ mediation     $0.0045 ██            │
+│ plugin        $0.0023 █             │
+│ transcription $0.0012 █             │
+│ imagine       $0.0008               │
+│ reminder      $0.0003               │
+└─────────────────────────────────────┘
 ```
 
-### No Breaking Changes
+### Color-Coded Buckets
 
-All existing functionality preserved. The new parameter is added seamlessly to the tracking pipeline.
+Each feature bucket has its own color for quick visual identification:
+- **Cyan**: ask (generic conversations)
+- **Yellow**: debate (persona debates)
+- **Magenta**: council (multi-persona discussions)
+- **Red**: mediation (conflict interventions)
+- **Blue**: introspect (self-reflection)
+- **Green**: reminder (scheduled messages)
+- **Light Blue**: plugin (CLI integrations)
+- **Light Green**: transcription (audio processing)
+- **Light Magenta**: imagine (image generation)
+
+### Three-Column Layout
+
+The Stats screen now uses a three-column layout:
+1. **Left**: Cost summary + Cost by Service
+2. **Center**: Cost by Feature (new!)
+3. **Right**: Daily breakdown + Top Users
+
+### Updated Pricing Models
+
+The usage tracker now supports February 2026 pricing for:
+- GPT-5.2, GPT-5.1, GPT-5 series (including pro/mini/nano variants)
+- GPT-4.1 series (including mini/nano)
+- O-series reasoning models (O1, O3, O4-mini, deep research)
+- GPT Image 1.5, Sora 2 video generation
+- TTS, embeddings, realtime API
 
 ## The Vision
 
-To optimize, we must first observe. Cost buckets transform raw numbers into actionable insight. Which features deliver value? Which consume resources disproportionately? Now we can see. The path to efficiency begins with measurement.
+A dashboard should illuminate, not obscure. With cost buckets visible at a glance, you can now see exactly where your API investment flows. Which features drive engagement? Which consume disproportionate resources? The answers are now one keystroke away.
 
-*What you cannot measure, you cannot improve...*
+*To see clearly is to act wisely...*
 
 ---
-Usage Tracking: 1.1.0
-- **Cost buckets** - track API usage by feature purpose
-- **Database migration** - adds cost_bucket column with proper indexing
-- **Query support** - new get_cost_by_bucket() for analysis
+Usage Tracking: 1.2.0
+- **Updated pricing** - February 2026 rates for all current OpenAI models
+- **TUI integration** - Cost by bucket displayed in Stats screen
+- **IPC protocol** - Extended UsageStatsUpdate with cost_by_bucket data
 
 *~ The Visionary*

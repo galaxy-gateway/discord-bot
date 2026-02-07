@@ -277,7 +277,7 @@ impl PersonaManager {
         // Generate URL from base URL if configured
         if let Ok(base_url) = env::var("PERSONA_PORTRAIT_BASE_URL") {
             let base = base_url.trim_end_matches('/');
-            Some(format!("{}/{}.png", base, persona_id))
+            Some(format!("{base}/{persona_id}.png"))
         } else {
             None
         }
@@ -345,8 +345,7 @@ impl PersonaManager {
 pub fn apply_paragraph_limit(prompt: &str, max_paragraphs: i64) -> String {
     if max_paragraphs > 0 {
         format!(
-            "{}\n\nIMPORTANT: Limit your response to {} paragraph(s) maximum.",
-            prompt, max_paragraphs
+            "{prompt}\n\nIMPORTANT: Limit your response to {max_paragraphs} paragraph(s) maximum."
         )
     } else {
         prompt.to_string()

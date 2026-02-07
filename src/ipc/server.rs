@@ -119,7 +119,7 @@ impl IpcServer {
         }
 
         let listener = UnixListener::bind(&socket_path)?;
-        info!("IPC server listening on {}", socket_path);
+        info!("IPC server listening on {socket_path}");
 
         // Spawn the accept loop
         let server = self.clone();
@@ -130,8 +130,7 @@ impl IpcServer {
                         let client_count = *server.client_count.read().await;
                         if client_count >= MAX_CLIENTS {
                             warn!(
-                                "Maximum IPC clients reached ({}), rejecting connection",
-                                MAX_CLIENTS
+                                "Maximum IPC clients reached ({MAX_CLIENTS}), rejecting connection"
                             );
                             continue;
                         }
@@ -143,14 +142,14 @@ impl IpcServer {
                         let client_count_ref = server.client_count.clone();
                         tokio::spawn(async move {
                             if let Err(e) = server_clone.handle_client(stream).await {
-                                debug!("Client handler ended: {}", e);
+                                debug!("Client handler ended: {e}");
                             }
                             *client_count_ref.write().await -= 1;
                             info!("TUI client disconnected");
                         });
                     }
                     Err(e) => {
-                        error!("Failed to accept IPC connection: {}", e);
+                        error!("Failed to accept IPC connection: {e}");
                     }
                 }
             }
@@ -173,21 +172,21 @@ impl IpcServer {
                     Ok(event) => match encode_message(&event) {
                         Ok(data) => {
                             if let Err(e) = writer.write_all(&data).await {
-                                debug!("Failed to write to client: {}", e);
+                                debug!("Failed to write to client: {e}");
                                 break;
                             }
                             if let Err(e) = writer.flush().await {
-                                debug!("Failed to flush to client: {}", e);
+                                debug!("Failed to flush to client: {e}");
                                 break;
                             }
                         }
                         Err(e) => {
-                            error!("Failed to encode event: {}", e);
+                            error!("Failed to encode event: {e}");
                         }
                     },
                     Err(broadcast::error::RecvError::Closed) => break,
                     Err(broadcast::error::RecvError::Lagged(n)) => {
-                        warn!("Client lagged behind by {} events", n);
+                        warn!("Client lagged behind by {n} events");
                     }
                 }
             }
@@ -206,7 +205,7 @@ impl IpcServer {
             let len = u32::from_be_bytes(len_buf) as usize;
 
             if len > 10 * 1024 * 1024 {
-                error!("Message too large from client: {} bytes", len);
+                error!("Message too large from client: {len} bytes");
                 break;
             }
 
@@ -223,23 +222,23 @@ impl IpcServer {
                     match &cmd {
                         TuiCommand::WatchChannel { channel_id } => {
                             watched_channels.write().await.insert(*channel_id);
-                            debug!("Now watching channel {}", channel_id);
+                            debug!("Now watching channel {channel_id}");
                         }
                         TuiCommand::UnwatchChannel { channel_id } => {
                             watched_channels.write().await.remove(channel_id);
-                            debug!("Stopped watching channel {}", channel_id);
+                            debug!("Stopped watching channel {channel_id}");
                         }
                         _ => {}
                     }
 
                     // Forward command to bot
                     if let Err(e) = command_tx.send(cmd).await {
-                        error!("Failed to forward command: {}", e);
+                        error!("Failed to forward command: {e}");
                         break;
                     }
                 }
                 Err(e) => {
-                    warn!("Failed to parse command from client: {}", e);
+                    warn!("Failed to parse command from client: {e}");
                 }
             }
         }
@@ -333,13 +332,13 @@ impl IpcServer {
     /// Add a watched channel
     pub async fn add_watched_channel(&self, channel_id: u64) {
         self.watched_channels.write().await.insert(channel_id);
-        debug!("Added watched channel {}", channel_id);
+        debug!("Added watched channel {channel_id}");
     }
 
     /// Remove a watched channel
     pub async fn remove_watched_channel(&self, channel_id: u64) {
         self.watched_channels.write().await.remove(&channel_id);
-        debug!("Removed watched channel {}", channel_id);
+        debug!("Removed watched channel {channel_id}");
     }
 
     /// Get list of watched channels
@@ -354,7 +353,7 @@ impl IpcServer {
                 .cache_user(user_id, username, discriminator, is_bot)
                 .await
             {
-                warn!("Failed to cache user {}: {}", user_id, e);
+                warn!("Failed to cache user {user_id}: {e}");
             }
         }
     }
@@ -389,17 +388,16 @@ impl IpcServer {
             }
             TuiCommand::WatchChannel { channel_id } => {
                 // Already handled in handle_client, but log it
-                debug!("WatchChannel command processed for channel {}", channel_id);
+                debug!("WatchChannel command processed for channel {channel_id}");
             }
             TuiCommand::UnwatchChannel { channel_id } => {
                 // Already handled in handle_client, but log it
                 debug!(
-                    "UnwatchChannel command processed for channel {}",
-                    channel_id
+                    "UnwatchChannel command processed for channel {channel_id}"
                 );
             }
             TuiCommand::Pong { timestamp } => {
-                debug!("Received Pong with timestamp {}", timestamp);
+                debug!("Received Pong with timestamp {timestamp}");
             }
             TuiCommand::SendMessage {
                 request_id,
@@ -426,11 +424,11 @@ impl IpcServer {
                             });
                         }
                         Err(e) => {
-                            error!("Failed to send message to channel {}: {}", channel_id, e);
+                            error!("Failed to send message to channel {channel_id}: {e}");
                             self.broadcast(BotEvent::CommandResponse {
                                 request_id,
                                 success: false,
-                                message: Some(format!("Failed to send message: {}", e)),
+                                message: Some(format!("Failed to send message: {e}")),
                                 data: None,
                             });
                         }
@@ -479,8 +477,7 @@ impl IpcServer {
                                 .await;
 
                             info!(
-                                "Feature '{}' set to {} for guild {:?}",
-                                feature, enabled, guild_id
+                                "Feature '{feature}' set to {enabled} for guild {guild_id:?}"
                             );
                             self.broadcast(BotEvent::CommandResponse {
                                 request_id,
@@ -494,11 +491,11 @@ impl IpcServer {
                             });
                         }
                         Err(e) => {
-                            error!("Failed to set feature flag: {}", e);
+                            error!("Failed to set feature flag: {e}");
                             self.broadcast(BotEvent::CommandResponse {
                                 request_id,
                                 success: false,
-                                message: Some(format!("Failed to set feature: {}", e)),
+                                message: Some(format!("Failed to set feature: {e}")),
                                 data: None,
                             });
                         }
@@ -535,22 +532,21 @@ impl IpcServer {
                     {
                         Ok(_) => {
                             info!(
-                                "Channel {} persona set to '{}' in guild {}",
-                                channel_id, persona, guild_id
+                                "Channel {channel_id} persona set to '{persona}' in guild {guild_id}"
                             );
                             self.broadcast(BotEvent::CommandResponse {
                                 request_id,
                                 success: true,
-                                message: Some(format!("Channel persona set to '{}'", persona)),
+                                message: Some(format!("Channel persona set to '{persona}'")),
                                 data: None,
                             });
                         }
                         Err(e) => {
-                            error!("Failed to set channel persona: {}", e);
+                            error!("Failed to set channel persona: {e}");
                             self.broadcast(BotEvent::CommandResponse {
                                 request_id,
                                 success: false,
-                                message: Some(format!("Failed to set channel persona: {}", e)),
+                                message: Some(format!("Failed to set channel persona: {e}")),
                                 data: None,
                             });
                         }
@@ -578,22 +574,21 @@ impl IpcServer {
                     {
                         Ok(_) => {
                             info!(
-                                "Guild setting '{}' set to '{}' for guild {}",
-                                key, value, guild_id
+                                "Guild setting '{key}' set to '{value}' for guild {guild_id}"
                             );
                             self.broadcast(BotEvent::CommandResponse {
                                 request_id,
                                 success: true,
-                                message: Some(format!("Setting '{}' updated to '{}'", key, value)),
+                                message: Some(format!("Setting '{key}' updated to '{value}'")),
                                 data: None,
                             });
                         }
                         Err(e) => {
-                            error!("Failed to set guild setting: {}", e);
+                            error!("Failed to set guild setting: {e}");
                             self.broadcast(BotEvent::CommandResponse {
                                 request_id,
                                 success: false,
-                                message: Some(format!("Failed to set setting: {}", e)),
+                                message: Some(format!("Failed to set setting: {e}")),
                                 data: None,
                             });
                         }
@@ -651,10 +646,10 @@ impl IpcServer {
                                 channel_id,
                                 messages: display_messages,
                             });
-                            debug!("Sent ChannelHistoryResponse with {} messages", msg_count);
+                            debug!("Sent ChannelHistoryResponse with {msg_count} messages");
                         }
                         Err(e) => {
-                            warn!("Failed to get channel history: {}", e);
+                            warn!("Failed to get channel history: {e}");
                         }
                     }
                 } else {
@@ -697,7 +692,7 @@ impl IpcServer {
                             debug!("Sent UsageStatsUpdate response");
                         }
                         Err(e) => {
-                            warn!("Failed to get usage stats: {}", e);
+                            warn!("Failed to get usage stats: {e}");
                         }
                     }
                 } else {
@@ -760,12 +755,12 @@ impl IpcServer {
                         message_count: 0, // Would need to query Discord
                         last_activity: None,
                     });
-                    debug!("Sent ChannelInfoResponse for channel {}", channel_id);
+                    debug!("Sent ChannelInfoResponse for channel {channel_id}");
                 } else {
                     // Send minimal response for unknown channel
                     self.broadcast(BotEvent::ChannelInfoResponse {
                         channel_id,
-                        name: format!("{}", channel_id),
+                        name: format!("{channel_id}"),
                         guild_id: None,
                         guild_name: None,
                         message_count: 0,
@@ -784,7 +779,7 @@ impl IpcServer {
                             debug!("Sent HistoricalMetricsResponse");
                         }
                         Err(e) => {
-                            warn!("Failed to get historical metrics: {}", e);
+                            warn!("Failed to get historical metrics: {e}");
                         }
                     }
                 }
@@ -798,7 +793,7 @@ impl IpcServer {
                                 .map(|e| {
                                     let last_activity = e.last_activity.and_then(|s| {
                                         NaiveDateTime::parse_from_str(
-                                            &format!("{} 00:00:00", s),
+                                            &format!("{s} 00:00:00"),
                                             "%Y-%m-%d %H:%M:%S",
                                         )
                                         .map(|dt| {
@@ -821,7 +816,7 @@ impl IpcServer {
                             debug!("Sent UserListResponse");
                         }
                         Err(e) => {
-                            warn!("Failed to get user list: {}", e);
+                            warn!("Failed to get user list: {e}");
                         }
                     }
                 }
@@ -832,7 +827,7 @@ impl IpcServer {
                         Ok(details) => {
                             let first_seen = details.first_seen.and_then(|s| {
                                 NaiveDateTime::parse_from_str(
-                                    &format!("{} 00:00:00", s),
+                                    &format!("{s} 00:00:00"),
                                     "%Y-%m-%d %H:%M:%S",
                                 )
                                 .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc))
@@ -840,7 +835,7 @@ impl IpcServer {
                             });
                             let last_activity = details.last_activity.and_then(|s| {
                                 NaiveDateTime::parse_from_str(
-                                    &format!("{} 00:00:00", s),
+                                    &format!("{s} 00:00:00"),
                                     "%Y-%m-%d %H:%M:%S",
                                 )
                                 .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc))
@@ -906,7 +901,7 @@ impl IpcServer {
                             debug!("Sent UserDetailsResponse");
                         }
                         Err(e) => {
-                            warn!("Failed to get user details: {}", e);
+                            warn!("Failed to get user details: {e}");
                         }
                     }
                 }
@@ -940,7 +935,7 @@ impl IpcServer {
                             debug!("Sent RecentErrorsResponse");
                         }
                         Err(e) => {
-                            warn!("Failed to get recent errors: {}", e);
+                            warn!("Failed to get recent errors: {e}");
                         }
                     }
                 }
@@ -1026,7 +1021,7 @@ impl IpcServer {
                             debug!("Sent UserDetailsResponse for DM sessions");
                         }
                         Err(e) => {
-                            warn!("Failed to get DM sessions: {}", e);
+                            warn!("Failed to get DM sessions: {e}");
                         }
                     }
                 }
@@ -1054,7 +1049,7 @@ impl IpcServer {
                             debug!("Sent FeatureStatesResponse with {} states", states.len());
                         }
                         Err(e) => {
-                            warn!("Failed to get feature states: {}", e);
+                            warn!("Failed to get feature states: {e}");
                             // Send empty states on error
                             self.broadcast(BotEvent::FeatureStatesResponse {
                                 states: std::collections::HashMap::new(),
@@ -1126,10 +1121,10 @@ impl IpcServer {
 
                             let count = channels.len();
                             self.broadcast(BotEvent::ChannelsWithHistoryResponse { channels });
-                            debug!("Sent ChannelsWithHistoryResponse with {} channels", count);
+                            debug!("Sent ChannelsWithHistoryResponse with {count} channels");
                         }
                         Err(e) => {
-                            warn!("Failed to get channels with history: {}", e);
+                            warn!("Failed to get channels with history: {e}");
                             // Send empty response on error
                             self.broadcast(BotEvent::ChannelsWithHistoryResponse {
                                 channels: vec![],
@@ -1151,7 +1146,7 @@ impl IpcServer {
             info!("📡 IPC command processor started");
             loop {
                 if let Some(cmd) = server.try_recv_command().await {
-                    debug!("Processing TUI command: {:?}", cmd);
+                    debug!("Processing TUI command: {cmd:?}");
                     server.process_command(cmd).await;
                 }
                 // Small sleep to avoid busy-waiting

@@ -1504,6 +1504,7 @@ name = "persona"
 version = "3.36.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "chrono",
  "crossterm",
  "dashmap",

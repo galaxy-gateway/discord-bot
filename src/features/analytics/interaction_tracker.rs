@@ -201,7 +201,7 @@ impl InteractionTracker {
 
     /// Get or create a session for a DM channel
     pub fn get_or_create_session(&self, user_id: &str, channel_id: &str) -> String {
-        let key = format!("{}:{}", user_id, channel_id);
+        let key = format!("{user_id}:{channel_id}");
 
         // Check if active session exists
         if let Some(session) = self.active_sessions.get(&key) {
@@ -410,7 +410,7 @@ impl InteractionTracker {
                                 Some(reason.as_str()),
                             )
                             .await?;
-                        debug!("Session ended: {session_id} (reason: {:?})", reason);
+                        debug!("Session ended: {session_id} (reason: {reason:?})");
                     }
                 }
             }
@@ -424,15 +424,14 @@ impl InteractionTracker {
                 has_attachments,
             } => {
                 // Update active session state
-                let key = format!("{}:{}", user_id, channel_id);
+                let key = format!("{user_id}:{channel_id}");
                 if let Some(mut session) = active_sessions.get_mut(&key) {
                     session.add_user_message(character_count);
                 }
 
                 // Log event
                 let event_data = format!(
-                    r#"{{"message_id":"{}","chars":{},"attachments":{}}}"#,
-                    message_id, character_count, has_attachments
+                    r#"{{"message_id":"{message_id}","chars":{character_count},"attachments":{has_attachments}}}"#
                 );
                 database
                     .log_dm_event(
@@ -454,15 +453,14 @@ impl InteractionTracker {
                 response_time_ms,
             } => {
                 // Update active session state
-                let key = format!("{}:{}", user_id, channel_id);
+                let key = format!("{user_id}:{channel_id}");
                 if let Some(mut session) = active_sessions.get_mut(&key) {
                     session.add_bot_message(character_count, response_time_ms);
                 }
 
                 // Log event
                 let event_data = format!(
-                    r#"{{"message_id":"{}","chars":{},"response_time_ms":{}}}"#,
-                    message_id, character_count, response_time_ms
+                    r#"{{"message_id":"{message_id}","chars":{character_count},"response_time_ms":{response_time_ms}}}"#
                 );
                 database
                     .log_dm_event(
@@ -516,8 +514,7 @@ impl InteractionTracker {
                 };
 
                 let event_data = format!(
-                    r#"{{"feature":"{}","detail":"{}"}}"#,
-                    feature_str, feature_detail
+                    r#"{{"feature":"{feature_str}","detail":"{feature_detail}"}}"#
                 );
                 database
                     .log_dm_event(&session_id, "feature_used", &user_id, "", Some(&event_data))

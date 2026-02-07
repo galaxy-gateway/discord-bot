@@ -76,7 +76,7 @@ impl Handler {
                 .iter()
                 .map(|a| AttachmentInfo {
                     filename: a.filename.clone(),
-                    size: a.size as u64,
+                    size: a.size,
                     url: a.url.clone(),
                 })
                 .collect(),
@@ -392,8 +392,7 @@ impl EventHandler for Handler {
                         bot_username: username,
                     });
                     info!(
-                        "📡 IPC: Sent updated Ready event with {} guilds and full channel data",
-                        guild_count
+                        "📡 IPC: Sent updated Ready event with {guild_count} guilds and full channel data"
                     );
                 }
             }
@@ -874,8 +873,7 @@ async fn main() -> Result<()> {
         Arc::new(IpcServer::new().with_database(database.clone(), config.database_path.clone()));
     if let Err(e) = ipc_server.clone().start().await {
         error!(
-            "Failed to start IPC server: {}. TUI control will be unavailable.",
-            e
+            "Failed to start IPC server: {e}. TUI control will be unavailable."
         );
     } else {
         info!("📡 IPC server started for TUI communication");
@@ -913,7 +911,7 @@ async fn main() -> Result<()> {
     let (plugins, _plugin_manager): (Vec<Plugin>, Option<Arc<PluginManager>>) =
         match PluginConfig::load(&plugins_path) {
             Ok(plugin_config) => {
-                info!("📄 Loaded plugin config from {}", plugins_path);
+                info!("📄 Loaded plugin config from {plugins_path}");
                 let plugins = plugin_config.plugins.clone();
 
                 // Create allowed commands list
@@ -939,11 +937,10 @@ async fn main() -> Result<()> {
             }
             Err(e) => {
                 if std::path::Path::new(&plugins_path).exists() {
-                    error!("❌ Failed to load plugins from {}: {}", plugins_path, e);
+                    error!("❌ Failed to load plugins from {plugins_path}: {e}");
                 } else {
                     info!(
-                        "📄 No plugins.yaml found at {} - plugin system disabled",
-                        plugins_path
+                        "📄 No plugins.yaml found at {plugins_path} - plugin system disabled"
                     );
                 }
                 (vec![], None)

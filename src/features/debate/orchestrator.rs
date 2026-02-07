@@ -130,13 +130,12 @@ impl DebateOrchestrator {
 
         // Add rules section if provided
         let rules_section = rules.map(|r| format!(
-            "\n\n## Ground Rules\nThe following rules and definitions apply to this discussion:\n{}\n",
-            r
+            "\n\n## Ground Rules\nThe following rules and definitions apply to this discussion:\n{r}\n"
         )).unwrap_or_default();
 
         // Add prior discussion context if provided
         let prior_section = prior_context
-            .map(|c| format!("\n\n{}\n", c))
+            .map(|c| format!("\n\n{c}\n"))
             .unwrap_or_default();
 
         let debate_instructions = match (is_opening, previous_debaters) {
@@ -215,8 +214,7 @@ Guidelines:
         };
 
         format!(
-            "{}{}{}{}",
-            base_prompt, rules_section, prior_section, debate_instructions
+            "{base_prompt}{rules_section}{prior_section}{debate_instructions}"
         )
     }
 
@@ -249,7 +247,7 @@ Guidelines:
         };
         embed.description(text);
 
-        embed.footer(|f| f.text(format!("Response {}/{}", round, total_rounds)));
+        embed.footer(|f| f.text(format!("Response {round}/{total_rounds}")));
 
         embed
     }
@@ -337,7 +335,7 @@ Guidelines:
 
             // Show typing indicator
             if let Err(e) = thread_id.broadcast_typing(&ctx.http).await {
-                debug!("Failed to send typing indicator: {}", e);
+                debug!("Failed to send typing indicator: {e}");
             }
 
             // Get AI response
@@ -345,7 +343,7 @@ Guidelines:
             {
                 Ok(r) => r,
                 Err(e) => {
-                    error!("Failed to get AI response for round {}: {}", round, e);
+                    error!("Failed to get AI response for round {round}: {e}");
                     // Post error message and continue
                     let _ = thread_id
                         .send_message(&ctx.http, |m| {
@@ -375,7 +373,7 @@ Guidelines:
                 .send_message(&ctx.http, |m| m.set_embed(embed))
                 .await
             {
-                error!("Failed to send debate message: {}", e);
+                error!("Failed to send debate message: {e}");
                 break;
             }
 
@@ -405,7 +403,7 @@ Guidelines:
                     c.create_action_row(|row| {
                         row.create_button(|btn| {
                             btn.custom_id(format!("debate_continue_{}", thread_id.0))
-                                .label(format!("Continue (+{} rounds)", CONTINUE_ROUNDS))
+                                .label(format!("Continue (+{CONTINUE_ROUNDS} rounds)"))
                                 .style(ButtonStyle::Primary)
                                 .emoji('🎭')
                         })
@@ -468,7 +466,7 @@ Guidelines:
             .send_message(&ctx.http, |m| {
                 m.embed(|e| {
                     e.title("Debate Continuing!")
-                        .description(format!("Adding {} more rounds...", additional_rounds))
+                        .description(format!("Adding {additional_rounds} more rounds..."))
                         .color(0x7289DA)
                 })
             })
@@ -504,14 +502,14 @@ Guidelines:
             );
 
             if let Err(e) = thread_id.broadcast_typing(&ctx.http).await {
-                debug!("Failed to send typing indicator: {}", e);
+                debug!("Failed to send typing indicator: {e}");
             }
 
             let response = match get_ai_response(system_prompt, user_message, history.clone()).await
             {
                 Ok(r) => r,
                 Err(e) => {
-                    error!("Failed to get AI response for round {}: {}", round, e);
+                    error!("Failed to get AI response for round {round}: {e}");
                     let _ = thread_id
                         .send_message(&ctx.http, |m| {
                             m.content(format!(
@@ -538,7 +536,7 @@ Guidelines:
                 .send_message(&ctx.http, |m| m.set_embed(embed))
                 .await
             {
-                error!("Failed to send debate message: {}", e);
+                error!("Failed to send debate message: {e}");
                 break;
             }
 
@@ -567,7 +565,7 @@ Guidelines:
                     c.create_action_row(|row| {
                         row.create_button(|btn| {
                             btn.custom_id(format!("debate_continue_{}", thread_id.0))
-                                .label(format!("Continue (+{} rounds)", CONTINUE_ROUNDS))
+                                .label(format!("Continue (+{CONTINUE_ROUNDS} rounds)"))
                                 .style(ButtonStyle::Primary)
                                 .emoji('🎭')
                         })
@@ -648,7 +646,7 @@ Guidelines:
 
         // Show typing indicator
         if let Err(e) = thread_id.broadcast_typing(&ctx.http).await {
-            debug!("Failed to send typing indicator: {}", e);
+            debug!("Failed to send typing indicator: {e}");
         }
 
         // Get AI response
@@ -689,7 +687,7 @@ Guidelines:
     /// End a debate and clean up state
     pub fn end_debate(thread_id: u64) {
         get_active_debates().remove(&thread_id);
-        info!("Debate ended and state cleaned up for thread {}", thread_id);
+        info!("Debate ended and state cleaned up for thread {thread_id}");
     }
 
     /// Build the closing embed for the debate

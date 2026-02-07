@@ -319,7 +319,7 @@ impl JobManager {
             plugin_name,
             user_id,
             parent_playlist_id
-                .map(|p| format!(" (playlist: {})", p))
+                .map(|p| format!(" (playlist: {p})"))
                 .unwrap_or_default()
         );
 
@@ -331,7 +331,7 @@ impl JobManager {
         if let Some(mut job) = self.jobs.get_mut(job_id) {
             job.status = JobStatus::Running;
             self.update_job_in_db(&job).await?;
-            debug!("Job {} marked as running", job_id);
+            debug!("Job {job_id} marked as running");
         }
         Ok(())
     }
@@ -343,7 +343,7 @@ impl JobManager {
             job.completed_at = Some(Utc::now());
             job.result = Some(result);
             self.update_job_in_db(&job).await?;
-            info!("Job {} completed successfully", job_id);
+            info!("Job {job_id} completed successfully");
         }
         Ok(())
     }
@@ -355,7 +355,7 @@ impl JobManager {
             job.completed_at = Some(Utc::now());
             job.error = Some(error);
             self.update_job_in_db(&job).await?;
-            warn!("Job {} failed", job_id);
+            warn!("Job {job_id} failed");
         }
         Ok(())
     }
@@ -364,7 +364,7 @@ impl JobManager {
     pub fn set_thread_id(&self, job_id: &str, thread_id: String) {
         if let Some(mut job) = self.jobs.get_mut(job_id) {
             job.thread_id = Some(thread_id);
-            debug!("Job {} thread ID set", job_id);
+            debug!("Job {job_id} thread ID set");
         }
     }
 
@@ -445,7 +445,7 @@ impl JobManager {
         self.jobs.retain(|_, job| {
             let keep = job
                 .completed_at
-                .map_or(true, |completed| completed > cutoff);
+                .is_none_or(|completed| completed > cutoff);
             if !keep {
                 removed += 1;
             }
@@ -453,7 +453,7 @@ impl JobManager {
         });
 
         if removed > 0 {
-            debug!("Cleaned up {} old jobs from memory", removed);
+            debug!("Cleaned up {removed} old jobs from memory");
         }
     }
 
@@ -517,8 +517,7 @@ impl JobManager {
         self.database.create_playlist_job(&job).await?;
 
         info!(
-            "Created playlist job {} for playlist {} ({} videos) by user {}",
-            id, playlist_id, total_videos, user_id
+            "Created playlist job {id} for playlist {playlist_id} ({total_videos} videos) by user {user_id}"
         );
 
         Ok(id)
@@ -529,7 +528,7 @@ impl JobManager {
         if let Some(mut job) = self.playlist_jobs.get_mut(job_id) {
             job.status = PlaylistJobStatus::Running;
             self.database.update_playlist_job(&job).await?;
-            debug!("Playlist job {} marked as running", job_id);
+            debug!("Playlist job {job_id} marked as running");
         }
         Ok(())
     }
@@ -538,7 +537,7 @@ impl JobManager {
     pub fn set_playlist_thread_id(&self, job_id: &str, thread_id: String) {
         if let Some(mut job) = self.playlist_jobs.get_mut(job_id) {
             job.thread_id = Some(thread_id);
-            debug!("Playlist job {} thread ID set", job_id);
+            debug!("Playlist job {job_id} thread ID set");
         }
     }
 
@@ -592,7 +591,7 @@ impl JobManager {
             job.error = Some(error.clone());
             job.current_video_job_id = None;
             self.database.update_playlist_job(&job).await?;
-            warn!("Playlist job {} failed: {}", job_id, error);
+            warn!("Playlist job {job_id} failed: {error}");
         }
         Ok(())
     }
@@ -606,7 +605,7 @@ impl JobManager {
                 job.cancelled_by = Some(cancelled_by.to_string());
                 job.current_video_job_id = None;
                 self.database.update_playlist_job(&job).await?;
-                info!("Playlist job {} cancelled by {}", job_id, cancelled_by);
+                info!("Playlist job {job_id} cancelled by {cancelled_by}");
                 return Ok(true);
             }
         }

@@ -35,7 +35,7 @@ impl IpcClient {
     pub async fn connect() -> Result<Self> {
         let socket_path = get_socket_path();
 
-        info!("Connecting to IPC server at {}", socket_path);
+        info!("Connecting to IPC server at {socket_path}");
 
         let stream = timeout(CONNECT_TIMEOUT, UnixStream::connect(&socket_path))
             .await
@@ -79,18 +79,18 @@ impl IpcClient {
                 match encode_message(&cmd) {
                     Ok(data) => {
                         if let Err(e) = writer.write_all(&data).await {
-                            error!("Failed to write command: {}", e);
+                            error!("Failed to write command: {e}");
                             *write_connected.write().await = false;
                             break;
                         }
                         if let Err(e) = writer.flush().await {
-                            error!("Failed to flush command: {}", e);
+                            error!("Failed to flush command: {e}");
                             *write_connected.write().await = false;
                             break;
                         }
                     }
                     Err(e) => {
-                        error!("Failed to encode command: {}", e);
+                        error!("Failed to encode command: {e}");
                     }
                 }
             }
@@ -104,7 +104,7 @@ impl IpcClient {
                 Ok(Ok(_)) => {}
                 Ok(Err(e)) => {
                     if e.kind() != std::io::ErrorKind::UnexpectedEof {
-                        error!("Read error: {}", e);
+                        error!("Read error: {e}");
                     }
                     break;
                 }
@@ -118,14 +118,14 @@ impl IpcClient {
             let len = u32::from_be_bytes(len_buf) as usize;
 
             if len > 10 * 1024 * 1024 {
-                error!("Message too large: {} bytes", len);
+                error!("Message too large: {len} bytes");
                 break;
             }
 
             // Read message body
             let mut buf = vec![0u8; len];
             if let Err(e) = reader.read_exact(&mut buf).await {
-                error!("Failed to read message body: {}", e);
+                error!("Failed to read message body: {e}");
                 break;
             }
 
@@ -134,7 +134,7 @@ impl IpcClient {
                 Ok(event) => {
                     // Handle heartbeat internally
                     if let BotEvent::Heartbeat { timestamp } = &event {
-                        debug!("Received heartbeat: {}", timestamp);
+                        debug!("Received heartbeat: {timestamp}");
                     }
 
                     if event_tx.send(event).await.is_err() {
@@ -143,7 +143,7 @@ impl IpcClient {
                     }
                 }
                 Err(e) => {
-                    warn!("Failed to parse event: {}", e);
+                    warn!("Failed to parse event: {e}");
                 }
             }
         }
@@ -335,8 +335,7 @@ pub async fn connect_with_retry(max_attempts: u32, delay: Duration) -> Result<Ip
             Err(e) => {
                 if attempt < max_attempts {
                     warn!(
-                        "Connection attempt {} failed: {}. Retrying in {:?}...",
-                        attempt, e, delay
+                        "Connection attempt {attempt} failed: {e}. Retrying in {delay:?}..."
                     );
                     tokio::time::sleep(delay).await;
                 } else {

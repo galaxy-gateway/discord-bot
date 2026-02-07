@@ -10,6 +10,7 @@ default = []
 tui = ["ratatui", "crossterm"]
 
 [dependencies]
+async-trait = "0.1"
 dotenvy = "0.15.7"
 openai = "1.0.0-alpha.13"
 serenity = { version = "0.11.6", default-features = false, features = ["client", "gateway", "rustls_backend", "model", "cache"]}

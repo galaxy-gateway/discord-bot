@@ -107,7 +107,7 @@ pub fn format_prior_context(context: &ThreadContext, persona_manager: &PersonaMa
 
     // Include rules if present
     if let Some(rules) = &context.rules {
-        output.push_str(&format!("**Established Rules:** {}\n\n", rules));
+        output.push_str(&format!("**Established Rules:** {rules}\n\n"));
     }
 
     // Include recent messages (last 10 to avoid overwhelming context)
@@ -140,7 +140,7 @@ pub fn format_prior_context(context: &ThreadContext, persona_manager: &PersonaMa
                 msg.content.clone()
             };
 
-            output.push_str(&format!("- **{}**: {}\n", speaker_name, content_preview));
+            output.push_str(&format!("- **{speaker_name}**: {content_preview}\n"));
         }
     }
 

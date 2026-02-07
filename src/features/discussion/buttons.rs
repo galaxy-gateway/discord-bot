@@ -37,7 +37,7 @@ pub fn create_council_buttons(
                 .get_persona(id)
                 .map(|p| p.name.clone())
                 .unwrap_or_else(|| id.clone());
-            let custom_id = format!("{}{}_{}_{}", SPEAKER_COUNCIL_PREFIX, thread_id, id, idx);
+            let custom_id = format!("{SPEAKER_COUNCIL_PREFIX}{thread_id}_{id}_{idx}");
             let label = if name.len() > 20 {
                 format!("{}...", &name[..17])
             } else {
@@ -68,7 +68,7 @@ pub fn create_council_buttons(
             for (custom_id, label, _) in chunk {
                 row.create_button(|btn| {
                     btn.custom_id(custom_id)
-                        .label(format!("Hear {}", label))
+                        .label(format!("Hear {label}"))
                         .style(ButtonStyle::Primary)
                 });
             }
@@ -79,12 +79,12 @@ pub fn create_council_buttons(
     // Add control row
     components.create_action_row(|row| {
         row.create_button(|btn| {
-            btn.custom_id(format!("{}{}", CONTINUE_COUNCIL_PREFIX, thread_id))
+            btn.custom_id(format!("{CONTINUE_COUNCIL_PREFIX}{thread_id}"))
                 .label("Continue Discussion")
                 .style(ButtonStyle::Success)
         })
         .create_button(|btn| {
-            btn.custom_id(format!("{}{}", DISMISS_COUNCIL_PREFIX, thread_id))
+            btn.custom_id(format!("{DISMISS_COUNCIL_PREFIX}{thread_id}"))
                 .label("Dismiss Council")
                 .style(ButtonStyle::Secondary)
         })
@@ -117,18 +117,16 @@ pub fn create_debate_buttons(
     components.create_action_row(|row| {
         row.create_button(|btn| {
             btn.custom_id(format!(
-                "{}{}_{}",
-                HEAR_DEBATE_PREFIX, thread_id, persona1_id
+                "{HEAR_DEBATE_PREFIX}{thread_id}_{persona1_id}"
             ))
-            .label(format!("Hear {}", p1_name))
+            .label(format!("Hear {p1_name}"))
             .style(ButtonStyle::Primary)
         })
         .create_button(|btn| {
             btn.custom_id(format!(
-                "{}{}_{}",
-                HEAR_DEBATE_PREFIX, thread_id, persona2_id
+                "{HEAR_DEBATE_PREFIX}{thread_id}_{persona2_id}"
             ))
-            .label(format!("Hear {}", p2_name))
+            .label(format!("Hear {p2_name}"))
             .style(ButtonStyle::Primary)
         })
     });
@@ -136,12 +134,12 @@ pub fn create_debate_buttons(
     // Control row
     components.create_action_row(|row| {
         row.create_button(|btn| {
-            btn.custom_id(format!("{}{}", CONTINUE_DEBATE_PREFIX, thread_id))
+            btn.custom_id(format!("{CONTINUE_DEBATE_PREFIX}{thread_id}"))
                 .label("Continue (+4 rounds)")
                 .style(ButtonStyle::Success)
         })
         .create_button(|btn| {
-            btn.custom_id(format!("{}{}", END_DEBATE_PREFIX, thread_id))
+            btn.custom_id(format!("{END_DEBATE_PREFIX}{thread_id}"))
                 .label("End Debate")
                 .style(ButtonStyle::Secondary)
         })
@@ -161,12 +159,12 @@ pub fn create_awaiting_buttons(
         super::DiscussionType::Council => {
             components.create_action_row(|row| {
                 row.create_button(|btn| {
-                    btn.custom_id(format!("{}{}", CONTINUE_COUNCIL_PREFIX, thread_id))
+                    btn.custom_id(format!("{CONTINUE_COUNCIL_PREFIX}{thread_id}"))
                         .label("Continue Discussion")
                         .style(ButtonStyle::Success)
                 })
                 .create_button(|btn| {
-                    btn.custom_id(format!("{}{}", DISMISS_COUNCIL_PREFIX, thread_id))
+                    btn.custom_id(format!("{DISMISS_COUNCIL_PREFIX}{thread_id}"))
                         .label("Dismiss Council")
                         .style(ButtonStyle::Secondary)
                 })
@@ -175,12 +173,12 @@ pub fn create_awaiting_buttons(
         super::DiscussionType::Debate => {
             components.create_action_row(|row| {
                 row.create_button(|btn| {
-                    btn.custom_id(format!("{}{}", CONTINUE_DEBATE_PREFIX, thread_id))
+                    btn.custom_id(format!("{CONTINUE_DEBATE_PREFIX}{thread_id}"))
                         .label("Continue Debate")
                         .style(ButtonStyle::Success)
                 })
                 .create_button(|btn| {
-                    btn.custom_id(format!("{}{}", END_DEBATE_PREFIX, thread_id))
+                    btn.custom_id(format!("{END_DEBATE_PREFIX}{thread_id}"))
                         .label("End Debate")
                         .style(ButtonStyle::Secondary)
                 })

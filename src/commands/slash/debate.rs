@@ -2,13 +2,15 @@
 //!
 //! Creates a threaded debate between two personas on a given topic.
 //!
-//! - **Version**: 2.0.0
+//! - **Version**: 2.1.0
 //! - **Since**: 3.27.0
 //!
 //! ## Changelog
+//! - 2.1.0: Use shared PERSONA_CHOICES from personas::choices
 //! - 2.0.0: Added rules parameter, opening-only default, interactive controls
 //! - 1.0.0: Initial implementation
 
+use crate::features::personas::PERSONA_CHOICES;
 use serenity::builder::CreateApplicationCommand;
 use serenity::model::application::command::CommandOptionType;
 
@@ -20,27 +22,6 @@ pub const MAX_RESPONSES: i64 = 20;
 
 /// Minimum responses (0 means opening statements only, controlled interactively)
 pub const MIN_RESPONSES: i64 = 0;
-
-/// All available persona choices for debate
-const PERSONA_CHOICES: &[(&str, &str)] = &[
-    ("Obi-Wan", "obi"),
-    ("Muppet Friend", "muppet"),
-    ("Chef", "chef"),
-    ("Teacher", "teacher"),
-    ("Analyst", "analyst"),
-    ("Visionary", "visionary"),
-    ("Noir Detective", "noir"),
-    ("Zen Master", "zen"),
-    ("Bard", "bard"),
-    ("Coach", "coach"),
-    ("Scientist", "scientist"),
-    ("Gamer", "gamer"),
-    ("Architect", "architect"),
-    ("Debugger", "debugger"),
-    ("Reviewer", "reviewer"),
-    ("DevOps", "devops"),
-    ("Designer", "designer"),
-];
 
 pub fn create_commands() -> Vec<CreateApplicationCommand> {
     vec![create_debate_command()]

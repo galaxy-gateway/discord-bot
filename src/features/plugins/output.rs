@@ -75,8 +75,7 @@ impl OutputHandler {
         };
 
         info!(
-            "Creating thread '{}' in channel {} from message {} (archive: {} min)",
-            thread_name, channel_id, message_id, archive_duration
+            "Creating thread '{thread_name}' in channel {channel_id} from message {message_id} (archive: {archive_duration} min)"
         );
 
         channel_id
@@ -146,7 +145,7 @@ impl OutputHandler {
                 {
                     Ok(s) => s,
                     Err(e) => {
-                        warn!("Failed to generate summary: {}", e);
+                        warn!("Failed to generate summary: {e}");
                         format!("**Output** ({} characters)", output.len())
                     }
                 }
@@ -208,7 +207,7 @@ impl OutputHandler {
         let message = if let Some(template) = error_template {
             template.replace("${error}", error)
         } else {
-            format!("**Error:** {}", error)
+            format!("**Error:** {error}")
         };
 
         // Truncate if too long
@@ -239,7 +238,7 @@ impl OutputHandler {
         // 1. Post the source URL first (so it can embed/preview), unless already posted
         if !url_already_posted {
             channel_id.say(http, source_url).await?;
-            info!("Posted source URL: {}", source_url);
+            info!("Posted source URL: {source_url}");
         }
 
         if output.is_empty() {
@@ -262,7 +261,7 @@ impl OutputHandler {
                     info!("Posted AI summary");
                 }
                 Err(e) => {
-                    warn!("Failed to generate summary: {}", e);
+                    warn!("Failed to generate summary: {e}");
                     channel_id.say(http, "*Summary generation failed*").await?;
                 }
             }
@@ -313,7 +312,7 @@ impl OutputHandler {
         eta: Option<std::time::Duration>,
     ) -> Result<MessageId> {
         let eta_str = eta
-            .map(|d| crate::features::plugins::youtube::format_duration(d))
+            .map(crate::features::plugins::youtube::format_duration)
             .unwrap_or_else(|| "calculating...".to_string());
 
         let content = format!(
@@ -353,8 +352,7 @@ impl OutputHandler {
     ) -> Result<()> {
         // Post video header with separator
         let header = format!(
-            "---\n**[{}/{}] {}**\n{}",
-            index, total, video_title, video_url
+            "---\n**[{index}/{total}] {video_title}**\n{video_url}"
         );
         channel_id.say(http, &header).await?;
 
@@ -381,7 +379,7 @@ impl OutputHandler {
                     }
                 }
                 Err(e) => {
-                    warn!("Failed to generate summary for video {}: {}", index, e);
+                    warn!("Failed to generate summary for video {index}: {e}");
                     channel_id.say(http, "*Summary unavailable*").await?;
                 }
             }
@@ -405,7 +403,7 @@ impl OutputHandler {
             })
             .await?;
 
-        info!("Posted video {} result", index);
+        info!("Posted video {index} result");
         Ok(())
     }
 
@@ -450,11 +448,10 @@ impl OutputHandler {
         let runtime_str = crate::features::plugins::youtube::format_duration(runtime);
 
         let summary = format!(
-            "---\n\n{} **Playlist Complete: {}**\n\n\
-             • Successful: {} | Failed: {} | Skipped: {}\n\
-             • Total videos: {}\n\
-             • Runtime: {}",
-            status_emoji, playlist_title, completed, failed, skipped, total, runtime_str
+            "---\n\n{status_emoji} **Playlist Complete: {playlist_title}**\n\n\
+             • Successful: {completed} | Failed: {failed} | Skipped: {skipped}\n\
+             • Total videos: {total}\n\
+             • Runtime: {runtime_str}"
         );
 
         channel_id.say(http, &summary).await?;
@@ -495,9 +492,8 @@ impl OutputHandler {
     ) -> Result<()> {
         let content = format!(
             "---\n\n🛑 **Playlist Cancelled**\n\n\
-             • Processed: {}/{} videos before cancellation\n\
-             • Cancelled by: {}",
-            completed, total, cancelled_by
+             • Processed: {completed}/{total} videos before cancellation\n\
+             • Cancelled by: {cancelled_by}"
         );
         channel_id.say(http, &content).await?;
         info!("Posted playlist cancellation notice");
@@ -521,14 +517,13 @@ impl OutputHandler {
         eta: Option<std::time::Duration>,
     ) -> Result<MessageId> {
         let eta_str = eta
-            .map(|d| crate::features::plugins::youtube::format_duration(d))
+            .map(crate::features::plugins::youtube::format_duration)
             .unwrap_or_else(|| "calculating...".to_string());
 
         let progress_bar = create_progress_bar(current_chunk, total_chunks);
 
         let content = format!(
-            "⏳ **Transcribing:** {}/{} parts | {} | ETA: {}\n{}",
-            current_chunk, total_chunks, status, eta_str, progress_bar
+            "⏳ **Transcribing:** {current_chunk}/{total_chunks} parts | {status} | ETA: {eta_str}\n{progress_bar}"
         );
 
         if let Some(msg_id) = progress_message_id {
@@ -565,7 +560,7 @@ impl OutputHandler {
             })
             .unwrap_or_default();
 
-        let content = format!("**Part {} of {}**{}", chunk_num, total_chunks, preview);
+        let content = format!("**Part {chunk_num} of {total_chunks}**{preview}");
 
         channel_id.say(http, &content).await?;
         Ok(())
@@ -646,7 +641,7 @@ impl OutputHandler {
                         info!("Posted AI summary for chunked transcription");
                     }
                     Err(e) => {
-                        warn!("Failed to generate AI summary: {}", e);
+                        warn!("Failed to generate AI summary: {e}");
                     }
                 }
             }
@@ -665,7 +660,7 @@ impl OutputHandler {
             let file_bytes = formatted.as_bytes().to_vec();
             channel_id
                 .send_message(http, |m| {
-                    m.content(format!("📄 **Full transcript** ({} words)", word_count))
+                    m.content(format!("📄 **Full transcript** ({word_count} words)"))
                         .add_file(AttachmentType::Bytes {
                             data: Cow::Owned(file_bytes),
                             filename,
@@ -705,12 +700,11 @@ impl OutputHandler {
         estimated_duration: Option<std::time::Duration>,
     ) -> Result<MessageId> {
         let eta_str = estimated_duration
-            .map(|d| crate::features::plugins::youtube::format_duration(d))
+            .map(crate::features::plugins::youtube::format_duration)
             .unwrap_or_else(|| "calculating...".to_string());
 
         let content = format!(
-            "📦 **Ready:** Split into {} parts | Estimated time: {}",
-            total_chunks, eta_str
+            "📦 **Ready:** Split into {total_chunks} parts | Estimated time: {eta_str}"
         );
 
         if let Some(msg_id) = progress_message_id {
@@ -741,7 +735,7 @@ impl OutputHandler {
                 })
             })
             .await?;
-        info!("Posted file attachment: {}", filename);
+        info!("Posted file attachment: {filename}");
         Ok(())
     }
 
@@ -773,7 +767,7 @@ impl OutputHandler {
         {
             Ok(summary) => Some(summary),
             Err(e) => {
-                warn!("Failed to generate summary: {}", e);
+                warn!("Failed to generate summary: {e}");
                 None
             }
         }
@@ -834,7 +828,7 @@ impl OutputHandler {
         if let (Some(tracker), Some(ctx), Some(usage)) =
             (&self.usage_tracker, user_context, &completion.usage)
         {
-            let request_id = request_context.map(|c| format!("plugin_{}", c));
+            let request_id = request_context.map(|c| format!("plugin_{c}"));
             tracker.log_chat(
                 &self.openai_model,
                 usage.prompt_tokens,
@@ -873,7 +867,7 @@ pub fn escape_markdown(text: &str) -> String {
     text.chars()
         .map(|c| match c {
             '*' | '_' | '`' | '[' | ']' | '(' | ')' | '~' | '>' | '#' => {
-                format!("\\{}", c)
+                format!("\\{c}")
             }
             _ => c.to_string(),
         })
@@ -1012,7 +1006,7 @@ pub fn format_word_count(count: usize) -> String {
     if count >= 1000 {
         format!("~{},{:03}", count / 1000, count % 1000)
     } else {
-        format!("~{}", count)
+        format!("~{count}")
     }
 }
 

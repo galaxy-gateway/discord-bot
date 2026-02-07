@@ -257,8 +257,7 @@ mod tests {
         for expected in expected_commands {
             assert!(
                 command_names.contains(&expected.to_string()),
-                "Missing command: {}",
-                expected
+                "Missing command: {expected}"
             );
         }
     }

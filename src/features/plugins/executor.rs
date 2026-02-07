@@ -144,7 +144,7 @@ impl PluginExecutor {
                         stdout.len()
                     );
                 } else {
-                    warn!("Command failed with exit code: {:?}", exit_code);
+                    warn!("Command failed with exit code: {exit_code:?}");
                 }
 
                 Ok(ExecutionResult {
@@ -156,7 +156,7 @@ impl PluginExecutor {
                 })
             }
             Ok(Err(e)) => {
-                warn!("Command execution failed: {}", e);
+                warn!("Command execution failed: {e}");
                 Err(anyhow::anyhow!("Failed to execute command: {}", e))
             }
             Err(_) => {
@@ -232,7 +232,7 @@ rm -rf "$TMPDIR" "$ERRFILE""#,
                     .replace("${output_dir}", &output_str);
                 // Substitute user params (like ${language})
                 for (key, value) in params {
-                    let placeholder = format!("${{{}}}", key);
+                    let placeholder = format!("${{{key}}}");
                     result = result.replace(&placeholder, value);
                 }
                 result
@@ -285,7 +285,7 @@ rm -rf "$TMPDIR" "$ERRFILE""#,
                         stdout.len()
                     );
                 } else {
-                    warn!("Chunk transcription failed with exit code: {:?}", exit_code);
+                    warn!("Chunk transcription failed with exit code: {exit_code:?}");
                 }
 
                 Ok(ExecutionResult {
@@ -297,7 +297,7 @@ rm -rf "$TMPDIR" "$ERRFILE""#,
                 })
             }
             Ok(Err(e)) => {
-                warn!("Chunk command execution failed: {}", e);
+                warn!("Chunk command execution failed: {e}");
                 Err(anyhow::anyhow!("Failed to execute chunk command: {}", e))
             }
             Err(_) => {
@@ -338,7 +338,7 @@ rm -rf "$TMPDIR" "$ERRFILE""#,
             .map(|arg| {
                 let mut result = arg.clone();
                 for (key, value) in params {
-                    let placeholder = format!("${{{}}}", key);
+                    let placeholder = format!("${{{key}}}");
                     result = result.replace(&placeholder, value);
                 }
 
@@ -382,7 +382,7 @@ rm -rf "$TMPDIR" "$ERRFILE""#,
                     '\n' => "newline".to_string(),
                     '\r' => "carriage return".to_string(),
                     '\0' => "null byte".to_string(),
-                    _ => format!("'{}'", ch),
+                    _ => format!("'{ch}'"),
                 };
                 return Err(anyhow::anyhow!(
                     "Argument contains forbidden character {}: {}",

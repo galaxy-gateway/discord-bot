@@ -51,7 +51,7 @@ impl CurrentMetrics {
         let load = System::load_average();
 
         // Get bot process memory
-        let bot_memory = if let Some(pid) = sysinfo::get_current_pid().ok() {
+        let bot_memory = if let Ok(pid) = sysinfo::get_current_pid() {
             sys.process(pid).map(|p| p.memory()).unwrap_or(0)
         } else {
             0
@@ -79,7 +79,7 @@ impl CurrentMetrics {
         CurrentMetrics {
             hostname: System::host_name().unwrap_or_else(|| "unknown".to_string()),
             os_name: System::name().unwrap_or_else(|| "unknown".to_string()),
-            os_version: System::os_version().unwrap_or_else(|| "".to_string()),
+            os_version: System::os_version().unwrap_or_default(),
             kernel: System::kernel_version().unwrap_or_else(|| "unknown".to_string()),
             architecture: std::env::consts::ARCH.to_string(),
             cpu_usage: sys.global_cpu_usage(),
@@ -218,7 +218,7 @@ pub fn format_history(
     system_cpu: HistoricalSummary,
     period_label: &str,
 ) -> String {
-    let mut output = format!("**Metrics History ({})**\n```\n", period_label);
+    let mut output = format!("**Metrics History ({period_label})**\n```\n");
 
     // Header row
     output.push_str("Metric       Current     Avg         Peak        Growth\n");
@@ -304,7 +304,7 @@ pub fn format_bytes(bytes: u64) -> String {
     } else if bytes >= KB {
         format!("{:.1} KB", bytes as f64 / KB as f64)
     } else {
-        format!("{} B", bytes)
+        format!("{bytes} B")
     }
 }
 
@@ -322,13 +322,13 @@ pub fn format_duration(total_secs: u64) -> String {
     let seconds = total_secs % 60;
 
     if days > 0 {
-        format!("{}d {}h {}m {}s", days, hours, minutes, seconds)
+        format!("{days}d {hours}h {minutes}m {seconds}s")
     } else if hours > 0 {
-        format!("{}h {}m {}s", hours, minutes, seconds)
+        format!("{hours}h {minutes}m {seconds}s")
     } else if minutes > 0 {
-        format!("{}m {}s", minutes, seconds)
+        format!("{minutes}m {seconds}s")
     } else {
-        format!("{}s", seconds)
+        format!("{seconds}s")
     }
 }
 
@@ -357,7 +357,7 @@ pub async fn metrics_collection_loop(db: Arc<Database>, db_path: String) {
             .store_system_metric("db_size_bytes", db_size as f64)
             .await
         {
-            warn!("Failed to store db_size metric: {}", e);
+            warn!("Failed to store db_size metric: {e}");
         }
 
         // Record bot process memory
@@ -372,7 +372,7 @@ pub async fn metrics_collection_loop(db: Arc<Database>, db_path: String) {
                     .store_system_metric("bot_memory_bytes", proc.memory() as f64)
                     .await
                 {
-                    warn!("Failed to store bot_memory metric: {}", e);
+                    warn!("Failed to store bot_memory metric: {e}");
                 }
             }
         }
@@ -385,7 +385,7 @@ pub async fn metrics_collection_loop(db: Arc<Database>, db_path: String) {
                 .store_system_metric("system_memory_percent", memory_percent)
                 .await
             {
-                warn!("Failed to store system_memory metric: {}", e);
+                warn!("Failed to store system_memory metric: {e}");
             }
         }
 
@@ -394,7 +394,7 @@ pub async fn metrics_collection_loop(db: Arc<Database>, db_path: String) {
             .store_system_metric("system_cpu_percent", sys.global_cpu_usage() as f64)
             .await
         {
-            warn!("Failed to store system_cpu metric: {}", e);
+            warn!("Failed to store system_cpu metric: {e}");
         }
 
         debug!("System metrics recorded successfully");
@@ -407,17 +407,17 @@ pub async fn metrics_collection_loop(db: Arc<Database>, db_path: String) {
 
             // Cleanup system metrics (7 days)
             if let Err(e) = db.cleanup_old_metrics(7).await {
-                warn!("Failed to cleanup old system metrics: {}", e);
+                warn!("Failed to cleanup old system metrics: {e}");
             }
 
             // Cleanup raw OpenAI usage data (7 days - detailed request-level data)
             if let Err(e) = db.cleanup_old_openai_usage(7).await {
-                warn!("Failed to cleanup old OpenAI usage data: {}", e);
+                warn!("Failed to cleanup old OpenAI usage data: {e}");
             }
 
             // Cleanup OpenAI daily aggregates (90 days - for historical trends)
             if let Err(e) = db.cleanup_old_openai_usage_daily(90).await {
-                warn!("Failed to cleanup old OpenAI usage daily data: {}", e);
+                warn!("Failed to cleanup old OpenAI usage daily data: {e}");
             }
 
             info!("Daily cleanup tasks completed");

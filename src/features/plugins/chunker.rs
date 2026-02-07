@@ -84,7 +84,7 @@ impl AudioChunker {
             .await
             .context("Failed to create temp directory")?;
 
-        info!("Created chunker temp directory: {:?}", temp_dir);
+        info!("Created chunker temp directory: {temp_dir:?}");
 
         Ok(Self { config, temp_dir })
     }
@@ -106,7 +106,7 @@ impl AudioChunker {
     pub async fn download_audio(&self, url: &str) -> Result<DownloadResult> {
         let output_path = self.temp_dir.join("audio.mp3");
 
-        info!("Downloading audio from: {}", url);
+        info!("Downloading audio from: {url}");
 
         let result = if let Some(ref download_cmd) = self.config.download_command {
             // Use custom download command (typically Docker-based)
@@ -129,14 +129,14 @@ impl AudioChunker {
             Ok(()) => {
                 // Find the downloaded audio file
                 if let Some(path) = self.find_audio_file().await {
-                    info!("Downloaded audio to: {:?}", path);
+                    info!("Downloaded audio to: {path:?}");
                     Ok(DownloadResult {
                         audio_path: path,
                         duration_secs: None,
                         title: None,
                     })
                 } else if output_path.exists() {
-                    info!("Downloaded audio to: {:?}", output_path);
+                    info!("Downloaded audio to: {output_path:?}");
                     Ok(DownloadResult {
                         audio_path: output_path,
                         duration_secs: None,
@@ -350,7 +350,7 @@ impl AudioChunker {
 
                 while let Some(entry) = entries.next_entry().await? {
                     let path = entry.path();
-                    if path.extension().map_or(false, |ext| ext == "mp3") {
+                    if path.extension().is_some_and(|ext| ext == "mp3") {
                         chunk_paths.push(path);
                     }
                 }
@@ -359,7 +359,7 @@ impl AudioChunker {
                 chunk_paths.sort();
 
                 let total_chunks = chunk_paths.len();
-                info!("Split audio into {} chunks", total_chunks);
+                info!("Split audio into {total_chunks} chunks");
 
                 if chunk_paths.is_empty() {
                     return Err(anyhow::anyhow!("No chunks generated from audio split"));
@@ -393,8 +393,7 @@ impl AudioChunker {
             }
             Err(e) => {
                 warn!(
-                    "Could not determine audio duration, assuming chunking needed: {}",
-                    e
+                    "Could not determine audio duration, assuming chunking needed: {e}"
                 );
                 Ok(true)
             }
@@ -418,7 +417,7 @@ impl AudioChunker {
     /// Clean up on drop (best effort)
     pub fn cleanup_sync(&self) {
         if let Err(e) = std::fs::remove_dir_all(&self.temp_dir) {
-            warn!("Failed to clean up temp directory on drop: {}", e);
+            warn!("Failed to clean up temp directory on drop: {e}");
         }
     }
 }

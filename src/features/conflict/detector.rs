@@ -380,8 +380,7 @@ mod tests {
         let score = detector.get_conflict_score(punctuation_message);
         assert!(
             score >= 0.2,
-            "Excessive punctuation should increase score, got: {}",
-            score
+            "Excessive punctuation should increase score, got: {score}"
         );
     }
 
@@ -405,7 +404,7 @@ mod tests {
         println!("\n=== Individual Message Scores ===");
         for (msg, desc) in &test_messages {
             let score = detector.get_conflict_score(msg);
-            println!("Message: '{}' ({})", msg, desc);
+            println!("Message: '{msg}' ({desc})");
             println!("  Score: {:.2} | Triggers (>0.3): {}\n", score, score > 0.3);
         }
 
@@ -426,9 +425,9 @@ mod tests {
             detector.detect_heated_argument(&conversation, 120);
 
         println!("=== Conversation Analysis ===");
-        println!("Is Conflict: {}", is_conflict);
-        println!("Confidence: {:.2}", confidence);
-        println!("Conflict Type: {:?}", conflict_type);
+        println!("Is Conflict: {is_conflict}");
+        println!("Confidence: {confidence:.2}");
+        println!("Conflict Type: {conflict_type:?}");
         println!("Threshold: 0.3");
         println!("Should trigger: {}", confidence > 0.3);
 
@@ -439,8 +438,7 @@ mod tests {
         );
         assert!(
             confidence > 0.3,
-            "Confidence should exceed 0.3 threshold, got: {}",
-            confidence
+            "Confidence should exceed 0.3 threshold, got: {confidence}"
         );
     }
 
@@ -467,16 +465,13 @@ mod tests {
         println!("\n=== Profanity Detection Tests ===");
         for (msg, category) in &profanity_tests {
             let score = detector.get_conflict_score(msg);
-            println!("Message: '{}' ({})", msg, category);
+            println!("Message: '{msg}' ({category})");
             println!("  Score: {:.2} | Triggers (>0.3): {}\n", score, score > 0.3);
 
             // All of these should trigger (score > 0.3)
             assert!(
                 score > 0.3,
-                "Message '{}' ({}) should trigger, got score: {}",
-                msg,
-                category,
-                score
+                "Message '{msg}' ({category}) should trigger, got score: {score}"
             );
         }
     }

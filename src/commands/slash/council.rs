@@ -2,13 +2,15 @@
 //!
 //! Gather responses from multiple personas on a single prompt.
 //!
-//! - **Version**: 2.0.0
+//! - **Version**: 2.1.0
 //! - **Since**: 3.31.0
 //!
 //! ## Changelog
+//! - 2.1.0: Use shared PERSONA_CHOICES from personas::choices
 //! - 2.0.0: Added rules parameter and interactive controls
 //! - 1.0.0: Initial implementation
 
+use crate::features::personas::PERSONA_CHOICES;
 use serenity::builder::CreateApplicationCommand;
 use serenity::model::application::command::CommandOptionType;
 
@@ -17,27 +19,6 @@ pub const MIN_PERSONAS: usize = 2;
 
 /// Maximum number of personas for a council (to manage API costs and thread length)
 pub const MAX_PERSONAS: usize = 6;
-
-/// All available persona choices for the council
-const PERSONA_CHOICES: &[(&str, &str)] = &[
-    ("Obi-Wan", "obi"),
-    ("Muppet Friend", "muppet"),
-    ("Chef", "chef"),
-    ("Teacher", "teacher"),
-    ("Analyst", "analyst"),
-    ("Visionary", "visionary"),
-    ("Noir Detective", "noir"),
-    ("Zen Master", "zen"),
-    ("Bard", "bard"),
-    ("Coach", "coach"),
-    ("Scientist", "scientist"),
-    ("Gamer", "gamer"),
-    ("Architect", "architect"),
-    ("Debugger", "debugger"),
-    ("Reviewer", "reviewer"),
-    ("DevOps", "devops"),
-    ("Designer", "designer"),
-];
 
 pub fn create_commands() -> Vec<CreateApplicationCommand> {
     vec![create_council_command()]

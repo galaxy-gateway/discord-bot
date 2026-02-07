@@ -120,10 +120,10 @@ impl AudioTranscriber {
         let output_path = if let Some(dot_pos) = input_path.rfind('.') {
             format!("{}.mp3", &input_path[..dot_pos])
         } else {
-            format!("{}.mp3", input_path)
+            format!("{input_path}.mp3")
         };
 
-        info!("Converting {} to mp3 via ffmpeg", input_path);
+        info!("Converting {input_path} to mp3 via ffmpeg");
         let start = Instant::now();
 
         let output = Command::new("ffmpeg")
@@ -143,7 +143,7 @@ impl AudioTranscriber {
         let duration = start.elapsed();
 
         if output.status.success() {
-            info!("FFmpeg conversion completed in {:?}", duration);
+            info!("FFmpeg conversion completed in {duration:?}");
             Ok(output_path)
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -156,7 +156,7 @@ impl AudioTranscriber {
                 ));
             }
 
-            error!("FFmpeg conversion failed: {}", stderr);
+            error!("FFmpeg conversion failed: {stderr}");
             Err(anyhow::anyhow!("FFmpeg conversion failed: {}", stderr))
         }
     }
@@ -191,11 +191,11 @@ impl AudioTranscriber {
                 .unwrap_or(0.0),
             Ok(out) => {
                 let stderr = String::from_utf8_lossy(&out.stderr);
-                debug!("ffprobe failed: {}", stderr);
+                debug!("ffprobe failed: {stderr}");
                 0.0
             }
             Err(e) => {
-                debug!("ffprobe not available: {}", e);
+                debug!("ffprobe not available: {e}");
                 0.0
             }
         }
@@ -223,7 +223,7 @@ impl AudioTranscriber {
 
         // Check if conversion is needed
         let file_to_transcribe = if self.needs_conversion(filename) {
-            info!("Format requires conversion: {}", filename);
+            info!("Format requires conversion: {filename}");
 
             match self.convert_to_mp3(&temp_file) {
                 Ok(mp3_path) => {
@@ -242,7 +242,7 @@ impl AudioTranscriber {
 
         // Get audio duration before transcription (for usage tracking)
         let duration_seconds = Self::get_audio_duration(&file_to_transcribe);
-        info!("Audio duration: {:.1}s", duration_seconds);
+        info!("Audio duration: {duration_seconds:.1}s");
 
         // Transcribe the file
         let transcription = self.transcribe_file(&file_to_transcribe).await;

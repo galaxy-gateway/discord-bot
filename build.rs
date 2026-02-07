@@ -13,7 +13,7 @@ fn main() {
         _ => String::new(),
     };
 
-    println!("cargo:rustc-env=GIT_RECENT_COMMITS={}", commits);
+    println!("cargo:rustc-env=GIT_RECENT_COMMITS={commits}");
 
     // Rerun build script when git state changes
     println!("cargo:rerun-if-changed=.git/HEAD");

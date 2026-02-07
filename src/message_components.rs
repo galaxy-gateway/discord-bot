@@ -804,7 +804,7 @@ impl MessageComponentHandler {
             })
             .await?;
 
-        info!("Debate ended by user for thread {}", thread_id);
+        info!("Debate ended by user for thread {thread_id}");
         Ok(())
     }
 
@@ -867,7 +867,7 @@ impl MessageComponentHandler {
                     .kind(InteractionResponseType::UpdateMessage)
                     .interaction_response_data(|message| {
                         message
-                            .content(format!("*{} is preparing to speak...*", persona_name))
+                            .content(format!("*{persona_name} is preparing to speak...*"))
                             .components(|c| c) // Clear buttons temporarily
                     })
             })
@@ -1055,7 +1055,7 @@ impl MessageComponentHandler {
                     .kind(InteractionResponseType::UpdateMessage)
                     .interaction_response_data(|message| {
                         message
-                            .content(format!("*{} is gathering their thoughts...*", persona_name))
+                            .content(format!("*{persona_name} is gathering their thoughts...*"))
                             .components(|c| c)
                     })
             })
@@ -1086,14 +1086,13 @@ impl MessageComponentHandler {
             let rules_section = state
                 .rules
                 .as_ref()
-                .map(|r| format!("\n\n## Ground Rules\n{}\n", r))
+                .map(|r| format!("\n\n## Ground Rules\n{r}\n"))
                 .unwrap_or_default();
 
             let council_context = format!(
-                "{}{}\n\nYou are participating in a council discussion. \
+                "{system_prompt}{rules_section}\n\nYou are participating in a council discussion. \
                 The user has specifically asked to hear more from you. \
-                Build on what has been discussed so far and share additional insights.",
-                system_prompt, rules_section
+                Build on what has been discussed so far and share additional insights."
             );
 
             // Get context summary
@@ -1110,7 +1109,7 @@ impl MessageComponentHandler {
                 },
                 openai::chat::ChatCompletionMessage {
                     role: openai::chat::ChatCompletionMessageRole::User,
-                    content: Some(format!("Based on this discussion so far:\n\n{}\n\nPlease share more of your perspective.", context_summary)),
+                    content: Some(format!("Based on this discussion so far:\n\n{context_summary}\n\nPlease share more of your perspective.")),
                     name: None,
                     function_call: None,
                     tool_call_id: None,
@@ -1272,13 +1271,12 @@ impl MessageComponentHandler {
                 let rules_section = state
                     .rules
                     .as_ref()
-                    .map(|r| format!("\n\n## Ground Rules\n{}\n", r))
+                    .map(|r| format!("\n\n## Ground Rules\n{r}\n"))
                     .unwrap_or_default();
 
                 let council_context = format!(
-                    "{}{}\n\nYou are continuing a council discussion. \
-                    Respond to what others have said and add new insights.",
-                    system_prompt, rules_section
+                    "{system_prompt}{rules_section}\n\nYou are continuing a council discussion. \
+                    Respond to what others have said and add new insights."
                 );
 
                 // Get current context
@@ -1300,8 +1298,7 @@ impl MessageComponentHandler {
                     openai::chat::ChatCompletionMessage {
                         role: openai::chat::ChatCompletionMessageRole::User,
                         content: Some(format!(
-                            "Discussion so far:\n\n{}\n\nPlease continue the discussion.",
-                            context_summary
+                            "Discussion so far:\n\n{context_summary}\n\nPlease continue the discussion."
                         )),
                         name: None,
                         function_call: None,
@@ -1426,7 +1423,7 @@ impl MessageComponentHandler {
             })
             .await?;
 
-        info!("Council dismissed for thread {}", thread_id);
+        info!("Council dismissed for thread {thread_id}");
         Ok(())
     }
 }

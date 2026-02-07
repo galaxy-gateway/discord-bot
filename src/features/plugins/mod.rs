@@ -5,11 +5,12 @@
 //! Now includes multi-video playlist transcription with progress tracking and chunked streaming
 //! for long videos with per-chunk summaries.
 //!
-//! - **Version**: 3.17.0
+//! - **Version**: 3.18.0
 //! - **Since**: 0.9.0
 //! - **Toggleable**: true
 //!
 //! ## Changelog
+//! - 3.18.0: Fix playlist transcription downloading playlist instead of individual videos by using chunked path
 //! - 3.17.0: Fix race condition in concurrent thread creation with retry logic and proper error reporting
 //! - 3.16.0: Simplified thread starter format with cleaner YouTube heading and proper embed support
 //! - 3.15.0: Escape markdown special characters in video titles to fix thread creation failures
@@ -164,8 +165,8 @@ impl PluginManager {
 
     /// Check cooldown for a user on a plugin
     pub fn check_cooldown(&self, plugin: &Plugin, user_id: &str) -> Result<()> {
-        if plugin.security.cooldown_seconds > 0 {
-            if !self.job_manager.check_cooldown(
+        if plugin.security.cooldown_seconds > 0
+            && !self.job_manager.check_cooldown(
                 user_id,
                 &plugin.name,
                 plugin.security.cooldown_seconds,
@@ -175,7 +176,6 @@ impl PluginManager {
                     plugin.security.cooldown_seconds
                 ));
             }
-        }
         Ok(())
     }
 
@@ -274,7 +274,7 @@ impl PluginManager {
             };
             // Mark as running
             if let Err(e) = job_manager.start_job(&job_id_clone).await {
-                warn!("Failed to mark job as running: {}", e);
+                warn!("Failed to mark job as running: {e}");
             }
 
             // Determine source URL for structured output
@@ -293,7 +293,7 @@ impl PluginManager {
                     if url.contains("youtube.com") || url.contains("youtu.be") {
                         match fetch_youtube_title(url).await {
                             Some(title) => {
-                                info!("Fetched YouTube title: {}", title);
+                                info!("Fetched YouTube title: {title}");
                                 title
                             }
                             None => {
@@ -333,8 +333,7 @@ impl PluginManager {
                 if let Some((app_id, ref token)) = interaction_info {
                     let client = reqwest::Client::new();
                     let edit_url = format!(
-                        "https://discord.com/api/v10/webhooks/{}/{}/messages/@original",
-                        app_id, token
+                        "https://discord.com/api/v10/webhooks/{app_id}/{token}/messages/@original"
                     );
                     let _ = client
                         .patch(&edit_url)
@@ -350,7 +349,7 @@ impl PluginManager {
                     .map(|u| u.contains("youtube.com") || u.contains("youtu.be"))
                     .unwrap_or(false)
                 {
-                    format!("Transcribing YouTube video: {}", thread_name)
+                    format!("Transcribing YouTube video: {thread_name}")
                 } else {
                     thread_name.clone()
                 };
@@ -376,19 +375,18 @@ impl PluginManager {
                                 // Post URL inside the thread (first message in thread)
                                 let thread_id = ChannelId(thread.id.0);
                                 if let Some(ref url) = source_url {
-                                    let url_content = format!("**{}**\n{}", thread_name, url);
+                                    let url_content = format!("**{thread_name}**\n{url}");
                                     let _ = thread_id.say(&http, &url_content).await;
                                 }
 
                                 Some(thread_id)
                             }
                             Err(e) => {
-                                error!("Failed to create thread after retries: {}", e);
+                                error!("Failed to create thread after retries: {e}");
                                 finalize_interaction_response(
                                     &interaction_info,
                                     &format!(
-                                        "Failed to create thread: {}. Posting to channel instead.",
-                                        e
+                                        "Failed to create thread: {e}. Posting to channel instead."
                                     ),
                                 )
                                 .await;
@@ -397,10 +395,10 @@ impl PluginManager {
                         }
                     }
                     Err(e) => {
-                        error!("Failed to send thread starter message: {}", e);
+                        error!("Failed to send thread starter message: {e}");
                         finalize_interaction_response(
                             &interaction_info,
-                            &format!("Failed to start transcription: {}", e),
+                            &format!("Failed to start transcription: {e}"),
                         )
                         .await;
                         None
@@ -424,8 +422,7 @@ impl PluginManager {
                     if let Some((app_id, ref token)) = interaction_info {
                         let client = reqwest::Client::new();
                         let edit_url = format!(
-                            "https://discord.com/api/v10/webhooks/{}/{}/messages/@original",
-                            app_id, token
+                            "https://discord.com/api/v10/webhooks/{app_id}/{token}/messages/@original"
                         );
                         let _ = client
                             .patch(&edit_url)
@@ -436,7 +433,7 @@ impl PluginManager {
                     }
 
                     // Post the URL to the thread (this is visible to everyone in the thread)
-                    let content = format!("**{}**\n{}", title, url);
+                    let content = format!("**{title}**\n{url}");
                     let _ = channel_id.say(&http, &content).await;
                 }
                 channel_id
@@ -451,7 +448,7 @@ impl PluginManager {
             if should_post_status {
                 let status_msg = "⏳ Transcribing video... This may take a few minutes.";
                 if let Err(e) = output_channel.say(&http, status_msg).await {
-                    warn!("Failed to post progress status: {}", e);
+                    warn!("Failed to post progress status: {e}");
                 }
             }
 
@@ -489,13 +486,13 @@ impl PluginManager {
                         };
 
                         if let Err(e) = post_result {
-                            error!("Failed to post result: {}", e);
+                            error!("Failed to post result: {e}");
                         }
 
                         // Mark job complete
                         let preview = exec_result.stdout.chars().take(500).collect::<String>();
                         if let Err(e) = job_manager.complete_job(&job_id_clone, preview).await {
-                            warn!("Failed to mark job complete: {}", e);
+                            warn!("Failed to mark job complete: {e}");
                         }
                     } else {
                         // Command failed
@@ -520,16 +517,16 @@ impl PluginManager {
                             )
                             .await
                         {
-                            error!("Failed to post error: {}", e);
+                            error!("Failed to post error: {e}");
                         }
 
                         if let Err(e) = job_manager.fail_job(&job_id_clone, error_msg).await {
-                            warn!("Failed to mark job as failed: {}", e);
+                            warn!("Failed to mark job as failed: {e}");
                         }
                     }
                 }
                 Err(e) => {
-                    let error_msg = format!("Execution error: {}", e);
+                    let error_msg = format!("Execution error: {e}");
                     if let Err(post_err) = output_handler
                         .post_error(
                             &http,
@@ -539,11 +536,11 @@ impl PluginManager {
                         )
                         .await
                     {
-                        error!("Failed to post error: {}", post_err);
+                        error!("Failed to post error: {post_err}");
                     }
 
                     if let Err(fail_err) = job_manager.fail_job(&job_id_clone, error_msg).await {
-                        warn!("Failed to mark job as failed: {}", fail_err);
+                        warn!("Failed to mark job as failed: {fail_err}");
                     }
                 }
             }
@@ -611,6 +608,8 @@ impl PluginManager {
         let user_id_clone = user_id.clone();
         let guild_id_clone = guild_id.clone();
         let channel_id_str = channel_id.to_string();
+        let chunking_config = plugin.execution.chunking.clone().unwrap_or_default();
+        let max_output_bytes = plugin.execution.max_output_bytes;
 
         tokio::spawn(async move {
             // Create user context for usage tracking
@@ -622,7 +621,7 @@ impl PluginManager {
 
             // Mark as running
             if let Err(e) = job_manager.start_playlist_job(&playlist_job_id_clone).await {
-                warn!("Failed to mark playlist job as running: {}", e);
+                warn!("Failed to mark playlist job as running: {e}");
             }
 
             // STEP 1: Create thread for playlist
@@ -647,8 +646,7 @@ impl PluginManager {
             if let Some((app_id, ref token)) = interaction_info {
                 let client = reqwest::Client::new();
                 let edit_url = format!(
-                    "https://discord.com/api/v10/webhooks/{}/{}/messages/@original",
-                    app_id, token
+                    "https://discord.com/api/v10/webhooks/{app_id}/{token}/messages/@original"
                 );
                 let _ = client
                     .patch(&edit_url)
@@ -661,8 +659,7 @@ impl PluginManager {
             // Send thread starter message to channel with playlist title and job ID
             let short_id = short_job_id(&playlist_job_id_clone);
             let starter_content = format!(
-                "Transcribing YouTube playlist: {} | job: {}",
-                playlist_title, short_id
+                "Transcribing YouTube playlist: {playlist_title} | job: {short_id}"
             );
 
             // Create thread from a new message (not the ephemeral response)
@@ -688,18 +685,17 @@ impl PluginManager {
 
                             // Post playlist URL inside the thread (first message in thread)
                             let thread_id = ChannelId(thread.id.0);
-                            let url_content = format!("**{}**\n{}", playlist_title, playlist_url);
+                            let url_content = format!("**{playlist_title}**\n{playlist_url}");
                             let _ = thread_id.say(&http, &url_content).await;
 
                             Some(thread_id)
                         }
                         Err(e) => {
-                            error!("Failed to create playlist thread after retries: {}", e);
+                            error!("Failed to create playlist thread after retries: {e}");
                             finalize_interaction_response(
                                 &interaction_info,
                                 &format!(
-                                    "Failed to create thread: {}. Posting to channel instead.",
-                                    e
+                                    "Failed to create thread: {e}. Posting to channel instead."
                                 ),
                             )
                             .await;
@@ -708,10 +704,10 @@ impl PluginManager {
                     }
                 }
                 Err(e) => {
-                    error!("Failed to send thread starter message: {}", e);
+                    error!("Failed to send thread starter message: {e}");
                     finalize_interaction_response(
                         &interaction_info,
-                        &format!("Failed to start playlist transcription: {}", e),
+                        &format!("Failed to start playlist transcription: {e}"),
                     )
                     .await;
                     None
@@ -750,8 +746,7 @@ impl PluginManager {
                 // Check for cancellation
                 if job_manager.is_playlist_cancelled(&playlist_job_id_clone) {
                     info!(
-                        "Playlist job {} cancelled, stopping at video {}",
-                        playlist_job_id_clone, video_index
+                        "Playlist job {playlist_job_id_clone} cancelled, stopping at video {video_index}"
                     );
                     break;
                 }
@@ -796,7 +791,7 @@ impl PluginManager {
                 {
                     Ok(id) => id,
                     Err(e) => {
-                        warn!("Failed to create video job: {}", e);
+                        warn!("Failed to create video job: {e}");
                         failed += 1;
                         continue;
                     }
@@ -816,69 +811,54 @@ impl PluginManager {
                 // Mark video job as running
                 let _ = job_manager.start_job(&video_job_id).await;
 
-                // Execute transcription
-                let result = executor.execute(&plugin.execution, &params).await;
+                // Execute transcription using chunked download path
+                // This ensures --no-playlist is used for each video
+                let result = Self::transcribe_single_video(
+                    &executor,
+                    &chunking_config,
+                    &video.url,
+                    &params,
+                    max_output_bytes,
+                )
+                .await;
 
                 match result {
-                    Ok(exec_result) => {
-                        if exec_result.success && !exec_result.stdout.is_empty() {
-                            // Post video result
-                            if let Err(e) = output_handler
-                                .post_video_result(
-                                    &http,
-                                    output_channel,
-                                    video_index,
-                                    total_videos,
-                                    &video.title,
-                                    &video.url,
-                                    &exec_result.stdout,
-                                    &plugin.output,
-                                    Some(&user_context),
-                                )
-                                .await
-                            {
-                                warn!("Failed to post video result: {}", e);
-                            }
-
-                            // Add to combined transcript
-                            let separator = "=".repeat(60);
-                            combined_transcript.push_str(&format!(
-                                "\n\n{}\n[{}/{}] {}\n{}\n{}\n\n{}",
-                                separator,
+                    Ok(transcript) => {
+                        // Post video result
+                        if let Err(e) = output_handler
+                            .post_video_result(
+                                &http,
+                                output_channel,
                                 video_index,
                                 total_videos,
-                                video.title,
-                                video.url,
-                                separator,
-                                exec_result.stdout
-                            ));
-
-                            let _ = job_manager
-                                .complete_job(&video_job_id, "completed".to_string())
-                                .await;
-                            completed += 1;
-                        } else {
-                            let error_msg = if exec_result.timed_out {
-                                "Transcription timed out".to_string()
-                            } else {
-                                exec_result.stderr.clone()
-                            };
-
-                            let _ = output_handler
-                                .post_video_failed(
-                                    &http,
-                                    output_channel,
-                                    video_index,
-                                    total_videos,
-                                    &video.title,
-                                    &video.url,
-                                    &error_msg,
-                                )
-                                .await;
-
-                            let _ = job_manager.fail_job(&video_job_id, error_msg).await;
-                            failed += 1;
+                                &video.title,
+                                &video.url,
+                                &transcript,
+                                &plugin.output,
+                                Some(&user_context),
+                            )
+                            .await
+                        {
+                            warn!("Failed to post video result: {e}");
                         }
+
+                        // Add to combined transcript
+                        let separator = "=".repeat(60);
+                        combined_transcript.push_str(&format!(
+                            "\n\n{}\n[{}/{}] {}\n{}\n{}\n\n{}",
+                            separator,
+                            video_index,
+                            total_videos,
+                            video.title,
+                            video.url,
+                            separator,
+                            transcript
+                        ));
+
+                        let _ = job_manager
+                            .complete_job(&video_job_id, "completed".to_string())
+                            .await;
+                        completed += 1;
                     }
                     Err(e) => {
                         let _ = output_handler
@@ -964,12 +944,87 @@ impl PluginManager {
                 .await;
 
             info!(
-                "Playlist job {} completed: {}/{} successful, {} failed",
-                playlist_job_id_clone, completed, total_videos, failed
+                "Playlist job {playlist_job_id_clone} completed: {completed}/{total_videos} successful, {failed} failed"
             );
         });
 
         Ok(playlist_job_id)
+    }
+
+    /// Transcribe a single video using the chunked download path
+    ///
+    /// This helper function is used by playlist transcription to process individual videos.
+    /// It downloads the audio using yt-dlp with --no-playlist (via the chunking config),
+    /// then transcribes the local file. This ensures that even when processing videos
+    /// from a playlist, each video is downloaded individually without yt-dlp accidentally
+    /// re-expanding the playlist.
+    ///
+    /// Returns the transcript text on success, or an error message on failure.
+    async fn transcribe_single_video(
+        executor: &PluginExecutor,
+        chunking_config: &ChunkingConfig,
+        url: &str,
+        params: &HashMap<String, String>,
+        max_output_bytes: usize,
+    ) -> Result<String> {
+        // Parse URL to get a clean video URL without playlist parameters
+        // This prevents issues where yt-dlp might extract the wrong ID
+        let download_url = match parse_youtube_url(url) {
+            Ok(parsed) => parsed.video_url().unwrap_or_else(|| url.to_string()),
+            Err(_) => url.to_string(), // Fall back to original URL if parsing fails
+        };
+
+        // Create chunker with the chunking config (which uses --no-playlist in download_args)
+        let chunker_config = ChunkerConfig {
+            chunk_duration_secs: chunking_config.chunk_duration_secs,
+            download_timeout_secs: chunking_config.download_timeout_secs,
+            split_timeout_secs: 120,
+            download_command: chunking_config.download_command.clone(),
+            download_args: chunking_config.download_args.clone(),
+        };
+
+        let chunker = AudioChunker::new(chunker_config)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to initialize chunker: {}", e))?;
+
+        // Download audio
+        let download_result = match chunker.download_audio(&download_url).await {
+            Ok(r) => r,
+            Err(e) => {
+                let _ = chunker.cleanup().await;
+                return Err(anyhow::anyhow!("Failed to download audio: {}", e));
+            }
+        };
+
+        // Execute transcription on the downloaded file
+        let result = executor
+            .execute_on_file(
+                chunking_config,
+                &download_result.audio_path,
+                chunker.temp_dir(),
+                max_output_bytes,
+                params,
+            )
+            .await;
+
+        // Clean up temp files
+        let _ = chunker.cleanup().await;
+
+        match result {
+            Ok(exec_result) => {
+                if exec_result.success && !exec_result.stdout.is_empty() {
+                    Ok(exec_result.stdout)
+                } else if exec_result.timed_out {
+                    Err(anyhow::anyhow!("Transcription timed out"))
+                } else {
+                    Err(anyhow::anyhow!(
+                        "Transcription failed: {}",
+                        exec_result.stderr
+                    ))
+                }
+            }
+            Err(e) => Err(anyhow::anyhow!("Transcription error: {}", e)),
+        }
     }
 
     /// Execute a chunked transcription for a long video
@@ -1069,7 +1124,7 @@ impl PluginManager {
 
             // Mark as running
             if let Err(e) = job_manager.start_job(&job_id_clone).await {
-                warn!("Failed to mark job as running: {}", e);
+                warn!("Failed to mark job as running: {e}");
             }
 
             // STEP 1: Create thread IMMEDIATELY if configured
@@ -1085,8 +1140,7 @@ impl PluginManager {
                 if let Some((app_id, ref token)) = interaction_info {
                     let client = reqwest::Client::new();
                     let edit_url = format!(
-                        "https://discord.com/api/v10/webhooks/{}/{}/messages/@original",
-                        app_id, token
+                        "https://discord.com/api/v10/webhooks/{app_id}/{token}/messages/@original"
                     );
                     let _ = client
                         .patch(&edit_url)
@@ -1104,19 +1158,16 @@ impl PluginManager {
                 let starter_content = if let Some(ref meta) = metadata {
                     if let Some(ref uploader) = meta.uploader {
                         format!(
-                            "## YouTube: {} - by {}\nTranscription job: `{}`\n\n{}",
-                            thread_name, uploader, short_id, url
+                            "## YouTube: {thread_name} - by {uploader}\nTranscription job: `{short_id}`\n\n{url}"
                         )
                     } else {
                         format!(
-                            "## YouTube: {}\nTranscription job: `{}`\n\n{}",
-                            thread_name, short_id, url
+                            "## YouTube: {thread_name}\nTranscription job: `{short_id}`\n\n{url}"
                         )
                     }
                 } else {
                     format!(
-                        "## YouTube: {}\nTranscription job: `{}`\n\n{}",
-                        thread_name, short_id, url
+                        "## YouTube: {thread_name}\nTranscription job: `{short_id}`\n\n{url}"
                     )
                 };
 
@@ -1150,7 +1201,7 @@ impl PluginManager {
                                             let preview =
                                                 youtube::format_description_preview(desc, 10);
                                             let desc_msg =
-                                                format!("**Description:**\n>>> {}", preview);
+                                                format!("**Description:**\n>>> {preview}");
                                             let _ = thread_id.say(&http, &desc_msg).await;
                                         }
                                     }
@@ -1159,12 +1210,11 @@ impl PluginManager {
                                 Some(thread_id)
                             }
                             Err(e) => {
-                                error!("Failed to create thread after retries: {}", e);
+                                error!("Failed to create thread after retries: {e}");
                                 finalize_interaction_response(
                                     &interaction_info,
                                     &format!(
-                                        "Failed to create thread: {}. Posting to channel instead.",
-                                        e
+                                        "Failed to create thread: {e}. Posting to channel instead."
                                     ),
                                 )
                                 .await;
@@ -1173,10 +1223,10 @@ impl PluginManager {
                         }
                     }
                     Err(e) => {
-                        error!("Failed to send thread starter message: {}", e);
+                        error!("Failed to send thread starter message: {e}");
                         finalize_interaction_response(
                             &interaction_info,
-                            &format!("Failed to start chunked transcription: {}", e),
+                            &format!("Failed to start chunked transcription: {e}"),
                         )
                         .await;
                         None
@@ -1189,8 +1239,7 @@ impl PluginManager {
                 if let Some((app_id, ref token)) = interaction_info {
                     let client = reqwest::Client::new();
                     let edit_url = format!(
-                        "https://discord.com/api/v10/webhooks/{}/{}/messages/@original",
-                        app_id, token
+                        "https://discord.com/api/v10/webhooks/{app_id}/{token}/messages/@original"
                     );
                     let _ = client
                         .patch(&edit_url)
@@ -1208,19 +1257,16 @@ impl PluginManager {
                 let header_content = if let Some(ref meta) = metadata {
                     if let Some(ref uploader) = meta.uploader {
                         format!(
-                            "## YouTube: {} - by {}\nTranscription job: `{}`\n\n{}",
-                            video_title, uploader, short_id, url
+                            "## YouTube: {video_title} - by {uploader}\nTranscription job: `{short_id}`\n\n{url}"
                         )
                     } else {
                         format!(
-                            "## YouTube: {}\nTranscription job: `{}`\n\n{}",
-                            video_title, short_id, url
+                            "## YouTube: {video_title}\nTranscription job: `{short_id}`\n\n{url}"
                         )
                     }
                 } else {
                     format!(
-                        "## YouTube: {}\nTranscription job: `{}`\n\n{}",
-                        video_title, short_id, url
+                        "## YouTube: {video_title}\nTranscription job: `{short_id}`\n\n{url}"
                     )
                 };
                 let _ = channel_id.say(&http, &header_content).await;
@@ -1230,7 +1276,7 @@ impl PluginManager {
                     if let Some(ref desc) = meta.description {
                         if !desc.is_empty() {
                             let preview = youtube::format_description_preview(desc, 10);
-                            let desc_msg = format!("**Description:**\n>>> {}", preview);
+                            let desc_msg = format!("**Description:**\n>>> {preview}");
                             let _ = channel_id.say(&http, &desc_msg).await;
                         }
                     }
@@ -1261,7 +1307,7 @@ impl PluginManager {
             let chunker = match AudioChunker::new(chunker_config).await {
                 Ok(c) => c,
                 Err(e) => {
-                    let error_msg = format!("Failed to initialize chunker: {}", e);
+                    let error_msg = format!("Failed to initialize chunker: {e}");
                     let _ = output_handler
                         .post_error(
                             &http,
@@ -1285,7 +1331,7 @@ impl PluginManager {
             let download_result = match chunker.download_audio(&download_url).await {
                 Ok(r) => r,
                 Err(e) => {
-                    let error_msg = format!("Failed to download audio: {}", e);
+                    let error_msg = format!("Failed to download audio: {e}");
                     let _ = output_handler
                         .post_error(
                             &http,
@@ -1384,7 +1430,7 @@ impl PluginManager {
             let split_result = match chunker.split_into_chunks(&download_result.audio_path).await {
                 Ok(r) => r,
                 Err(e) => {
-                    let error_msg = format!("Failed to split audio: {}", e);
+                    let error_msg = format!("Failed to split audio: {e}");
                     let _ = output_handler
                         .post_error(
                             &http,
@@ -1474,15 +1520,14 @@ impl PluginManager {
                                 // Format transcript with sentences on separate lines
                                 let formatted = format_transcript_sentences(chunk_content);
                                 let chunk_filename =
-                                    format!("part-{}-of-{}.txt", chunk_num, total_chunks);
+                                    format!("part-{chunk_num}-of-{total_chunks}.txt");
                                 let _ = output_handler
                                     .post_file(&http, output_channel, &formatted, &chunk_filename)
                                     .await;
                             } else {
                                 // Post as text message with block quote formatting
                                 let msg = format!(
-                                    "### 📜 Part {}/{}\n\n>>> {}",
-                                    chunk_num, total_chunks, chunk_content
+                                    "### 📜 Part {chunk_num}/{total_chunks}\n\n>>> {chunk_content}"
                                 );
                                 let _ = output_channel.say(&http, &msg).await;
                             }
@@ -1501,8 +1546,7 @@ impl PluginManager {
                                     // Build prompt with custom instructions if provided
                                     let full_prompt = if let Some(ref custom) = custom_prompt {
                                         format!(
-                                            "{}\n\nAdditional instructions: {}",
-                                            base_prompt, custom
+                                            "{base_prompt}\n\nAdditional instructions: {custom}"
                                         )
                                     } else {
                                         base_prompt.clone()
@@ -1523,8 +1567,7 @@ impl PluginManager {
                                         // Post per-chunk summary if enabled
                                         if generate_per_chunk {
                                             let summary_msg = format!(
-                                                "### 💡 Summary (Part {}/{})\n\n{}",
-                                                chunk_num, total_chunks, chunk_summary
+                                                "### 💡 Summary (Part {chunk_num}/{total_chunks})\n\n{chunk_summary}"
                                             );
                                             let _ = output_channel.say(&http, &summary_msg).await;
                                         }
@@ -1548,18 +1591,16 @@ impl PluginManager {
                                             let end_part = chunk_num;
 
                                             let base_template = format!(
-                                                "Summarize what was covered in parts {}-{} of this video transcript. \
+                                                "Summarize what was covered in parts {start_part}-{end_part} of this video transcript. \
                                                 Be conversational - capture the main topics and key points discussed. \
-                                                No formal structure or conclusions needed.\n\nSection summaries:\n${{output}}",
-                                                start_part, end_part
+                                                No formal structure or conclusions needed.\n\nSection summaries:\n${{output}}"
                                             );
 
                                             // Add custom instructions to windowed summary too
                                             let cumulative_template =
                                                 if let Some(ref custom) = custom_prompt {
                                                     format!(
-                                                        "{}\n\nAdditional instructions: {}",
-                                                        base_template, custom
+                                                        "{base_template}\n\nAdditional instructions: {custom}"
                                                     )
                                                 } else {
                                                     base_template
@@ -1575,15 +1616,13 @@ impl PluginManager {
                                                 .await
                                             {
                                                 let cumulative_msg = format!(
-                                                    "### 💡 Summary (Parts {}-{})\n\n{}",
-                                                    start_part, end_part, cumulative_summary
+                                                    "### 💡 Summary (Parts {start_part}-{end_part})\n\n{cumulative_summary}"
                                                 );
                                                 let _ = output_channel
                                                     .say(&http, &cumulative_msg)
                                                     .await;
                                                 info!(
-                                                    "Posted windowed summary for parts {}-{}",
-                                                    start_part, end_part
+                                                    "Posted windowed summary for parts {start_part}-{end_part}"
                                                 );
 
                                                 // Update last_summary_chunk to current position
@@ -1608,7 +1647,7 @@ impl PluginManager {
                                 && chunk_num % transcript_file_interval == 0
                             {
                                 let partial_filename =
-                                    format!("transcript_parts_1-{}.txt", chunk_num);
+                                    format!("transcript_parts_1-{chunk_num}.txt");
                                 // Format with sentences on separate lines
                                 let formatted = format_transcript_sentences(&combined_transcript);
                                 let _ = output_handler
@@ -1678,16 +1717,8 @@ impl PluginManager {
                 video_title.clone()
             };
             let stats_msg = format!(
-                "---\n\n## {} Transcription Complete: {}\nJob: `{}`\n\n\
-                 **Stats:** {}/{} parts • {} words • **Runtime:** {}\n\n{}",
-                status_emoji,
-                title_display,
-                short_id,
-                completed_chunks,
-                total_chunks,
-                word_count_str,
-                runtime_str,
-                url
+                "---\n\n## {status_emoji} Transcription Complete: {title_display}\nJob: `{short_id}`\n\n\
+                 **Stats:** {completed_chunks}/{total_chunks} parts • {word_count_str} words • **Runtime:** {runtime_str}\n\n{url}"
             );
             let _ = output_channel.say(&http, &stats_msg).await;
 
@@ -1700,7 +1731,7 @@ impl PluginManager {
 
                 // Add custom instructions to overall summary if provided
                 let overall_template = if let Some(ref custom) = custom_prompt {
-                    format!("{}\n\nAdditional instructions: {}", base_template, custom)
+                    format!("{base_template}\n\nAdditional instructions: {custom}")
                 } else {
                     base_template.to_string()
                 };
@@ -1717,7 +1748,7 @@ impl PluginManager {
                     let _ = output_channel
                         .say(
                             &http,
-                            &format!("### 💡 Overall Summary\n\n{}", final_summary),
+                            &format!("### 💡 Overall Summary\n\n{final_summary}"),
                         )
                         .await;
                 }
@@ -1743,7 +1774,7 @@ impl PluginManager {
                     let _ = output_channel
                         .say(
                             &http,
-                            &format!("📜 **Full transcript** ({} words)", word_count),
+                            &format!("📜 **Full transcript** ({word_count} words)"),
                         )
                         .await;
                 } else {
@@ -1768,21 +1799,20 @@ impl PluginManager {
                 let _ = job_manager
                     .complete_job(
                         &job_id_clone,
-                        format!("Completed {} parts", completed_chunks),
+                        format!("Completed {completed_chunks} parts"),
                     )
                     .await;
             } else {
                 let _ = job_manager
                     .fail_job(
                         &job_id_clone,
-                        format!("{}/{} parts failed", failed_chunks, total_chunks),
+                        format!("{failed_chunks}/{total_chunks} parts failed"),
                     )
                     .await;
             }
 
             info!(
-                "Chunked transcription {} completed: {}/{} successful, {} failed, runtime: {:?}",
-                job_id_clone, completed_chunks, total_chunks, failed_chunks, runtime
+                "Chunked transcription {job_id_clone} completed: {completed_chunks}/{total_chunks} successful, {failed_chunks} failed, runtime: {runtime:?}"
             );
         });
 
@@ -1856,8 +1886,7 @@ async fn finalize_interaction_response(interaction_info: &Option<(u64, String)>,
     if let Some((app_id, token)) = interaction_info {
         let client = reqwest::Client::new();
         let edit_url = format!(
-            "https://discord.com/api/v10/webhooks/{}/{}/messages/@original",
-            app_id, token
+            "https://discord.com/api/v10/webhooks/{app_id}/{token}/messages/@original"
         );
         let _ = client
             .patch(&edit_url)
@@ -1872,7 +1901,7 @@ async fn finalize_interaction_response(interaction_info: &Option<(u64, String)>,
 fn substitute_params(template: &str, params: &HashMap<String, String>) -> String {
     let mut result = template.to_string();
     for (key, value) in params {
-        let placeholder = format!("${{{}}}", key);
+        let placeholder = format!("${{{key}}}");
         result = result.replace(&placeholder, value);
     }
     result
@@ -1898,7 +1927,7 @@ pub async fn fetch_youtube_title(url: &str) -> Option<String> {
             }
         }
         Err(e) => {
-            warn!("Failed to fetch YouTube title: {}", e);
+            warn!("Failed to fetch YouTube title: {e}");
             None
         }
     }

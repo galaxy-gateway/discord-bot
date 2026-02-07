@@ -68,7 +68,7 @@ pub async fn get_detailed_commits(count: usize) -> Vec<CommitInfo> {
     {
         Ok(o) => o,
         Err(e) => {
-            warn!("Failed to run git log: {}", e);
+            warn!("Failed to run git log: {e}");
             return vec![];
         }
     };
@@ -152,7 +152,7 @@ pub async fn get_github_repo_url() -> Option<String> {
     {
         Ok(o) => o,
         Err(e) => {
-            warn!("Failed to get git remote URL: {}", e);
+            warn!("Failed to get git remote URL: {e}");
             return None;
         }
     };
@@ -171,14 +171,14 @@ fn parse_github_url(url: &str) -> Option<String> {
     if url.starts_with("git@github.com:") {
         let path = url.strip_prefix("git@github.com:")?;
         let path = path.strip_suffix(".git").unwrap_or(path);
-        return Some(format!("https://github.com/{}", path));
+        return Some(format!("https://github.com/{path}"));
     }
 
     // Handle HTTPS format: https://github.com/user/repo.git
     if url.starts_with("https://github.com/") {
         let path = url.strip_prefix("https://github.com/")?;
         let path = path.strip_suffix(".git").unwrap_or(path);
-        return Some(format!("https://github.com/{}", path));
+        return Some(format!("https://github.com/{path}"));
     }
 
     None
@@ -285,7 +285,7 @@ impl StartupNotifier {
                 .send_to_owner(http, oid, embed.clone(), &notification_text)
                 .await
             {
-                warn!("Failed to send startup DM to owner {}: {}", oid, e);
+                warn!("Failed to send startup DM to owner {oid}: {e}");
             }
         }
 
@@ -293,8 +293,7 @@ impl StartupNotifier {
         if let Some(cid) = channel_id {
             if let Err(e) = self.send_to_channel(http, cid, embed).await {
                 warn!(
-                    "Failed to send startup notification to channel {}: {}",
-                    cid, e
+                    "Failed to send startup notification to channel {cid}: {e}"
                 );
             }
         }
@@ -330,7 +329,7 @@ impl StartupNotifier {
         }
 
         // Basic info fields (inline)
-        embed.field("Version", format!("`v{}`", version), true);
+        embed.field("Version", format!("`v{version}`"), true);
         embed.field("Guilds", ready.guilds.len().to_string(), true);
 
         // Shard info if available
@@ -369,7 +368,7 @@ impl StartupNotifier {
         }
 
         // Footer with timestamp
-        embed.footer(|f| f.text(format!("Started <t:{}:R>", timestamp)));
+        embed.footer(|f| f.text(format!("Started <t:{timestamp}:R>")));
 
         // Bot avatar as thumbnail
         if let Some(url) = ready.user.avatar_url() {
@@ -398,7 +397,7 @@ impl StartupNotifier {
                 } else {
                     trimmed.to_string()
                 };
-                text.push_str(&format!("\n\n**Update Notes:**\n{}", description));
+                text.push_str(&format!("\n\n**Update Notes:**\n{description}"));
             }
         }
 
@@ -431,7 +430,7 @@ impl StartupNotifier {
                 .collect::<Vec<_>>()
                 .join("\n");
             if !changes.is_empty() {
-                text.push_str(&format!("\n\n**Recent Changes:**\n{}", changes));
+                text.push_str(&format!("\n\n**Recent Changes:**\n{changes}"));
             }
         }
 
@@ -449,7 +448,7 @@ impl StartupNotifier {
         let user = UserId(owner_id);
         let dm = user.create_dm_channel(http).await?;
         dm.send_message(http, |m| m.set_embed(embed)).await?;
-        info!("Sent startup notification to owner {} via DM", owner_id);
+        info!("Sent startup notification to owner {owner_id} via DM");
 
         // Store the notification in conversation history so bot can reference it later
         let user_id_str = owner_id.to_string();
@@ -466,8 +465,7 @@ impl StartupNotifier {
             .await
         {
             warn!(
-                "Failed to store startup notification in conversation history: {}",
-                e
+                "Failed to store startup notification in conversation history: {e}"
             );
         }
 
@@ -489,7 +487,7 @@ impl StartupNotifier {
                 let commit_text = Self::format_commits_for_dm(&commits, repo_url.as_deref());
                 if !commit_text.is_empty() {
                     dm.send_message(http, |m| m.content(&commit_text)).await?;
-                    info!("Sent detailed commit info to owner {} via DM", owner_id);
+                    info!("Sent detailed commit info to owner {owner_id} via DM");
 
                     // Store commit details in conversation history
                     if let Err(e) = self
@@ -504,8 +502,7 @@ impl StartupNotifier {
                         .await
                     {
                         warn!(
-                            "Failed to store commit details in conversation history: {}",
-                            e
+                            "Failed to store commit details in conversation history: {e}"
                         );
                     }
                 }
@@ -534,14 +531,14 @@ impl StartupNotifier {
                 } else {
                     commit.body.clone()
                 };
-                result.push_str(&format!("{}\n", body));
+                result.push_str(&format!("{body}\n"));
             }
 
             if !commit.files.is_empty() {
                 let files_preview: Vec<_> = commit.files.iter().take(5).collect();
                 let files_str = files_preview
                     .iter()
-                    .map(|f| format!("  `{}`", f))
+                    .map(|f| format!("  `{f}`"))
                     .collect::<Vec<_>>()
                     .join("\n");
 
@@ -552,7 +549,7 @@ impl StartupNotifier {
                         commit.files.len() - 5
                     ));
                 } else {
-                    result.push_str(&format!("Files changed:\n{}\n", files_str));
+                    result.push_str(&format!("Files changed:\n{files_str}\n"));
                 }
             }
         }
@@ -575,7 +572,7 @@ impl StartupNotifier {
     ) -> anyhow::Result<()> {
         let channel = ChannelId(channel_id);
         let msg = channel.send_message(http, |m| m.set_embed(embed)).await?;
-        info!("Sent startup notification to channel {}", channel_id);
+        info!("Sent startup notification to channel {channel_id}");
 
         // Get configurable commit count (default 5)
         let commit_count: usize = self
@@ -622,7 +619,7 @@ impl StartupNotifier {
                     .await;
                 }
                 Err(e) => {
-                    warn!("Failed to create thread for commit details: {}", e);
+                    warn!("Failed to create thread for commit details: {e}");
                     // Fall back to posting in the channel directly
                     Self::post_detailed_commits_to_channel(
                         http,
@@ -696,7 +693,7 @@ impl StartupNotifier {
         }
 
         if let Err(e) = channel_id.say(http, &combined).await {
-            warn!("Failed to post commit details to channel: {}", e);
+            warn!("Failed to post commit details to channel: {e}");
         }
     }
 }
@@ -724,7 +721,7 @@ fn add_multi_column_fields(
         max_columns.min(3) // Discord max inline is effectively 3
     };
 
-    let items_per_column = (items.len() + num_columns - 1) / num_columns;
+    let items_per_column = items.len().div_ceil(num_columns);
 
     for (col_idx, chunk) in items.chunks(items_per_column).enumerate() {
         let column_content = chunk.join("\n");

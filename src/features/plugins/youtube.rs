@@ -59,14 +59,14 @@ impl YouTubeUrl {
     pub fn video_url(&self) -> Option<String> {
         self.video_id
             .as_ref()
-            .map(|id| format!("https://www.youtube.com/watch?v={}", id))
+            .map(|id| format!("https://www.youtube.com/watch?v={id}"))
     }
 
     /// Get the playlist URL for enumeration
     pub fn playlist_url(&self) -> Option<String> {
         self.playlist_id
             .as_ref()
-            .map(|id| format!("https://www.youtube.com/playlist?list={}", id))
+            .map(|id| format!("https://www.youtube.com/playlist?list={id}"))
     }
 }
 
@@ -174,8 +174,7 @@ pub fn parse_youtube_url(url: &str) -> Result<YouTubeUrl> {
     };
 
     debug!(
-        "Parsed YouTube URL: video_id={:?}, playlist_id={:?}, type={:?}",
-        video_id, playlist_id, url_type
+        "Parsed YouTube URL: video_id={video_id:?}, playlist_id={playlist_id:?}, type={url_type:?}"
     );
 
     Ok(YouTubeUrl {
@@ -193,9 +192,9 @@ pub async fn enumerate_playlist(
     playlist_id: &str,
     max_videos: Option<u32>,
 ) -> Result<PlaylistInfo> {
-    let playlist_url = format!("https://www.youtube.com/playlist?list={}", playlist_id);
+    let playlist_url = format!("https://www.youtube.com/playlist?list={playlist_id}");
 
-    info!("Enumerating playlist: {}", playlist_id);
+    info!("Enumerating playlist: {playlist_id}");
 
     // Build yt-dlp command for flat playlist extraction
     let mut cmd = Command::new("yt-dlp");
@@ -276,7 +275,7 @@ pub async fn enumerate_playlist(
         let item = PlaylistItem {
             video_id: video_id.clone(),
             title,
-            url: format!("https://www.youtube.com/watch?v={}", video_id),
+            url: format!("https://www.youtube.com/watch?v={video_id}"),
             duration,
             index,
             description,
@@ -324,7 +323,7 @@ pub async fn fetch_youtube_title(url: &str) -> Option<String> {
             }
         }
         Err(e) => {
-            warn!("Failed to fetch YouTube title: {}", e);
+            warn!("Failed to fetch YouTube title: {e}");
             None
         }
     }
@@ -337,7 +336,7 @@ pub async fn fetch_youtube_title(url: &str) -> Option<String> {
 pub async fn fetch_video_metadata(url: &str) -> Result<VideoMetadata> {
     use tokio::time::{timeout, Duration};
 
-    info!("Fetching video metadata for: {}", url);
+    info!("Fetching video metadata for: {url}");
 
     let mut cmd = Command::new("yt-dlp");
     cmd.arg("--dump-json")
@@ -410,7 +409,7 @@ pub fn format_description_preview(description: &str, max_lines: usize) -> String
         description.to_string()
     } else {
         let preview: String = lines[..max_lines].join("\n");
-        format!("{}...", preview)
+        format!("{preview}...")
     }
 }
 
@@ -431,9 +430,9 @@ pub fn format_duration(duration: std::time::Duration) -> String {
     let minutes = (total_secs % 3600) / 60;
 
     if hours > 0 {
-        format!("~{}h {}m", hours, minutes)
+        format!("~{hours}h {minutes}m")
     } else if minutes > 0 {
-        format!("~{}m", minutes)
+        format!("~{minutes}m")
     } else {
         "< 1m".to_string()
     }

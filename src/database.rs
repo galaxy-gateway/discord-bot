@@ -1369,7 +1369,7 @@ impl Database {
              ORDER BY timestamp ASC",
         )?;
         statement.bind((1, metric_type))?;
-        statement.bind((2, format!("-{}", hours).as_str()))?;
+        statement.bind((2, format!("-{hours}").as_str()))?;
 
         let mut results = Vec::new();
         while let Ok(State::Row) = statement.next() {
@@ -1387,9 +1387,9 @@ impl Database {
         let mut statement = conn.prepare(
             "DELETE FROM performance_metrics WHERE unit = 'system' AND timestamp < datetime('now', ? || ' days')"
         )?;
-        statement.bind((1, format!("-{}", days).as_str()))?;
+        statement.bind((1, format!("-{days}").as_str()))?;
         statement.next()?;
-        info!("Cleaned up system metrics older than {} days", days);
+        info!("Cleaned up system metrics older than {days} days");
         Ok(())
     }
 
@@ -2212,7 +2212,7 @@ impl Database {
              GROUP BY service_type",
         )?;
         statement.bind((1, user_id))?;
-        statement.bind((2, format!("-{}", days).as_str()))?;
+        statement.bind((2, format!("-{days}").as_str()))?;
 
         let mut results = Vec::new();
         while let Ok(State::Row) = statement.next() {
@@ -2236,7 +2236,7 @@ impl Database {
         days: i64,
     ) -> Result<Vec<(String, i64, i64, f64, i64, f64)>> {
         let conn = self.connection.lock().await;
-        let days_str = format!("-{}", days);
+        let days_str = format!("-{days}");
         let mut statement = conn.prepare(
             "SELECT service_type,
                     SUM(request_count) as requests,
@@ -2278,7 +2278,7 @@ impl Database {
         limit: i64,
     ) -> Result<Vec<(String, i64, f64)>> {
         let conn = self.connection.lock().await;
-        let days_str = format!("-{}", days);
+        let days_str = format!("-{days}");
         let mut statement = conn.prepare(
             "SELECT user_id,
                     SUM(request_count) as requests,
@@ -2339,7 +2339,7 @@ impl Database {
 
         // Period cost
         let period_cost: f64 = if let Some(days) = period_days {
-            let days_str = format!("-{}", days);
+            let days_str = format!("-{days}");
             let mut stmt = conn.prepare(
                 "SELECT COALESCE(SUM(total_cost_usd), 0) FROM openai_usage_daily WHERE date >= date('now', ? || ' days')"
             )?;
@@ -2381,8 +2381,7 @@ impl Database {
             let query = if let Some(days) = period_days {
                 format!(
                     "SELECT service_type, SUM(total_cost_usd) as cost FROM openai_usage_daily \
-                     WHERE date >= date('now', '-{} days') GROUP BY service_type ORDER BY cost DESC",
-                    days
+                     WHERE date >= date('now', '-{days} days') GROUP BY service_type ORDER BY cost DESC"
                 )
             } else {
                 "SELECT service_type, SUM(total_cost_usd) as cost FROM openai_usage_daily \
@@ -2404,8 +2403,7 @@ impl Database {
             let query = if let Some(days) = period_days {
                 format!(
                     "SELECT cost_bucket, SUM(estimated_cost_usd) as cost FROM openai_usage \
-                     WHERE timestamp >= datetime('now', '-{} days') GROUP BY cost_bucket ORDER BY cost DESC",
-                    days
+                     WHERE timestamp >= datetime('now', '-{days} days') GROUP BY cost_bucket ORDER BY cost DESC"
                 )
             } else {
                 "SELECT cost_bucket, SUM(estimated_cost_usd) as cost FROM openai_usage \
@@ -2429,7 +2427,7 @@ impl Database {
                 "SELECT date, SUM(total_cost_usd) as cost FROM openai_usage_daily \
                  WHERE date >= date('now', ? || ' days') GROUP BY date ORDER BY date ASC",
             )?;
-            let days_str = format!("-{}", days);
+            let days_str = format!("-{days}");
             stmt.bind((1, days_str.as_str()))?;
             while let Ok(State::Row) = stmt.next() {
                 let date = stmt.read::<String, _>(0)?;
@@ -2447,9 +2445,8 @@ impl Database {
                     "SELECT u.user_id, uc.username, SUM(u.total_cost_usd) as cost \
                      FROM openai_usage_daily u \
                      LEFT JOIN user_cache uc ON u.user_id = uc.user_id \
-                     WHERE u.user_id != '' AND u.date >= date('now', '-{} days') \
-                     GROUP BY u.user_id ORDER BY cost DESC LIMIT 10",
-                    days
+                     WHERE u.user_id != '' AND u.date >= date('now', '-{days} days') \
+                     GROUP BY u.user_id ORDER BY cost DESC LIMIT 10"
                 )
             } else {
                 "SELECT u.user_id, uc.username, SUM(u.total_cost_usd) as cost \
@@ -2485,9 +2482,9 @@ impl Database {
         let conn = self.connection.lock().await;
         let mut statement = conn
             .prepare("DELETE FROM openai_usage WHERE timestamp < datetime('now', ? || ' days')")?;
-        statement.bind((1, format!("-{}", days).as_str()))?;
+        statement.bind((1, format!("-{days}").as_str()))?;
         statement.next()?;
-        info!("Cleaned up openai_usage older than {} days", days);
+        info!("Cleaned up openai_usage older than {days} days");
         Ok(())
     }
 
@@ -2496,9 +2493,9 @@ impl Database {
         let conn = self.connection.lock().await;
         let mut statement =
             conn.prepare("DELETE FROM openai_usage_daily WHERE date < date('now', ? || ' days')")?;
-        statement.bind((1, format!("-{}", days).as_str()))?;
+        statement.bind((1, format!("-{days}").as_str()))?;
         statement.next()?;
-        info!("Cleaned up openai_usage_daily older than {} days", days);
+        info!("Cleaned up openai_usage_daily older than {days} days");
         Ok(())
     }
 
@@ -2605,7 +2602,7 @@ impl Database {
         let (api_field, tokens_update) = match api_type {
             "chat" => (
                 "chat_calls = chat_calls + 1",
-                format!("total_tokens = total_tokens + {}", tokens),
+                format!("total_tokens = total_tokens + {tokens}"),
             ),
             "whisper" => ("whisper_calls = whisper_calls + 1", String::new()),
             "dalle" => ("dalle_calls = dalle_calls + 1", String::new()),
@@ -2615,23 +2612,21 @@ impl Database {
         let sql = if tokens_update.is_empty() {
             format!(
                 "UPDATE dm_session_metrics
-                 SET {},
+                 SET {api_field},
                      total_api_calls = total_api_calls + 1,
                      total_api_cost_usd = total_api_cost_usd + ?,
                      updated_at = CURRENT_TIMESTAMP
-                 WHERE session_id = ?",
-                api_field
+                 WHERE session_id = ?"
             )
         } else {
             format!(
                 "UPDATE dm_session_metrics
-                 SET {},
-                     {},
+                 SET {api_field},
+                     {tokens_update},
                      total_api_calls = total_api_calls + 1,
                      total_api_cost_usd = total_api_cost_usd + ?,
                      updated_at = CURRENT_TIMESTAMP
-                 WHERE session_id = ?",
-                api_field, tokens_update
+                 WHERE session_id = ?"
             )
         };
 
@@ -2658,9 +2653,8 @@ impl Database {
 
         let sql = format!(
             "UPDATE dm_session_metrics
-             SET {} = {} + 1, updated_at = CURRENT_TIMESTAMP
-             WHERE session_id = ?",
-            field, field
+             SET {field} = {field} + 1, updated_at = CURRENT_TIMESTAMP
+             WHERE session_id = ?"
         );
 
         let mut statement = conn.prepare(&sql)?;
@@ -2688,7 +2682,7 @@ impl Database {
              AND ended_at IS NOT NULL",
         )?;
         stmt.bind((1, user_id))?;
-        stmt.bind((2, format!("-{}", days).as_str()))?;
+        stmt.bind((2, format!("-{days}").as_str()))?;
 
         let (
             session_count,
@@ -2727,7 +2721,7 @@ impl Database {
              AND s.started_at >= datetime('now', ? || ' days')",
         )?;
         api_stmt.bind((1, user_id))?;
-        api_stmt.bind((2, format!("-{}", days).as_str()))?;
+        api_stmt.bind((2, format!("-{days}").as_str()))?;
 
         let (
             api_calls,
@@ -2807,9 +2801,9 @@ impl Database {
         let conn = self.connection.lock().await;
         let mut statement =
             conn.prepare("DELETE FROM dm_events WHERE timestamp < datetime('now', ? || ' days')")?;
-        statement.bind((1, format!("-{}", days).as_str()))?;
+        statement.bind((1, format!("-{days}").as_str()))?;
         statement.next()?;
-        info!("Cleaned up dm_events older than {} days", days);
+        info!("Cleaned up dm_events older than {days} days");
         Ok(())
     }
 
@@ -2941,9 +2935,9 @@ impl Database {
         let mut statement = conn.prepare(
             "DELETE FROM plugin_jobs WHERE completed_at < datetime('now', ? || ' days')",
         )?;
-        statement.bind((1, format!("-{}", days).as_str()))?;
+        statement.bind((1, format!("-{days}").as_str()))?;
         statement.next()?;
-        info!("Cleaned up plugin_jobs older than {} days", days);
+        info!("Cleaned up plugin_jobs older than {days} days");
         Ok(())
     }
 
@@ -3475,7 +3469,7 @@ impl Database {
              ORDER BY timestamp ASC",
         )?;
         stmt.bind((1, metric_type))?;
-        stmt.bind((2, format!("-{}", hours).as_str()))?;
+        stmt.bind((2, format!("-{hours}").as_str()))?;
 
         let mut data_points = Vec::new();
         while let Ok(State::Row) = stmt.next() {
@@ -3498,7 +3492,7 @@ impl Database {
              GROUP BY date
              ORDER BY date ASC",
         )?;
-        stmt.bind((1, format!("-{}", days).as_str()))?;
+        stmt.bind((1, format!("-{days}").as_str()))?;
 
         let mut trend = Vec::new();
         while let Ok(State::Row) = stmt.next() {
