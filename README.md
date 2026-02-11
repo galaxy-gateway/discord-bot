@@ -30,11 +30,7 @@ The bot supports both Discord slash commands (recommended) and traditional text 
 - `/help` - Show help message with all commands
 - `/personas` - List available personas and show current persona
 - `/set_persona <persona>` - Set your default persona (with dropdown)
-- `/hey <message>` - Chat with your current persona
-- `/explain <topic>` - Get an explanation
-- `/simple <topic>` - Get a simple explanation with analogies
-- `/steps <task>` - Break something into steps
-- `/recipe <food>` - Get a recipe for the specified food
+- `/ask @persona <message>` - Chat with any persona (supports modifiers and history)
 - `/forget` - Clear your conversation history with the bot
 - `/remind <time> <message>` - Set a reminder
 - `/reminders [action] [id]` - List or cancel reminders

@@ -204,7 +204,7 @@ pub async fn handle_slash_command(&self, ctx: &Context, command: &ApplicationCom
     // Route to appropriate handler
     match command.data.name.as_str() {
         "ping" => self.handle_ping(ctx, command).await,
-        "hey" | "explain" | "simple" | "steps" | "recipe" => {
+        "ask" => {
             self.handle_ai_command(ctx, command).await  // AI-powered responses
         }
         "remind" => self.handle_remind(ctx, command).await,

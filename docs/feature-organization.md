@@ -173,13 +173,12 @@ src/
 │   │
 │   ├── slash/              # Discord slash commands (/)
 │   │   ├── mod.rs          # Slash command registration
-│   │   ├── chat.rs         # /hey, /explain, /simple, /steps
+│   │   ├── ask.rs          # /ask (unified AI chat)
 │   │   ├── persona.rs      # /personas, /set_persona
 │   │   ├── utility.rs      # /ping, /help, /forget
 │   │   ├── remind.rs       # /remind, /reminders
 │   │   ├── admin.rs        # /introspect, /settings, /set_*, /admin_role
-│   │   ├── imagine.rs      # /imagine (image generation)
-│   │   └── recipe.rs       # /recipe
+│   │   └── imagine.rs      # /imagine (image generation)
 │   │
 │   └── bang/               # Text-based commands (!)
 │       ├── mod.rs          # Bang command parser and registration
@@ -204,11 +203,7 @@ Native Discord commands with autocomplete, validation, and discoverability.
 - `/help` - Show all available commands (stays as slash for discoverability)
 - `/personas` - List available personas
 - `/set_persona <persona>` - Set your default persona
-- `/hey <message>` - Chat with your persona
-- `/explain <topic>` - Get detailed explanation
-- `/simple <topic>` - Get simple explanation with analogies
-- `/steps <task>` - Break task into steps
-- `/recipe <food>` - Get a recipe
+- `/ask @persona <message>` - Chat with any persona (supports modifiers and history)
 - `/imagine <prompt> [size] [style]` - Generate an image
 - `/forget` - Clear conversation history
 - `/remind <time> <message>` - Set a reminder
@@ -547,7 +542,6 @@ async fn handle_remind(&self, ctx: &Context, msg: &Message) -> Result<()> {
   - [x] `src/commands/slash/remind.rs`
   - [x] `src/commands/slash/admin.rs`
   - [x] `src/commands/slash/imagine.rs`
-  - [x] `src/commands/slash/recipe.rs`
 - [x] Create bang command system:
   - [x] `src/commands/bang/mod.rs` (parser)
   - [x] `src/commands/bang/info.rs`

@@ -138,13 +138,13 @@ mod tests {
     fn test_registry_register_multiple_names() {
         let mut registry = CommandRegistry::new();
         registry.register(Arc::new(MockHandler {
-            names: &["hey", "explain", "simple"],
+            names: &["ask", "imagine", "debate"],
         }));
 
         assert_eq!(registry.len(), 3);
-        assert!(registry.contains("hey"));
-        assert!(registry.contains("explain"));
-        assert!(registry.contains("simple"));
+        assert!(registry.contains("ask"));
+        assert!(registry.contains("imagine"));
+        assert!(registry.contains("debate"));
     }
 
     #[test]

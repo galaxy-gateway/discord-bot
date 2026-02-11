@@ -1,9 +1,10 @@
 //! Per-command handler implementations
 //!
-//! - **Version**: 1.6.0
+//! - **Version**: 2.0.0
 //! - **Since**: 3.38.0
 //!
 //! ## Changelog
+//! - 2.0.0: Remove AiChatHandler (hey, explain, simple, steps, recipe) - consolidated into /ask
 //! - 1.6.0: Add ContextMenuHandler (Analyze Message, Explain Message, Analyze User)
 //! - 1.5.0: Add InfoHandler (introspect, commits, features, toggle, sysinfo, usage, dm_stats, session_history)
 //! - 1.4.0: Add CouncilHandler (council, conclude)
@@ -13,7 +14,6 @@
 //! - 1.0.0: Initial extraction from monolithic command_handler.rs
 
 pub mod admin;
-pub mod ai_chat;
 pub mod ask;
 pub mod context_menu;
 pub mod council;
@@ -37,7 +37,6 @@ pub fn create_all_handlers() -> Vec<Arc<dyn SlashCommandHandler>> {
         Arc::new(persona::PersonaHandler),
         Arc::new(remind::RemindHandler),
         Arc::new(imagine::ImagineHandler),
-        Arc::new(ai_chat::AiChatHandler),
         Arc::new(admin::AdminHandler),
         Arc::new(ask::AskHandler),
         Arc::new(debate::DebateHandler),

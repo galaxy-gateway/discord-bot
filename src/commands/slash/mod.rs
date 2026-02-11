@@ -11,7 +11,6 @@
 
 pub mod admin;
 mod ask;
-mod chat;
 pub mod conclude;
 mod context_menu;
 pub mod council;
@@ -19,7 +18,6 @@ pub mod debate;
 mod dm_stats;
 mod imagine;
 mod persona;
-mod recipe;
 mod remind;
 mod utility;
 
@@ -46,12 +44,6 @@ pub fn create_slash_commands_with_plugins(plugins: &[Plugin]) -> Vec<CreateAppli
 
     // Persona commands
     commands.extend(persona::create_commands());
-
-    // Chat/AI commands
-    commands.extend(chat::create_commands());
-
-    // Recipe command
-    commands.extend(recipe::create_commands());
 
     // Image generation
     commands.extend(imagine::create_commands());
@@ -210,7 +202,7 @@ mod tests {
     #[test]
     fn test_create_slash_commands() {
         let commands = create_slash_commands();
-        assert!(commands.len() >= 27, "Should have at least 27 commands");
+        assert!(commands.len() >= 22, "Should have at least 22 commands");
 
         let command_names: Vec<String> = commands
             .iter()
@@ -222,11 +214,6 @@ mod tests {
             "help",
             "personas",
             "set_user",
-            "hey",
-            "explain",
-            "simple",
-            "steps",
-            "recipe",
             "imagine",
             "forget",
             "remind",

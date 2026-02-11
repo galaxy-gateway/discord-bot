@@ -100,7 +100,7 @@ Set which role can manage bot settings.
 
 | Level | Who | Can Do |
 |-------|-----|--------|
-| **Everyone** | All users | Use chat commands (/hey, /explain, etc.) |
+| **Everyone** | All users | Use chat commands (/ask, context menus, etc.) |
 | **Bot Admin** | Users with Bot Admin role | Change channel settings, view settings |
 | **Administrator** | Discord server admins | Set bot admin role, all settings |
 

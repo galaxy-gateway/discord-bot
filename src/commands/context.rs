@@ -12,7 +12,7 @@ use crate::features::analytics::{CostBucket, InteractionTracker, UsageTracker};
 use crate::features::image_gen::generator::ImageGenerator;
 use crate::features::personas::PersonaManager;
 use anyhow::Result;
-use log::debug;
+use log::{debug, error};
 use openai::chat::{ChatCompletion, ChatCompletionMessage, ChatCompletionMessageRole};
 use std::time::Duration;
 use tokio::time::timeout;
@@ -154,7 +154,11 @@ impl CommandContext {
             ChatCompletion::builder(&self.openai_model, messages).create(),
         )
         .await
-        .map_err(|_| anyhow::anyhow!("OpenAI request timed out after 45 seconds"))??;
+        .map_err(|_| anyhow::anyhow!("OpenAI request timed out after 45 seconds"))?
+        .map_err(|e| {
+            error!("[{request_id}] OpenAI API error: {e}");
+            anyhow::anyhow!("OpenAI API error: {e}")
+        })?;
 
         let response = completion
             .choices

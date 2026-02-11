@@ -3,10 +3,11 @@
 //! Create Discord threads for plugin output, handle large responses with file attachments,
 //! and generate AI summaries. Supports both single video and playlist transcription.
 //!
-//! - **Version**: 3.4.0
+//! - **Version**: 3.4.1
 //! - **Since**: 0.9.0
 //!
 //! ## Changelog
+//! - 3.4.1: Added error logging to AI summary OpenAI API calls for better diagnostics
 //! - 3.4.0: Added escape_markdown() for safe embedding of user text in markdown formatting
 //! - 3.3.0: Added output_format support, sentence-per-line transcript formatting, word count helpers
 //! - 3.2.0: Added UsageTracker integration for tracking AI summary costs per user
@@ -19,7 +20,7 @@
 use crate::features::analytics::{CostBucket, UsageTracker};
 use crate::features::plugins::config::OutputConfig;
 use anyhow::Result;
-use log::{info, warn};
+use log::{error, info, warn};
 use openai::chat::{ChatCompletion, ChatCompletionMessage, ChatCompletionMessageRole};
 use serenity::http::Http;
 use serenity::model::channel::{AttachmentType, ChannelType, GuildChannel};
@@ -822,7 +823,11 @@ impl OutputHandler {
             ],
         )
         .create()
-        .await?;
+        .await
+        .map_err(|e| {
+            error!("Plugin summary OpenAI API error: {e}");
+            anyhow::anyhow!("OpenAI API error: {e}")
+        })?;
 
         // Log usage if tracker and user context are available
         if let (Some(tracker), Some(ctx), Some(usage)) =

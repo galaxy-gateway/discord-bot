@@ -2478,7 +2478,11 @@ impl CommandHandler {
             }],
         )
         .create()
-        .await?;
+        .await
+        .map_err(|e| {
+            error!("Conflict mediation OpenAI API error: {e}");
+            anyhow::anyhow!("OpenAI API error: {e}")
+        })?;
 
         // Log usage for mediation (system-initiated, no specific user)
         if let Some(usage) = &chat_completion.usage {
