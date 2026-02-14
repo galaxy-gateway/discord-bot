@@ -1,20 +1,21 @@
 use crate::commands::context::CommandContext;
 use crate::commands::handlers::create_all_handlers;
 use crate::commands::registry::CommandRegistry;
-use crate::core::{chunk_for_embed, chunk_for_message, truncate_for_embed};
+use crate::core::{
+    chunk_for_embed, chunk_for_message, continuation_embed, persona_embed,
+};
 use crate::database::Database;
 use crate::features::analytics::{CostBucket, InteractionTracker, UsageTracker};
 use crate::features::audio::transcriber::AudioTranscriber;
 use crate::features::conflict::{ConflictDetector, ConflictMediator};
 use crate::features::council::get_active_councils;
 use crate::features::image_gen::generator::ImageGenerator;
-use crate::features::personas::{Persona, PersonaManager};
+use crate::features::personas::PersonaManager;
 use crate::features::plugins::PluginManager;
 use crate::features::rate_limiting::RateLimiter;
 use anyhow::Result;
 use log::{debug, error, info, warn};
 use openai::chat::{ChatCompletion, ChatCompletionMessage, ChatCompletionMessageRole};
-use serenity::builder::CreateEmbed;
 use serenity::model::application::interaction::application_command::ApplicationCommandInteraction;
 use serenity::model::channel::Message;
 use serenity::prelude::Context;
@@ -115,36 +116,6 @@ impl CommandHandler {
         self.usage_tracker.clone()
     }
 
-    /// Build an embed for a persona response
-    /// Used for both DM and guild responses when response_embeds is enabled
-    fn build_persona_embed(persona: &Persona, response_text: &str) -> CreateEmbed {
-        let mut embed = CreateEmbed::default();
-
-        // Set author with persona name and optional portrait
-        embed.author(|a| {
-            a.name(&persona.name);
-            if let Some(url) = &persona.portrait_url {
-                a.icon_url(url);
-            }
-            a
-        });
-
-        // Set accent color
-        embed.color(persona.color);
-
-        // Response text (max 4096 chars for embed description)
-        embed.description(truncate_for_embed(response_text));
-
-        embed
-    }
-
-    /// Build a continuation embed for long responses (no author, just content)
-    fn build_continuation_embed(persona: &Persona, response_text: &str) -> CreateEmbed {
-        let mut embed = CreateEmbed::default();
-        embed.color(persona.color);
-        embed.description(response_text);
-        embed
-    }
     pub async fn handle_message(&self, ctx: &Context, msg: &Message) -> Result<()> {
         let request_id = Uuid::new_v4();
         let user_id = msg.author.id.to_string();
@@ -579,9 +550,9 @@ impl CommandHandler {
                             if let Some(p) = persona {
                                 // First chunk gets full embed with author, rest are continuation
                                 let embed = if i == 0 {
-                                    Self::build_persona_embed(p, chunk)
+                                    persona_embed(p, chunk)
                                 } else {
-                                    Self::build_continuation_embed(p, chunk)
+                                    continuation_embed(p, chunk)
                                 };
                                 msg.channel_id
                                     .send_message(&ctx.http, |m| m.set_embed(embed))
@@ -605,7 +576,7 @@ impl CommandHandler {
                         ai_response.len()
                     );
                     if let Some(p) = persona {
-                        let embed = Self::build_persona_embed(p, &ai_response);
+                        let embed = persona_embed(p, &ai_response);
                         msg.channel_id
                             .send_message(&ctx.http, |m| m.set_embed(embed))
                             .await?;
@@ -865,9 +836,9 @@ impl CommandHandler {
 
                                 // First chunk gets full embed with author, rest are continuation
                                 let embed = if i == 0 {
-                                    Self::build_persona_embed(p, chunk)
+                                    persona_embed(p, chunk)
                                 } else {
-                                    Self::build_continuation_embed(p, chunk)
+                                    continuation_embed(p, chunk)
                                 };
                                 msg.channel_id
                                     .send_message(&ctx.http, |m| m.set_embed(embed))
@@ -888,7 +859,7 @@ impl CommandHandler {
                             request_id,
                             ai_response.len()
                         );
-                        let embed = Self::build_persona_embed(p, &ai_response);
+                        let embed = persona_embed(p, &ai_response);
                         msg.channel_id
                             .send_message(&ctx.http, |m| m.set_embed(embed))
                             .await?;
@@ -2005,18 +1976,7 @@ impl CommandHandler {
                 }
 
                 // Build embed for this persona's response
-                let mut embed = serenity::builder::CreateEmbed::default();
-                embed.author(|a| {
-                    a.name(&persona.name);
-                    if let Some(url) = &persona.portrait_url {
-                        a.icon_url(url);
-                    }
-                    a
-                });
-                embed.color(persona.color);
-
-                // Handle long responses
-                embed.description(truncate_for_embed(&response));
+                let embed = persona_embed(&persona, &response);
 
                 // Send the response
                 if let Err(e) = channel_id

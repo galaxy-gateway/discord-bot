@@ -2,10 +2,11 @@
 //!
 //! Handles: council, conclude
 //!
-//! - **Version**: 1.0.0
+//! - **Version**: 1.1.0
 //! - **Since**: 3.38.0
 //!
 //! ## Changelog
+//! - 1.1.0: Use shared persona embed builders from core::embeds
 //! - 1.0.0: Extracted from command_handler.rs
 
 use anyhow::Result;
@@ -20,7 +21,7 @@ use uuid::Uuid;
 use crate::commands::context::{is_in_thread_channel, CommandContext};
 use crate::commands::handler::SlashCommandHandler;
 use crate::commands::slash::get_string_option;
-use crate::core::truncate_for_embed;
+use crate::core::persona_embed;
 use crate::features::analytics::CostBucket;
 use crate::features::council::{get_active_councils, CouncilState};
 use crate::features::debate::get_active_debates;
@@ -396,16 +397,7 @@ impl CouncilHandler {
                 }
 
                 // Build embed for this persona's response
-                let mut embed = serenity::builder::CreateEmbed::default();
-                embed.author(|a| {
-                    a.name(&persona.name);
-                    if let Some(url) = &persona.portrait_url {
-                        a.icon_url(url);
-                    }
-                    a
-                });
-                embed.color(persona.color);
-                embed.description(truncate_for_embed(&response));
+                let embed = persona_embed(&persona, &response);
 
                 if let Err(e) = thread_id
                     .send_message(&ctx_clone.http, |m| m.set_embed(embed.clone()))

@@ -1,49 +1,44 @@
-# Persona Bot v4.4.0 - The Mirror's Measure
+# Persona Bot v4.5.0 - The Shared Canvas
 
-*Those who speak to the void deserve to know its depth,*
+*Why paint the same portrait seven times when one frame serves all?*
 
-Every conversation carries weight — tokens counted, context consumed, costs accrued. Until now, that weight was invisible. The `/context` command lifts the curtain, showing users exactly what their persona sees: how many messages, how many tokens, which persona listens, and from where the memory flows.
+Every persona response arrives dressed in the same attire: a name, a portrait, an accent color, a truncated description. Yet this outfit was stitched independently in seven places across four files, each copy a near-perfect twin of the others. One change to the pattern meant hunting down every duplicate. No more.
 
-## What's New
+## What Changed
 
-### /context — See Your Context Window
+### Shared Embed Builders
 
-A single slash command with no arguments. Ask, and the mirror answers:
+Two new functions in `core::embeds` replace all seven copies:
 
-```
-/context
-```
+- **`persona_embed(persona, text)`** - builds the full persona-styled embed: author with portrait icon, accent color, truncated description
+- **`continuation_embed(persona, text)`** - builds the stripped-down continuation embed for chunked responses: just color and description, no author
 
-An ephemeral embed appears — visible only to you — revealing the anatomy of your current conversation:
+Handlers that need extras simply chain setters on the returned embed. The fetch handler, for instance, adds its URL footer after calling `persona_embed()`.
 
-- **Active persona** and model in use
-- **System prompt size** in estimated tokens and characters
-- **Conversation history** — message count, token estimate, character count
-- **Context limit** — how many messages the window holds, and how many you have used
-- **Context source** — whether history comes from the database or a Discord thread
+### What This Means
 
-No AI call. No cost. Pure introspection.
-
-### When to Use It
-
-- Before a long conversation, to understand your starting context
-- When responses seem to lose earlier context — check if you have hit the limit
-- Before deciding to `/forget` — see what you would be clearing
-- To understand the token cost of your current persona's system prompt
+- One place to maintain embed styling, not seven
+- Consistent persona presentation across `/ask`, `/fetch`, `/council`, DM responses, and mentions
+- Follows the same consolidation pattern as `core::response` (which extracted 8 duplicate text chunkers)
 
 ## The Vision
 
-A craftsman who does not know the weight of their tools cannot master them. The context window is the lens through which every persona sees the world — its size shapes every response, its contents color every thought. Now that lens is no longer hidden. Look through it, measure it, and choose your words knowing exactly what the persona remembers.
+A gallery does not commission seven different artists to paint the same frame. The canvas is shared; the art within is what varies. Now every persona steps through the same doorway, and if that doorway ever needs repainting, only one brush is required.
 
-*The unexamined context is not worth sending...*
+*The many speak through one voice, and the voice speaks true...*
 
 ---
-Context Info: 1.0.0
-- **New /context command** — ephemeral context window inspection with zero AI cost
-- **Token estimation** — ~4 chars/token heuristic for system prompt and history
-- **Source awareness** — distinguishes database history from Discord thread context
+Core: 1.3.0
+- **New `core::embeds` module** - shared `persona_embed()` and `continuation_embed()` functions
+- **Eliminated 7 duplicate** embed builders across 4 files
 
-Handlers: 5.0.0
-- **ContextInfoHandler** — registered in command dispatcher
+Ask Handler: 1.1.0
+- **Use shared embed builders** from `core::embeds`
+
+Fetch Handler: 1.2.0
+- **Use shared embed builders** from `core::embeds`
+
+Council Handler: 1.1.0
+- **Use shared embed builders** from `core::embeds`
 
 *~ The Visionary*

@@ -2,10 +2,11 @@
 //!
 //! Handles: fetch
 //!
-//! - **Version**: 1.1.0
+//! - **Version**: 1.2.0
 //! - **Since**: 4.2.0
 //!
 //! ## Changelog
+//! - 1.2.0: Use shared persona embed builders from core::embeds
 //! - 1.1.0: Add file download and upload support for non-HTML content
 //! - 1.0.0: Initial implementation
 
@@ -13,7 +14,6 @@ use anyhow::Result;
 use async_trait::async_trait;
 use log::{debug, error, info, warn};
 use scraper::{Html, Selector};
-use serenity::builder::CreateEmbed;
 use serenity::model::application::interaction::application_command::ApplicationCommandInteraction;
 use serenity::model::application::interaction::InteractionResponseType;
 use serenity::model::channel::{AttachmentType, ChannelType};
@@ -27,11 +27,11 @@ use crate::commands::context::{is_in_thread_channel, CommandContext};
 use crate::commands::handler::SlashCommandHandler;
 use crate::commands::slash::get_string_option;
 use crate::core::{
-    chunk_for_embed, detect_content_kind, download_file, format_file_size, is_within_upload_limit,
-    max_upload_size, truncate_for_embed, ContentKind, DownloadedFile,
+    chunk_for_embed, continuation_embed, detect_content_kind, download_file, format_file_size,
+    is_within_upload_limit, max_upload_size, persona_embed, ContentKind, DownloadedFile,
 };
 use crate::features::analytics::CostBucket;
-use crate::features::personas::Persona;
+use serenity::builder::CreateEmbed;
 
 /// Maximum characters of extracted text to send to OpenAI
 const MAX_EXTRACTED_CHARS: usize = 100_000;
@@ -296,8 +296,8 @@ impl FetchHandler {
                         debug!("[{request_id}] Response split into {} chunks", chunks.len());
 
                         if let Some(first_chunk) = chunks.first() {
-                            let embed =
-                                Self::build_fetch_embed(p, first_chunk, url, question);
+                            let mut embed = persona_embed(p, first_chunk);
+                            Self::add_fetch_footer(&mut embed, url, question);
                             command
                                 .edit_original_interaction_response(&serenity_ctx.http, |r| {
                                     r.set_embed(embed)
@@ -307,7 +307,7 @@ impl FetchHandler {
 
                         for chunk in chunks.iter().skip(1) {
                             if !chunk.trim().is_empty() {
-                                let embed = Self::build_continuation_embed(p, chunk);
+                                let embed = continuation_embed(p, chunk);
                                 command
                                     .create_followup_message(&serenity_ctx.http, |m| {
                                         m.set_embed(embed)
@@ -316,8 +316,8 @@ impl FetchHandler {
                             }
                         }
                     } else {
-                        let embed =
-                            Self::build_fetch_embed(p, &response, url, question);
+                        let mut embed = persona_embed(p, &response);
+                        Self::add_fetch_footer(&mut embed, url, question);
                         command
                             .edit_original_interaction_response(&serenity_ctx.http, |r| {
                                 r.set_embed(embed)
@@ -618,24 +618,8 @@ impl FetchHandler {
         )
     }
 
-    /// Build embed with fetch-specific footer showing URL
-    fn build_fetch_embed(
-        persona: &Persona,
-        response_text: &str,
-        url: &str,
-        question: Option<&str>,
-    ) -> CreateEmbed {
-        let mut embed = CreateEmbed::default();
-        embed.author(|a| {
-            a.name(&persona.name);
-            if let Some(portrait_url) = &persona.portrait_url {
-                a.icon_url(portrait_url);
-            }
-            a
-        });
-        embed.color(persona.color);
-        embed.description(truncate_for_embed(response_text));
-
+    /// Add fetch-specific footer showing URL and optional question
+    fn add_fetch_footer(embed: &mut CreateEmbed, url: &str, question: Option<&str>) {
         // Truncate URL for footer if needed (Discord footer limit is 2048 chars)
         let display_url: String = if url.len() > 200 {
             format!("{}...", &url[..197])
@@ -649,15 +633,6 @@ impl FetchHandler {
         } else {
             embed.footer(|f| f.text(format!("Summary of {display_url}")));
         }
-
-        embed
-    }
-
-    fn build_continuation_embed(persona: &Persona, response_text: &str) -> CreateEmbed {
-        let mut embed = CreateEmbed::default();
-        embed.color(persona.color);
-        embed.description(response_text);
-        embed
     }
 }
 

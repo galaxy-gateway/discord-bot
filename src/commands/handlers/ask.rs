@@ -2,10 +2,11 @@
 //!
 //! Handles: ask
 //!
-//! - **Version**: 1.0.0
+//! - **Version**: 1.1.0
 //! - **Since**: 3.38.0
 //!
 //! ## Changelog
+//! - 1.1.0: Use shared persona embed builders from core::embeds
 //! - 1.0.0: Extracted from command_handler.rs
 
 use anyhow::Result;
@@ -22,10 +23,9 @@ use uuid::Uuid;
 use crate::commands::context::{is_in_thread_channel, CommandContext};
 use crate::commands::handler::SlashCommandHandler;
 use crate::commands::slash::{get_bool_option, get_integer_option, get_string_option};
-use crate::core::{chunk_for_embed, truncate_for_embed};
+use crate::core::{chunk_for_embed, continuation_embed, persona_embed};
 use crate::features::analytics::CostBucket;
-use crate::features::personas::{apply_paragraph_limit, Persona};
-use serenity::builder::CreateEmbed;
+use crate::features::personas::apply_paragraph_limit;
 
 /// Handler for /ask command - ask any persona a question
 pub struct AskHandler;
@@ -212,7 +212,7 @@ impl AskHandler {
                     debug!("[{request_id}] Response split into {} chunks", chunks.len());
 
                     if let Some(first_chunk) = chunks.first() {
-                        let embed = Self::build_persona_embed(&persona, first_chunk);
+                        let embed = persona_embed(&persona, first_chunk);
                         command
                             .edit_original_interaction_response(&serenity_ctx.http, |r| {
                                 r.set_embed(embed)
@@ -223,7 +223,7 @@ impl AskHandler {
                     // Send remaining chunks as follow-ups
                     for chunk in chunks.iter().skip(1) {
                         if !chunk.trim().is_empty() {
-                            let embed = Self::build_continuation_embed(&persona, chunk);
+                            let embed = continuation_embed(&persona, chunk);
                             command
                                 .create_followup_message(&serenity_ctx.http, |m| {
                                     m.set_embed(embed)
@@ -232,7 +232,7 @@ impl AskHandler {
                         }
                     }
                 } else {
-                    let embed = Self::build_persona_embed(&persona, &response);
+                    let embed = persona_embed(&persona, &response);
                     command
                         .edit_original_interaction_response(&serenity_ctx.http, |r| {
                             r.set_embed(embed)
@@ -258,28 +258,6 @@ impl AskHandler {
         Ok(())
     }
 
-    /// Build an embed for a persona response
-    fn build_persona_embed(persona: &Persona, response_text: &str) -> CreateEmbed {
-        let mut embed = CreateEmbed::default();
-        embed.author(|a| {
-            a.name(&persona.name);
-            if let Some(url) = &persona.portrait_url {
-                a.icon_url(url);
-            }
-            a
-        });
-        embed.color(persona.color);
-        embed.description(truncate_for_embed(response_text));
-        embed
-    }
-
-    /// Build a continuation embed for long responses
-    fn build_continuation_embed(persona: &Persona, response_text: &str) -> CreateEmbed {
-        let mut embed = CreateEmbed::default();
-        embed.color(persona.color);
-        embed.description(response_text);
-        embed
-    }
 }
 
 #[cfg(test)]
