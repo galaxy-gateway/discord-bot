@@ -17,6 +17,7 @@ mod context_menu;
 pub mod council;
 pub mod debate;
 mod dm_stats;
+mod context_info;
 mod fetch;
 mod imagine;
 mod persona;
@@ -73,6 +74,9 @@ pub fn create_slash_commands_with_plugins(plugins: &[Plugin]) -> Vec<CreateAppli
 
     // Fetch command
     commands.extend(fetch::create_commands());
+
+    // Context info command
+    commands.extend(context_info::create_commands());
 
     // Plugin commands (single /plugins command with subcommands)
     if !plugins.is_empty() {
@@ -219,7 +223,7 @@ mod tests {
     #[test]
     fn test_create_slash_commands() {
         let commands = create_slash_commands();
-        assert!(commands.len() >= 23, "Should have at least 23 commands");
+        assert!(commands.len() >= 24, "Should have at least 24 commands");
 
         let command_names: Vec<String> = commands
             .iter()
@@ -258,6 +262,8 @@ mod tests {
             "conclude",
             // Fetch command
             "fetch",
+            // Context info command
+            "context",
         ];
 
         for expected in expected_commands {

@@ -223,10 +223,10 @@ pub const FEATURES: &[Feature] = &[
     Feature {
         id: "web_fetch",
         name: "Web Fetch",
-        version: "1.0.0",
+        version: "1.1.0",
         since: "4.2.0",
         toggleable: false,
-        description: "Fetch webpages and get persona-flavored summaries or Q&A",
+        description: "Fetch webpages and files with persona-flavored summaries, Q&A, and file downloads",
     },
 ];
 

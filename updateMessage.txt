@@ -1,47 +1,49 @@
-# Persona Bot v4.2.0 - The Window to the Web
+# Persona Bot v4.4.0 - The Mirror's Measure
 
-*Seekers of knowledge beyond the server walls,*
+*Those who speak to the void deserve to know its depth,*
 
-The personas have long been confined to answering from what they already know. Today they learn to reach out, to read, to fetch the living web and bring its wisdom back in their own voice.
+Every conversation carries weight — tokens counted, context consumed, costs accrued. Until now, that weight was invisible. The `/context` command lifts the curtain, showing users exactly what their persona sees: how many messages, how many tokens, which persona listens, and from where the memory flows.
 
 ## What's New
 
-### /fetch Command
+### /context — See Your Context Window
 
-A new slash command that bridges the gap between the web and your personas:
+A single slash command with no arguments. Ask, and the mirror answers:
 
 ```
-/fetch url:https://example.com
-/fetch url:https://example.com question:What is this page about?
+/context
 ```
 
-**Without a question** - your active persona summarizes the webpage content, highlighting key points and important details.
+An ephemeral embed appears — visible only to you — revealing the anatomy of your current conversation:
 
-**With a question** - your active persona answers specifically about the page content, staying in character while being grounded in what the page actually says.
+- **Active persona** and model in use
+- **System prompt size** in estimated tokens and characters
+- **Conversation history** — message count, token estimate, character count
+- **Context limit** — how many messages the window holds, and how many you have used
+- **Context source** — whether history comes from the database or a Discord thread
 
-### Smart Content Extraction
+No AI call. No cost. Pure introspection.
 
-Raw HTML is messy. The bot intelligently extracts meaningful text:
-- Prioritizes `<main>` and `<article>` content areas
-- Strips scripts, styles, navigation, headers, and footers
-- Falls back to full body text when structured content areas are absent
-- Handles pages up to 5MB with graceful truncation
+### When to Use It
 
-### Persona-Flavored Responses
-
-The command automatically uses your active persona (channel, user, or guild default) - no need to pick one. The response arrives as a styled embed with the persona's portrait and accent color, just like /ask.
+- Before a long conversation, to understand your starting context
+- When responses seem to lose earlier context — check if you have hit the limit
+- Before deciding to `/forget` — see what you would be clearing
+- To understand the token cost of your current persona's system prompt
 
 ## The Vision
 
-Knowledge is not static. The personas now have eyes that reach beyond their training, reading the web as you would, but interpreting through the lens of their unique perspective. Ask Obi-Wan to summarize a philosophy paper. Ask the Architect to review a technical specification. The web becomes another conversation partner.
+A craftsman who does not know the weight of their tools cannot master them. The context window is the lens through which every persona sees the world — its size shapes every response, its contents color every thought. Now that lens is no longer hidden. Look through it, measure it, and choose your words knowing exactly what the persona remembers.
 
-*Every page tells a story. Now your personas can read it...*
+*The unexamined context is not worth sending...*
 
 ---
-Web Fetch: 1.0.0
-- **URL fetching** - reqwest-powered with 15s timeout, redirect following, size limits
-- **HTML parsing** - scraper crate for DOM-based intelligent text extraction
-- **Active persona** - automatic persona resolution via channel/user/guild cascade
-- **Cost tracking** - dedicated CostBucket::Fetch for usage analytics
+Context Info: 1.0.0
+- **New /context command** — ephemeral context window inspection with zero AI cost
+- **Token estimation** — ~4 chars/token heuristic for system prompt and history
+- **Source awareness** — distinguishes database history from Discord thread context
+
+Handlers: 5.0.0
+- **ContextInfoHandler** — registered in command dispatcher
 
 *~ The Visionary*

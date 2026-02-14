@@ -1,9 +1,10 @@
 //! Per-command handler implementations
 //!
-//! - **Version**: 4.0.0
+//! - **Version**: 5.0.0
 //! - **Since**: 3.38.0
 //!
 //! ## Changelog
+//! - 5.0.0: Add ContextInfoHandler for /context window inspection
 //! - 4.0.0: Add FetchHandler for /fetch webpage summaries
 //! - 3.0.0: Add PluginsHandler for /plugins subcommand dispatch
 //! - 2.0.0: Remove AiChatHandler (hey, explain, simple, steps, recipe) - consolidated into /ask
@@ -17,6 +18,7 @@
 
 pub mod admin;
 pub mod ask;
+pub mod context_info;
 pub mod context_menu;
 pub mod council;
 pub mod debate;
@@ -45,6 +47,7 @@ pub fn create_all_handlers() -> Vec<Arc<dyn SlashCommandHandler>> {
         Arc::new(ask::AskHandler),
         Arc::new(debate::DebateHandler),
         Arc::new(fetch::FetchHandler),
+        Arc::new(context_info::ContextInfoHandler),
         Arc::new(council::CouncilHandler),
         Arc::new(info::InfoHandler),
         Arc::new(context_menu::ContextMenuHandler),

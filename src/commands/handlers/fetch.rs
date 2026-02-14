@@ -2,10 +2,11 @@
 //!
 //! Handles: fetch
 //!
-//! - **Version**: 1.0.0
+//! - **Version**: 1.1.0
 //! - **Since**: 4.2.0
 //!
 //! ## Changelog
+//! - 1.1.0: Add file download and upload support for non-HTML content
 //! - 1.0.0: Initial implementation
 
 use anyhow::Result;
@@ -15,26 +16,31 @@ use scraper::{Html, Selector};
 use serenity::builder::CreateEmbed;
 use serenity::model::application::interaction::application_command::ApplicationCommandInteraction;
 use serenity::model::application::interaction::InteractionResponseType;
+use serenity::model::channel::{AttachmentType, ChannelType};
 use serenity::prelude::Context;
+use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::Instant;
 use uuid::Uuid;
 
-use crate::commands::context::CommandContext;
+use crate::commands::context::{is_in_thread_channel, CommandContext};
 use crate::commands::handler::SlashCommandHandler;
 use crate::commands::slash::get_string_option;
-use crate::core::{chunk_for_embed, truncate_for_embed};
+use crate::core::{
+    chunk_for_embed, detect_content_kind, download_file, format_file_size, is_within_upload_limit,
+    max_upload_size, truncate_for_embed, ContentKind, DownloadedFile,
+};
 use crate::features::analytics::CostBucket;
 use crate::features::personas::Persona;
-
-/// Maximum size of raw HTML to download (5 MB)
-const MAX_HTML_BYTES: usize = 5 * 1024 * 1024;
 
 /// Maximum characters of extracted text to send to OpenAI
 const MAX_EXTRACTED_CHARS: usize = 100_000;
 
-/// HTTP request timeout in seconds
-const FETCH_TIMEOUT_SECS: u64 = 15;
+/// Maximum download size for HTML pages (5 MB)
+const MAX_HTML_BYTES: u64 = 5 * 1024 * 1024;
+
+/// HTTP request timeout for file downloads (seconds)
+const FILE_DOWNLOAD_TIMEOUT_SECS: u64 = 60;
 
 pub struct FetchHandler;
 
@@ -108,23 +114,119 @@ impl FetchHandler {
                 anyhow::anyhow!("Failed to defer interaction: {e}")
             })?;
 
-        // Fetch the webpage
-        info!("[{request_id}] Fetching URL: {url}");
-        let html_content = match Self::fetch_url(&url, request_id).await {
-            Ok(html) => html,
+        // Determine guild premium tier for upload limits
+        let premium_tier = Self::get_guild_premium_tier(serenity_ctx, command);
+        let upload_limit = max_upload_size(premium_tier);
+
+        // Download the content
+        info!("[{request_id}] Downloading URL: {url}");
+        let downloaded = match download_file(&url, upload_limit, FILE_DOWNLOAD_TIMEOUT_SECS).await {
+            Ok(f) => f,
             Err(e) => {
-                error!("[{request_id}] Failed to fetch URL: {e}");
+                error!("[{request_id}] Failed to download URL: {e}");
                 command
                     .edit_original_interaction_response(&serenity_ctx.http, |r| {
-                        r.content(format!("Failed to fetch the webpage: {e}"))
+                        r.content(format!("Failed to fetch the URL: {e}"))
                     })
                     .await?;
                 return Ok(());
             }
         };
 
-        // Extract text from HTML
-        let extracted_text = Self::extract_text(&html_content, request_id);
+        let content_kind = detect_content_kind(&downloaded.content_type, &url);
+        info!(
+            "[{request_id}] Content-Type: {} | Kind: {:?} | Size: {}",
+            downloaded.content_type,
+            content_kind,
+            format_file_size(downloaded.size)
+        );
+
+        match content_kind {
+            ContentKind::Html | ContentKind::PlainText => {
+                self.handle_text_content(
+                    ctx,
+                    serenity_ctx,
+                    command,
+                    request_id,
+                    start_time,
+                    &url,
+                    question.as_deref(),
+                    &downloaded,
+                    &content_kind,
+                    &user_id,
+                    &channel_id,
+                    guild_id.as_deref(),
+                )
+                .await
+            }
+            _ => {
+                self.handle_file_upload(
+                    serenity_ctx,
+                    command,
+                    request_id,
+                    &url,
+                    downloaded,
+                    &content_kind,
+                    premium_tier,
+                )
+                .await
+            }
+        }
+    }
+
+    /// Handle HTML and plain-text content: extract text, call OpenAI, send embed
+    #[allow(clippy::too_many_arguments)]
+    async fn handle_text_content(
+        &self,
+        ctx: &CommandContext,
+        serenity_ctx: &Context,
+        command: &ApplicationCommandInteraction,
+        request_id: Uuid,
+        start_time: Instant,
+        url: &str,
+        question: Option<&str>,
+        downloaded: &DownloadedFile,
+        content_kind: &ContentKind,
+        user_id: &str,
+        channel_id: &str,
+        guild_id: Option<&str>,
+    ) -> Result<()> {
+        // Enforce a stricter size limit for HTML pages (to avoid huge OpenAI bills)
+        if downloaded.size > MAX_HTML_BYTES {
+            warn!(
+                "[{request_id}] HTML page too large: {} (limit {})",
+                format_file_size(downloaded.size),
+                format_file_size(MAX_HTML_BYTES)
+            );
+            command
+                .edit_original_interaction_response(&serenity_ctx.http, |r| {
+                    r.content(format!(
+                        "Page is too large ({}, max {})",
+                        format_file_size(downloaded.size),
+                        format_file_size(MAX_HTML_BYTES)
+                    ))
+                })
+                .await?;
+            return Ok(());
+        }
+
+        let text_content = String::from_utf8_lossy(&downloaded.bytes).to_string();
+
+        // For HTML, extract meaningful text; for plain text, use as-is
+        let extracted_text = if *content_kind == ContentKind::Html {
+            Self::extract_text(&text_content, request_id)
+        } else {
+            // Plain text: just truncate if needed
+            let mut text = text_content;
+            if text.len() > MAX_EXTRACTED_CHARS {
+                text.truncate(MAX_EXTRACTED_CHARS);
+                text.push_str(&format!(
+                    "\n\n[... truncated to first {MAX_EXTRACTED_CHARS} characters ...]"
+                ));
+            }
+            text
+        };
+
         if extracted_text.trim().is_empty() {
             warn!("[{request_id}] No text content extracted from URL");
             command
@@ -141,13 +243,13 @@ impl FetchHandler {
         );
 
         // Resolve user's active persona (channel -> user -> guild -> env -> fallback)
-        let persona_id = if let Some(gid) = guild_id.as_deref() {
+        let persona_id = if let Some(gid) = guild_id {
             ctx.database
-                .get_persona_with_channel(&user_id, gid, &channel_id)
+                .get_persona_with_channel(user_id, gid, channel_id)
                 .await?
         } else {
             ctx.database
-                .get_user_persona_with_guild(&user_id, None)
+                .get_user_persona_with_guild(user_id, None)
                 .await?
         };
 
@@ -157,11 +259,11 @@ impl FetchHandler {
         debug!("[{request_id}] Using persona: {persona_id}");
 
         // Build user message with page content
-        let user_message = Self::build_user_message(&url, &extracted_text, question.as_deref());
+        let user_message = Self::build_user_message(url, &extracted_text, question);
 
         // Log usage
         ctx.database
-            .log_usage(&user_id, "fetch", Some(&persona_id))
+            .log_usage(user_id, "fetch", Some(&persona_id))
             .await?;
 
         // Get AI response
@@ -172,9 +274,9 @@ impl FetchHandler {
                 &user_message,
                 Vec::new(),
                 request_id,
-                Some(&user_id),
-                guild_id.as_deref(),
-                Some(&channel_id),
+                Some(user_id),
+                guild_id,
+                Some(channel_id),
                 CostBucket::Fetch,
             )
             .await;
@@ -195,7 +297,7 @@ impl FetchHandler {
 
                         if let Some(first_chunk) = chunks.first() {
                             let embed =
-                                Self::build_fetch_embed(p, first_chunk, &url, question.as_deref());
+                                Self::build_fetch_embed(p, first_chunk, url, question);
                             command
                                 .edit_original_interaction_response(&serenity_ctx.http, |r| {
                                     r.set_embed(embed)
@@ -215,7 +317,7 @@ impl FetchHandler {
                         }
                     } else {
                         let embed =
-                            Self::build_fetch_embed(p, &response, &url, question.as_deref());
+                            Self::build_fetch_embed(p, &response, url, question);
                         command
                             .edit_original_interaction_response(&serenity_ctx.http, |r| {
                                 r.set_embed(embed)
@@ -246,64 +348,155 @@ impl FetchHandler {
         Ok(())
     }
 
-    /// Fetch HTML content from a URL
-    async fn fetch_url(url: &str, request_id: Uuid) -> Result<String> {
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(FETCH_TIMEOUT_SECS))
-            .redirect(reqwest::redirect::Policy::limited(10))
-            .user_agent("Mozilla/5.0 (compatible; PersonaBot/1.0)")
-            .build()?;
+    /// Handle non-text content: upload the file to a Discord thread
+    #[allow(clippy::too_many_arguments)]
+    async fn handle_file_upload(
+        &self,
+        serenity_ctx: &Context,
+        command: &ApplicationCommandInteraction,
+        request_id: Uuid,
+        url: &str,
+        downloaded: DownloadedFile,
+        content_kind: &ContentKind,
+        premium_tier: u8,
+    ) -> Result<()> {
+        // Check upload limits
+        if !is_within_upload_limit(downloaded.size, premium_tier) {
+            let limit = max_upload_size(premium_tier);
+            error!(
+                "[{request_id}] File exceeds upload limit: {} > {}",
+                format_file_size(downloaded.size),
+                format_file_size(limit)
+            );
+            command
+                .edit_original_interaction_response(&serenity_ctx.http, |r| {
+                    r.content(format!(
+                        "File is {} which exceeds the {} upload limit for this server.",
+                        format_file_size(downloaded.size),
+                        format_file_size(limit)
+                    ))
+                })
+                .await?;
+            return Ok(());
+        }
 
-        let response = client.get(url).send().await.map_err(|e| {
-            if e.is_timeout() {
-                anyhow::anyhow!("Request timed out after {FETCH_TIMEOUT_SECS} seconds")
-            } else if e.is_connect() {
-                anyhow::anyhow!("Could not connect to the server")
-            } else {
-                anyhow::anyhow!("HTTP request failed: {e}")
+        let kind_label = match content_kind {
+            ContentKind::Image => "Image",
+            ContentKind::Audio => "Audio",
+            ContentKind::Video => "Video",
+            ContentKind::Document => "Document",
+            ContentKind::Archive => "Archive",
+            ContentKind::Binary => "File",
+            _ => "File",
+        };
+
+        // Truncate URL for display
+        let display_url: String = if url.len() > 200 {
+            format!("{}...", &url[..197])
+        } else {
+            url.to_string()
+        };
+
+        // Edit deferred response with file info
+        info!(
+            "[{request_id}] Uploading {} ({}) as {}",
+            downloaded.filename,
+            format_file_size(downloaded.size),
+            kind_label
+        );
+
+        command
+            .edit_original_interaction_response(&serenity_ctx.http, |r| {
+                r.embed(|e| {
+                    e.title(format!("{kind_label} Download"))
+                        .description(format!(
+                            "**{}**\nSize: {}\nType: {}\nSource: {}",
+                            downloaded.filename,
+                            format_file_size(downloaded.size),
+                            downloaded.content_type,
+                            display_url
+                        ))
+                        .color(0x3498db)
+                })
+            })
+            .await?;
+
+        // Determine upload target: existing thread or create a new one
+        let in_thread = is_in_thread_channel(serenity_ctx, command.channel_id).await?;
+
+        let upload_channel_id = if in_thread {
+            debug!("[{request_id}] Already in thread, uploading directly");
+            command.channel_id
+        } else {
+            // Get the response message to create a thread from it
+            let response_msg = command
+                .get_interaction_response(&serenity_ctx.http)
+                .await
+                .map_err(|e| {
+                    error!("[{request_id}] Failed to get interaction response for thread: {e}");
+                    anyhow::anyhow!("Failed to get interaction response: {e}")
+                })?;
+
+            let thread_name = format!(
+                "{kind_label}: {}",
+                if downloaded.filename.len() > 80 {
+                    format!("{}...", &downloaded.filename[..77])
+                } else {
+                    downloaded.filename.clone()
+                }
+            );
+
+            match command
+                .channel_id
+                .create_public_thread(&serenity_ctx.http, response_msg.id, |t| {
+                    t.name(&thread_name)
+                        .kind(ChannelType::PublicThread)
+                        .auto_archive_duration(60)
+                })
+                .await
+            {
+                Ok(thread) => {
+                    info!("[{request_id}] Created thread: {}", thread.id);
+                    thread.id
+                }
+                Err(e) => {
+                    warn!("[{request_id}] Failed to create thread, uploading in channel: {e}");
+                    command.channel_id
+                }
             }
-        })?;
+        };
 
-        let status = response.status();
-        if !status.is_success() {
-            return Err(anyhow::anyhow!("Server returned HTTP {status}"));
-        }
+        // Upload the file
+        let filename = downloaded.filename.clone();
+        let file_bytes = downloaded.bytes;
 
-        // Check content length before downloading
-        if let Some(content_length) = response.content_length() {
-            if content_length > MAX_HTML_BYTES as u64 {
-                return Err(anyhow::anyhow!(
-                    "Page is too large ({} bytes, max {} bytes)",
-                    content_length,
-                    MAX_HTML_BYTES
-                ));
-            }
-        }
+        upload_channel_id
+            .send_message(&serenity_ctx.http, |m| {
+                m.add_file(AttachmentType::Bytes {
+                    data: Cow::Owned(file_bytes),
+                    filename,
+                })
+            })
+            .await
+            .map_err(|e| {
+                error!("[{request_id}] Failed to upload file: {e}");
+                anyhow::anyhow!("Failed to upload file: {e}")
+            })?;
 
-        let content_type = response
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
+        info!("[{request_id}] /fetch file upload completed successfully");
+        Ok(())
+    }
 
-        if !content_type.is_empty()
-            && !content_type.contains("text/html")
-            && !content_type.contains("text/plain")
-            && !content_type.contains("application/xhtml")
-        {
-            debug!("[{request_id}] Non-HTML content type: {content_type}");
-        }
-
-        let bytes = response.bytes().await?;
-        if bytes.len() > MAX_HTML_BYTES {
-            return Err(anyhow::anyhow!(
-                "Page is too large ({} bytes, max {} bytes)",
-                bytes.len(),
-                MAX_HTML_BYTES
-            ));
-        }
-
-        Ok(String::from_utf8_lossy(&bytes).to_string())
+    /// Get the guild's premium (boost) tier as a u8 (0-3).
+    fn get_guild_premium_tier(
+        serenity_ctx: &Context,
+        command: &ApplicationCommandInteraction,
+    ) -> u8 {
+        command
+            .guild_id
+            .and_then(|gid| serenity_ctx.cache.guild(gid))
+            .map(|guild| guild.premium_tier.num() as u8)
+            .unwrap_or(0)
     }
 
     /// Extract meaningful text content from HTML

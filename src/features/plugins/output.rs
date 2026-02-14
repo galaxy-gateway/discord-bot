@@ -17,6 +17,7 @@
 //! - 1.1.0: Added structured output posting (URL -> summary -> file)
 //! - 1.0.0: Initial release
 
+use crate::core::sanitize_filename;
 use crate::features::analytics::{CostBucket, UsageTracker};
 use crate::features::plugins::config::OutputConfig;
 use anyhow::Result;
@@ -908,17 +909,6 @@ fn create_progress_bar(current: usize, total: usize) -> String {
             0
         }
     )
-}
-
-/// Sanitize a string for use as a filename
-fn sanitize_filename(s: &str) -> String {
-    s.chars()
-        .filter(|c| c.is_alphanumeric() || *c == ' ' || *c == '-' || *c == '_')
-        .take(50)
-        .collect::<String>()
-        .trim()
-        .replace(' ', "_")
-        .to_lowercase()
 }
 
 /// Output format for transcripts and summaries
