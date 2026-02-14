@@ -1,57 +1,63 @@
 //! # Dynamic Command Registration
 //!
-//! Generate Discord slash commands from plugin configurations.
+//! Generate a single `/plugins` Discord slash command with subcommands from plugin configurations.
 //!
-//! - **Version**: 1.0.0
+//! - **Version**: 2.0.0
 //! - **Since**: 0.9.0
+//!
+//! ## Changelog
+//! - 2.0.0: Breaking change - consolidate all plugins under single /plugins command with subcommands
+//! - 1.0.0: Initial release with per-plugin top-level commands
 
 use crate::features::plugins::config::Plugin;
 use serenity::builder::CreateApplicationCommand;
 use serenity::model::application::command::CommandOptionType;
 
-/// Generate slash commands from plugin configurations
-pub fn create_plugin_commands(plugins: &[Plugin]) -> Vec<CreateApplicationCommand> {
-    plugins
-        .iter()
-        .filter(|p| p.enabled)
-        .map(create_command_from_plugin)
-        .collect()
-}
-
-/// Create a single slash command from a plugin definition
-fn create_command_from_plugin(plugin: &Plugin) -> CreateApplicationCommand {
+/// Generate a single `/plugins` slash command with subcommands from plugin configurations
+pub fn create_plugins_command(plugins: &[Plugin]) -> CreateApplicationCommand {
     let mut cmd = CreateApplicationCommand::default();
 
-    cmd.name(&plugin.command.name)
-        .description(&plugin.command.description);
+    cmd.name("plugins")
+        .description("Run plugin commands (transcribe, weather, dns, etc.)");
 
-    for opt in &plugin.command.options {
-        cmd.create_option(|o| {
-            o.name(&opt.name)
-                .description(&opt.description)
-                .kind(parse_option_type(&opt.option_type))
-                .required(opt.required);
+    for plugin in plugins.iter().filter(|p| p.enabled) {
+        cmd.create_option(|subcommand| {
+            subcommand
+                .name(&plugin.command.name)
+                .description(&plugin.command.description)
+                .kind(CommandOptionType::SubCommand);
 
-            // Add choices if defined
-            for choice in &opt.choices {
-                match opt.option_type.as_str() {
-                    "integer" => {
-                        if let Ok(val) = choice.value.parse::<i32>() {
-                            o.add_int_choice(&choice.name, val);
+            for opt in &plugin.command.options {
+                subcommand.create_sub_option(|o| {
+                    o.name(&opt.name)
+                        .description(&opt.description)
+                        .kind(parse_option_type(&opt.option_type))
+                        .required(opt.required);
+
+                    // Add choices if defined
+                    for choice in &opt.choices {
+                        match opt.option_type.as_str() {
+                            "integer" => {
+                                if let Ok(val) = choice.value.parse::<i32>() {
+                                    o.add_int_choice(&choice.name, val);
+                                }
+                            }
+                            "number" => {
+                                if let Ok(val) = choice.value.parse::<f64>() {
+                                    o.add_number_choice(&choice.name, val);
+                                }
+                            }
+                            _ => {
+                                o.add_string_choice(&choice.name, &choice.value);
+                            }
                         }
                     }
-                    "number" => {
-                        if let Ok(val) = choice.value.parse::<f64>() {
-                            o.add_number_choice(&choice.name, val);
-                        }
-                    }
-                    _ => {
-                        o.add_string_choice(&choice.name, &choice.value);
-                    }
-                }
+
+                    o
+                });
             }
 
-            o
+            subcommand
         });
     }
 
@@ -116,16 +122,44 @@ mod tests {
     }
 
     #[test]
-    fn test_create_plugin_commands() {
+    fn test_create_plugins_command_returns_single_command() {
         let plugins = vec![
             create_test_plugin("enabled_plugin", true),
             create_test_plugin("disabled_plugin", false),
         ];
 
-        let commands = create_plugin_commands(&plugins);
+        let cmd = create_plugins_command(&plugins);
 
-        // Only enabled plugins should generate commands
-        assert_eq!(commands.len(), 1);
+        // Should be a single command named "plugins"
+        let name = cmd.0.get("name").unwrap().as_str().unwrap();
+        assert_eq!(name, "plugins");
+
+        // Should have only 1 subcommand (the enabled one)
+        let options = cmd.0.get("options").unwrap().as_array().unwrap();
+        assert_eq!(options.len(), 1);
+
+        // Verify the subcommand name
+        let subcommand = &options[0];
+        assert_eq!(
+            subcommand.get("name").unwrap().as_str().unwrap(),
+            "enabled_plugin"
+        );
+        // Verify it's a SubCommand type (type 1)
+        assert_eq!(subcommand.get("type").unwrap().as_u64().unwrap(), 1);
+    }
+
+    #[test]
+    fn test_create_plugins_command_no_plugins() {
+        let cmd = create_plugins_command(&[]);
+
+        let name = cmd.0.get("name").unwrap().as_str().unwrap();
+        assert_eq!(name, "plugins");
+
+        // No subcommands when no plugins
+        let options = cmd.0.get("options");
+        assert!(
+            options.is_none() || options.unwrap().as_array().unwrap().is_empty()
+        );
     }
 
     #[test]
@@ -183,7 +217,41 @@ mod tests {
             playlist: None,
         };
 
-        let commands = create_plugin_commands(&[plugin]);
-        assert_eq!(commands.len(), 1);
+        let cmd = create_plugins_command(&[plugin]);
+
+        // Should have 1 subcommand
+        let options = cmd.0.get("options").unwrap().as_array().unwrap();
+        assert_eq!(options.len(), 1);
+
+        // The subcommand should have 1 option with choices
+        let subcommand_options = options[0].get("options").unwrap().as_array().unwrap();
+        assert_eq!(subcommand_options.len(), 1);
+        let choices = subcommand_options[0]
+            .get("choices")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        assert_eq!(choices.len(), 2);
+    }
+
+    #[test]
+    fn test_subcommand_has_correct_parameters() {
+        let plugins = vec![create_test_plugin("my_plugin", true)];
+        let cmd = create_plugins_command(&plugins);
+
+        let options = cmd.0.get("options").unwrap().as_array().unwrap();
+        let subcommand = &options[0];
+
+        // Verify subcommand options contain the plugin's parameter
+        let sub_options = subcommand.get("options").unwrap().as_array().unwrap();
+        assert_eq!(sub_options.len(), 1);
+        assert_eq!(
+            sub_options[0].get("name").unwrap().as_str().unwrap(),
+            "input"
+        );
+        assert_eq!(
+            sub_options[0].get("required").unwrap().as_bool().unwrap(),
+            true
+        );
     }
 }

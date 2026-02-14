@@ -5,11 +5,12 @@
 //! Now includes multi-video playlist transcription with progress tracking and chunked streaming
 //! for long videos with per-chunk summaries.
 //!
-//! - **Version**: 3.18.0
+//! - **Version**: 3.19.0
 //! - **Since**: 0.9.0
 //! - **Toggleable**: true
 //!
 //! ## Changelog
+//! - 3.19.0: Export create_plugins_command (single /plugins command with subcommands)
 //! - 3.18.0: Fix playlist transcription downloading playlist instead of individual videos by using chunked path
 //! - 3.17.0: Fix race condition in concurrent thread creation with retry logic and proper error reporting
 //! - 3.16.0: Simplified thread starter format with cleaner YouTube heading and proper embed support
@@ -49,7 +50,7 @@ pub mod output;
 pub mod youtube;
 
 pub use chunker::{AudioChunker, ChunkProgress, ChunkStatus, ChunkerConfig};
-pub use commands::create_plugin_commands;
+pub use commands::create_plugins_command;
 pub use config::{ChunkingConfig, Plugin, PluginConfig};
 pub use executor::{ExecutionResult, PluginExecutor};
 pub use job::{Job, JobManager, JobStatus, PlaylistJob, PlaylistJobStatus};

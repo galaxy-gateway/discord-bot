@@ -894,21 +894,11 @@ async fn main() -> Result<()> {
     let usage_tracker = UsageTracker::new(database.clone());
     let interaction_tracker = InteractionTracker::new(database.clone());
     let persona_manager = PersonaManager::new();
-    let mut command_handler = CommandHandler::new(
-        database.clone(),
-        config.openai_api_key.clone(),
-        config.openai_model.clone(),
-        config.conflict_mediation_enabled,
-        &config.conflict_sensitivity,
-        config.mediation_cooldown_minutes,
-        usage_tracker.clone(),
-        interaction_tracker,
-    );
 
-    // Load plugins from config file
+    // Load plugins from config file (before CommandHandler so plugin_manager can be passed in)
     let plugins_path =
         std::env::var("PLUGINS_CONFIG_PATH").unwrap_or_else(|_| "plugins.yaml".to_string());
-    let (plugins, _plugin_manager): (Vec<Plugin>, Option<Arc<PluginManager>>) =
+    let (plugins, plugin_manager): (Vec<Plugin>, Option<Arc<PluginManager>>) =
         match PluginConfig::load(&plugins_path) {
             Ok(plugin_config) => {
                 info!("📄 Loaded plugin config from {plugins_path}");
@@ -930,9 +920,6 @@ async fn main() -> Result<()> {
                     output_handler,
                 });
 
-                // Set plugin manager on command handler
-                command_handler.set_plugin_manager(pm.clone());
-
                 (plugins, Some(pm))
             }
             Err(e) => {
@@ -946,6 +933,18 @@ async fn main() -> Result<()> {
                 (vec![], None)
             }
         };
+
+    let command_handler = CommandHandler::new(
+        database.clone(),
+        config.openai_api_key.clone(),
+        config.openai_model.clone(),
+        config.conflict_mediation_enabled,
+        &config.conflict_sensitivity,
+        config.mediation_cooldown_minutes,
+        usage_tracker.clone(),
+        interaction_tracker,
+        plugin_manager,
+    );
 
     let component_handler =
         MessageComponentHandler::new(command_handler.clone(), persona_manager, database.clone());

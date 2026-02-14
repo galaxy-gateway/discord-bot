@@ -1,69 +1,47 @@
-# Persona Bot v3.37.0 - The Dashboard of Clarity
+# Persona Bot v4.2.0 - The Window to the Web
 
-*Seekers of operational insight,*
+*Seekers of knowledge beyond the server walls,*
 
-Knowledge hidden in databases serves no one. Today we bring cost bucket analytics to the TUI dashboard, transforming raw data into visible understanding.
+The personas have long been confined to answering from what they already know. Today they learn to reach out, to read, to fetch the living web and bring its wisdom back in their own voice.
 
 ## What's New
 
-### TUI Stats Screen Enhancement
+### /fetch Command
 
-The Stats screen now displays a dedicated **Cost by Feature** panel showing how each bot capability contributes to API costs:
+A new slash command that bridges the gap between the web and your personas:
 
 ```
-┌─────────────────────────────────────┐
-│ Cost by Feature                     │
-├─────────────────────────────────────┤
-│ ask           $0.0234 ████████████  │
-│ debate        $0.0156 ████████      │
-│ council       $0.0089 ████          │
-│ mediation     $0.0045 ██            │
-│ plugin        $0.0023 █             │
-│ transcription $0.0012 █             │
-│ imagine       $0.0008               │
-│ reminder      $0.0003               │
-└─────────────────────────────────────┘
+/fetch url:https://example.com
+/fetch url:https://example.com question:What is this page about?
 ```
 
-### Color-Coded Buckets
+**Without a question** - your active persona summarizes the webpage content, highlighting key points and important details.
 
-Each feature bucket has its own color for quick visual identification:
-- **Cyan**: ask (generic conversations)
-- **Yellow**: debate (persona debates)
-- **Magenta**: council (multi-persona discussions)
-- **Red**: mediation (conflict interventions)
-- **Blue**: introspect (self-reflection)
-- **Green**: reminder (scheduled messages)
-- **Light Blue**: plugin (CLI integrations)
-- **Light Green**: transcription (audio processing)
-- **Light Magenta**: imagine (image generation)
+**With a question** - your active persona answers specifically about the page content, staying in character while being grounded in what the page actually says.
 
-### Three-Column Layout
+### Smart Content Extraction
 
-The Stats screen now uses a three-column layout:
-1. **Left**: Cost summary + Cost by Service
-2. **Center**: Cost by Feature (new!)
-3. **Right**: Daily breakdown + Top Users
+Raw HTML is messy. The bot intelligently extracts meaningful text:
+- Prioritizes `<main>` and `<article>` content areas
+- Strips scripts, styles, navigation, headers, and footers
+- Falls back to full body text when structured content areas are absent
+- Handles pages up to 5MB with graceful truncation
 
-### Updated Pricing Models
+### Persona-Flavored Responses
 
-The usage tracker now supports February 2026 pricing for:
-- GPT-5.2, GPT-5.1, GPT-5 series (including pro/mini/nano variants)
-- GPT-4.1 series (including mini/nano)
-- O-series reasoning models (O1, O3, O4-mini, deep research)
-- GPT Image 1.5, Sora 2 video generation
-- TTS, embeddings, realtime API
+The command automatically uses your active persona (channel, user, or guild default) - no need to pick one. The response arrives as a styled embed with the persona's portrait and accent color, just like /ask.
 
 ## The Vision
 
-A dashboard should illuminate, not obscure. With cost buckets visible at a glance, you can now see exactly where your API investment flows. Which features drive engagement? Which consume disproportionate resources? The answers are now one keystroke away.
+Knowledge is not static. The personas now have eyes that reach beyond their training, reading the web as you would, but interpreting through the lens of their unique perspective. Ask Obi-Wan to summarize a philosophy paper. Ask the Architect to review a technical specification. The web becomes another conversation partner.
 
-*To see clearly is to act wisely...*
+*Every page tells a story. Now your personas can read it...*
 
 ---
-Usage Tracking: 1.2.0
-- **Updated pricing** - February 2026 rates for all current OpenAI models
-- **TUI integration** - Cost by bucket displayed in Stats screen
-- **IPC protocol** - Extended UsageStatsUpdate with cost_by_bucket data
+Web Fetch: 1.0.0
+- **URL fetching** - reqwest-powered with 15s timeout, redirect following, size limits
+- **HTML parsing** - scraper crate for DOM-based intelligent text extraction
+- **Active persona** - automatic persona resolution via channel/user/guild cascade
+- **Cost tracking** - dedicated CostBucket::Fetch for usage analytics
 
 *~ The Visionary*

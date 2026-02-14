@@ -2,11 +2,12 @@
 //!
 //! Discord native slash commands with autocomplete and validation.
 //!
-//! - **Version**: 1.0.0
+//! - **Version**: 2.0.0
 //! - **Since**: 0.2.0
 //! - **Toggleable**: false
 //!
 //! ## Changelog
+//! - 2.0.0: Consolidate plugins into single /plugins command with subcommands
 //! - 1.0.0: Reorganized from monolithic slash_commands.rs
 
 pub mod admin;
@@ -16,12 +17,13 @@ mod context_menu;
 pub mod council;
 pub mod debate;
 mod dm_stats;
+mod fetch;
 mod imagine;
 mod persona;
 mod remind;
 mod utility;
 
-use crate::features::plugins::{create_plugin_commands, Plugin};
+use crate::features::plugins::{create_plugins_command, Plugin};
 use anyhow::Result;
 use log::info;
 use serenity::builder::CreateApplicationCommand;
@@ -69,8 +71,13 @@ pub fn create_slash_commands_with_plugins(plugins: &[Plugin]) -> Vec<CreateAppli
     // Conclude command
     commands.extend(conclude::create_commands());
 
-    // Plugin-generated commands
-    commands.extend(create_plugin_commands(plugins));
+    // Fetch command
+    commands.extend(fetch::create_commands());
+
+    // Plugin commands (single /plugins command with subcommands)
+    if !plugins.is_empty() {
+        commands.push(create_plugins_command(plugins));
+    }
 
     commands
 }
@@ -104,10 +111,15 @@ pub async fn register_global_commands_with_plugins(
     })
     .await?;
 
+    let plugin_count = plugins.iter().filter(|p| p.enabled).count();
     info!(
-        "Global slash commands registered successfully ({} commands, {} from plugins)",
-        create_slash_commands().len() + create_plugin_commands(plugins).len(),
-        create_plugin_commands(plugins).len()
+        "Global slash commands registered successfully ({} commands{})",
+        create_slash_commands().len() + if plugin_count > 0 { 1 } else { 0 },
+        if plugin_count > 0 {
+            format!(", 1 /plugins command with {plugin_count} subcommands")
+        } else {
+            String::new()
+        }
     );
     Ok(())
 }
@@ -138,11 +150,16 @@ pub async fn register_guild_commands_with_plugins(
         })
         .await?;
 
+    let plugin_count = plugins.iter().filter(|p| p.enabled).count();
     info!(
-        "Guild slash commands registered for guild {} ({} commands, {} from plugins)",
+        "Guild slash commands registered for guild {} ({} commands{})",
         guild_id,
-        create_slash_commands().len() + create_plugin_commands(plugins).len(),
-        create_plugin_commands(plugins).len()
+        create_slash_commands().len() + if plugin_count > 0 { 1 } else { 0 },
+        if plugin_count > 0 {
+            format!(", 1 /plugins command with {plugin_count} subcommands")
+        } else {
+            String::new()
+        }
     );
     Ok(())
 }
@@ -202,7 +219,7 @@ mod tests {
     #[test]
     fn test_create_slash_commands() {
         let commands = create_slash_commands();
-        assert!(commands.len() >= 22, "Should have at least 22 commands");
+        assert!(commands.len() >= 23, "Should have at least 23 commands");
 
         let command_names: Vec<String> = commands
             .iter()
@@ -239,6 +256,8 @@ mod tests {
             "council",
             // Conclude command
             "conclude",
+            // Fetch command
+            "fetch",
         ];
 
         for expected in expected_commands {

@@ -354,6 +354,8 @@ pub enum CostBucket {
     Transcription,
     /// DALL-E image generation
     Imagine,
+    /// /fetch webpage summaries
+    Fetch,
     /// Legacy data or unknown source
     Unknown,
 }
@@ -371,6 +373,7 @@ impl CostBucket {
             CostBucket::Plugin => "plugin",
             CostBucket::Transcription => "transcription",
             CostBucket::Imagine => "imagine",
+            CostBucket::Fetch => "fetch",
             CostBucket::Unknown => "unknown",
         }
     }

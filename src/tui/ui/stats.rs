@@ -251,6 +251,7 @@ fn render_cost_by_bucket(frame: &mut Frame, app: &App, area: Rect) {
                 "plugin" => Color::LightBlue,
                 "transcription" => Color::LightGreen,
                 "imagine" => Color::LightMagenta,
+                "fetch" => Color::LightCyan,
                 _ => Color::DarkGray,
             };
 

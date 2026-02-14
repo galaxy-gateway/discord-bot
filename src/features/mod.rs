@@ -191,10 +191,10 @@ pub const FEATURES: &[Feature] = &[
     Feature {
         id: "plugins",
         name: "Plugin System",
-        version: "1.0.0",
+        version: "3.19.0",
         since: "0.9.0",
         toggleable: true,
-        description: "Config-based CLI command plugins with background execution",
+        description: "Config-based CLI command plugins with background execution via /plugins subcommands",
     },
     Feature {
         id: "debate",
@@ -219,6 +219,14 @@ pub const FEATURES: &[Feature] = &[
         since: "3.33.0",
         toggleable: false,
         description: "Shared context and controls between council and debate sessions",
+    },
+    Feature {
+        id: "web_fetch",
+        name: "Web Fetch",
+        version: "1.0.0",
+        since: "4.2.0",
+        toggleable: false,
+        description: "Fetch webpages and get persona-flavored summaries or Q&A",
     },
 ];
 

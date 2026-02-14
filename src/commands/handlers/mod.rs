@@ -1,9 +1,11 @@
 //! Per-command handler implementations
 //!
-//! - **Version**: 2.0.0
+//! - **Version**: 4.0.0
 //! - **Since**: 3.38.0
 //!
 //! ## Changelog
+//! - 4.0.0: Add FetchHandler for /fetch webpage summaries
+//! - 3.0.0: Add PluginsHandler for /plugins subcommand dispatch
 //! - 2.0.0: Remove AiChatHandler (hey, explain, simple, steps, recipe) - consolidated into /ask
 //! - 1.6.0: Add ContextMenuHandler (Analyze Message, Explain Message, Analyze User)
 //! - 1.5.0: Add InfoHandler (introspect, commits, features, toggle, sysinfo, usage, dm_stats, session_history)
@@ -18,9 +20,11 @@ pub mod ask;
 pub mod context_menu;
 pub mod council;
 pub mod debate;
+pub mod fetch;
 pub mod imagine;
 pub mod info;
 pub mod persona;
+pub mod plugins;
 pub mod remind;
 pub mod utility;
 
@@ -40,8 +44,10 @@ pub fn create_all_handlers() -> Vec<Arc<dyn SlashCommandHandler>> {
         Arc::new(admin::AdminHandler),
         Arc::new(ask::AskHandler),
         Arc::new(debate::DebateHandler),
+        Arc::new(fetch::FetchHandler),
         Arc::new(council::CouncilHandler),
         Arc::new(info::InfoHandler),
         Arc::new(context_menu::ContextMenuHandler),
+        Arc::new(plugins::PluginsHandler),
     ]
 }

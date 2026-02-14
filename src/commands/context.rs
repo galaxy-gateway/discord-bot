@@ -1,9 +1,10 @@
 //! Shared context for command handlers
 //!
-//! - **Version**: 1.1.0
+//! - **Version**: 1.2.0
 //! - **Since**: 3.38.0
 //!
 //! ## Changelog
+//! - 1.2.0: Add PluginManager for plugin command handling
 //! - 1.1.0: Add ImageGenerator for imagine command
 //! - 1.0.0: Initial implementation with core shared state
 
@@ -11,9 +12,11 @@ use crate::database::Database;
 use crate::features::analytics::{CostBucket, InteractionTracker, UsageTracker};
 use crate::features::image_gen::generator::ImageGenerator;
 use crate::features::personas::PersonaManager;
+use crate::features::plugins::PluginManager;
 use anyhow::Result;
 use log::{debug, error};
 use openai::chat::{ChatCompletion, ChatCompletionMessage, ChatCompletionMessageRole};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;
 use uuid::Uuid;
@@ -26,6 +29,7 @@ use uuid::Uuid;
 /// - UsageTracker for cost tracking
 /// - InteractionTracker for analytics
 /// - ImageGenerator for DALL-E image generation
+/// - PluginManager for plugin command execution
 /// - OpenAI configuration
 /// - Bot start time for uptime tracking
 #[derive(Clone)]
@@ -35,6 +39,7 @@ pub struct CommandContext {
     pub usage_tracker: UsageTracker,
     pub interaction_tracker: InteractionTracker,
     pub image_generator: ImageGenerator,
+    pub plugin_manager: Option<Arc<PluginManager>>,
     pub openai_model: String,
     pub start_time: std::time::Instant,
 }
@@ -47,6 +52,7 @@ impl CommandContext {
         usage_tracker: UsageTracker,
         interaction_tracker: InteractionTracker,
         image_generator: ImageGenerator,
+        plugin_manager: Option<Arc<PluginManager>>,
         openai_model: String,
     ) -> Self {
         Self {
@@ -55,18 +61,21 @@ impl CommandContext {
             usage_tracker,
             interaction_tracker,
             image_generator,
+            plugin_manager,
             openai_model,
             start_time: std::time::Instant::now(),
         }
     }
 
     /// Create a CommandContext with a specific start time (for sharing with existing handler)
+    #[allow(clippy::too_many_arguments)]
     pub fn with_start_time(
         persona_manager: PersonaManager,
         database: Database,
         usage_tracker: UsageTracker,
         interaction_tracker: InteractionTracker,
         image_generator: ImageGenerator,
+        plugin_manager: Option<Arc<PluginManager>>,
         openai_model: String,
         start_time: std::time::Instant,
     ) -> Self {
@@ -76,6 +85,7 @@ impl CommandContext {
             usage_tracker,
             interaction_tracker,
             image_generator,
+            plugin_manager,
             openai_model,
             start_time,
         }
