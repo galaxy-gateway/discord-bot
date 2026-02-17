@@ -1,0 +1,61 @@
+name: dns
+description: DNS record lookup
+version: "1.0.0"
+type: shell
+
+command:
+  description: Look up DNS records for a domain
+  options:
+    - name: domain
+      description: "Domain to look up (e.g., example.com)"
+      type: string
+      required: true
+      validation:
+        pattern: "^[a-zA-Z0-9][a-zA-Z0-9.-]+$"
+        max_length: 253
+    - name: type
+      description: "DNS record type"
+      type: string
+      required: false
+      default: "A"
+      choices:
+        - name: "A (IPv4)"
+          value: "A"
+        - name: "AAAA (IPv6)"
+          value: "AAAA"
+        - name: "MX (Mail)"
+          value: "MX"
+        - name: "TXT (Text)"
+          value: "TXT"
+        - name: "NS (Nameserver)"
+          value: "NS"
+        - name: "CNAME (Alias)"
+          value: "CNAME"
+
+execution:
+  timeout_seconds: 10
+  script: |
+    RECORDS=$(dig +short "${domain}" "${type}" 2>&1)
+
+    if [ -z "$RECORDS" ]; then
+      echo "## DNS Lookup"
+      echo ""
+      echo "**Domain:** \`${domain}\`"
+      echo "**Type:** ${type}"
+      echo ""
+      echo "No records found."
+      exit 0
+    fi
+
+    echo "## DNS Lookup"
+    echo ""
+    echo "**Domain:** \`${domain}\`"
+    echo "**Type:** ${type}"
+    echo ""
+    echo "**Records:**"
+    echo "\`\`\`"
+    echo "$RECORDS"
+    echo "\`\`\`"
+
+security:
+  cooldown_seconds: 5

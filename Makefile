@@ -1,4 +1,4 @@
-.PHONY: help build build-release run clean test install-service start stop restart status logs logs-follow uninstall-service env-check scripts/% check-commands cleanup-commands test-env test-openai build-tui build-tui-release tui tui-release
+.PHONY: help build build-release run clean test install-service start stop restart status logs logs-follow uninstall-service env-check scripts/% check-commands cleanup-commands test-env test-openai build-tui build-tui-release tui tui-release new-plugin
 
 # Self-documenting Makefile
 .DEFAULT_GOAL := help
@@ -47,6 +47,9 @@ tui-release: build-tui-release ## Run the TUI in release mode
 
 test: ## Run tests
 	cargo test
+
+new-plugin: ## Create a new plugin interactively
+	cargo run --features scaffold --bin new-plugin
 
 clean: ## Clean build artifacts
 	cargo clean

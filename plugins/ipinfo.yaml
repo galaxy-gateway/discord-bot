@@ -1,0 +1,62 @@
+name: ipinfo
+description: Look up IP address geolocation
+version: "1.0.0"
+type: api
+
+command:
+  description: Get geolocation and ISP info for an IP address
+  options:
+    - name: ip
+      description: "IP address to look up (e.g., 8.8.8.8)"
+      type: string
+      required: true
+      validation:
+        pattern: "^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$"
+        max_length: 15
+
+execution:
+  timeout_seconds: 10
+  script: |
+    RESPONSE=$(curl -s --max-time 10 "http://ip-api.com/json/${ip}?fields=status,message,country,regionName,city,zip,lat,lon,timezone,isp,org,as")
+
+    STATUS=$(echo "$RESPONSE" | jq -r '.status // "fail"')
+
+    echo "## IP Lookup"
+    echo ""
+    echo "**IP:** \`${ip}\`"
+    echo ""
+
+    if [ "$STATUS" != "success" ]; then
+      MSG=$(echo "$RESPONSE" | jq -r '.message // "Unknown error"')
+      echo "**Error:** $MSG"
+      exit 0
+    fi
+
+    COUNTRY=$(echo "$RESPONSE" | jq -r '.country // "Unknown"')
+    REGION=$(echo "$RESPONSE" | jq -r '.regionName // "Unknown"')
+    CITY=$(echo "$RESPONSE" | jq -r '.city // "Unknown"')
+    ZIP=$(echo "$RESPONSE" | jq -r '.zip // ""')
+    LAT=$(echo "$RESPONSE" | jq -r '.lat // ""')
+    LON=$(echo "$RESPONSE" | jq -r '.lon // ""')
+    TZ=$(echo "$RESPONSE" | jq -r '.timezone // "Unknown"')
+    ISP=$(echo "$RESPONSE" | jq -r '.isp // "Unknown"')
+    ORG=$(echo "$RESPONSE" | jq -r '.org // ""')
+    AS=$(echo "$RESPONSE" | jq -r '.as // ""')
+
+    echo "**Location:** $CITY, $REGION, $COUNTRY"
+    if [ -n "$ZIP" ]; then
+      echo "**ZIP:** $ZIP"
+    fi
+    echo "**Coordinates:** $LAT, $LON"
+    echo "**Timezone:** $TZ"
+    echo ""
+    echo "**ISP:** $ISP"
+    if [ -n "$ORG" ] && [ "$ORG" != "$ISP" ]; then
+      echo "**Organization:** $ORG"
+    fi
+    if [ -n "$AS" ]; then
+      echo "**AS:** $AS"
+    fi
+
+security:
+  cooldown_seconds: 5

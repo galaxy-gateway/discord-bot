@@ -1,0 +1,39 @@
+name: qrcode
+description: Generate a QR code
+version: "1.0.0"
+type: api
+
+command:
+  description: Generate a QR code image for text or URL
+  options:
+    - name: text
+      description: "Text or URL to encode"
+      type: string
+      required: true
+      validation:
+        max_length: 500
+    - name: size
+      description: "Image size in pixels (100-500)"
+      type: integer
+      required: false
+      validation:
+        min_value: 100
+        max_value: 500
+
+execution:
+  timeout_seconds: 5
+  max_output_bytes: 2048
+  script: |
+    if [ -n "$size" ]; then SIZE="$size"; else SIZE=200; fi
+    ENCODED=$(echo -n "${text}" | jq -sRr @uri)
+    URL="https://api.qrserver.com/v1/create-qr-code/?size=$SIZE""x$SIZE""&data=$ENCODED"
+
+    echo "## QR Code"
+    echo ""
+    echo "**Content:** \`${text}\`"
+    echo "**Size:** $SIZE""x$SIZE"
+    echo ""
+    echo "$URL"
+
+security:
+  cooldown_seconds: 5

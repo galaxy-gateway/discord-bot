@@ -1,0 +1,189 @@
+name: transcribe
+description: Transcribe YouTube videos or playlists to text using Whisper
+version: "3.5.1"
+type: docker
+
+command:
+  description: Transcribe a YouTube video or playlist and post the transcript(s) in a thread
+  options:
+    - name: url
+      description: "YouTube video or playlist URL to transcribe"
+      type: string
+      required: true
+      validation:
+        pattern: "^https?://(www\\.)?(youtube\\.com/(watch\\?v=|shorts/|playlist\\?list=)|youtu\\.be/)[a-zA-Z0-9_-]+([?&][a-zA-Z0-9_=-]*)?"
+        max_length: 300
+    - name: max_videos
+      description: "Maximum videos to transcribe from playlist (default: 25)"
+      type: integer
+      required: false
+    - name: language
+      description: "Language for transcription (auto-detects if not specified)"
+      type: string
+      required: false
+      default: ""
+      choices:
+        - name: "Auto-detect"
+          value: ""
+        - name: "English"
+          value: "en"
+        - name: "Spanish"
+          value: "es"
+        - name: "French"
+          value: "fr"
+        - name: "German"
+          value: "de"
+        - name: "Portuguese"
+          value: "pt"
+        - name: "Japanese"
+          value: "ja"
+        - name: "Chinese"
+          value: "zh"
+    - name: summaries
+      description: "How to generate AI summaries during transcription"
+      type: string
+      required: false
+      default: "each"
+      choices:
+        - name: "Each chunk"
+          value: "each"
+        - name: "Periodic combined"
+          value: "periodic"
+        - name: "Both"
+          value: "all"
+        - name: "None"
+          value: "none"
+    - name: summary_interval
+      description: "Chunks between periodic summaries (2-20, default: 5)"
+      type: integer
+      required: false
+      min_value: 2
+      max_value: 20
+    - name: transcript_file_interval
+      description: "Post partial transcript file every N chunks (0 = only at end)"
+      type: integer
+      required: false
+      default: 0
+    - name: custom_prompt
+      description: "Additional instructions for AI summaries"
+      type: string
+      required: false
+    - name: chunk_duration
+      description: "Chunk size in minutes for long videos (default: 10, range: 5-30)"
+      type: integer
+      required: false
+    - name: output_format
+      description: "How to output transcripts and summaries"
+      type: string
+      required: false
+      default: "auto"
+      choices:
+        - name: "Auto (text if short, files if long)"
+          value: "auto"
+        - name: "Always post as messages"
+          value: "text"
+        - name: "Always upload as files"
+          value: "files"
+
+execution:
+  command: sh
+  args:
+    - "-c"
+    - |
+      TMPDIR=$(mktemp -d)
+      ERRFILE=$(mktemp)
+      LANG_FLAG=""
+      if [ -n "${language}" ]; then
+        LANG_FLAG="--language ${language}"
+      fi
+      if docker run --rm -v "$TMPDIR:/data/output" whisper-transcribe:latest "${url}" -m base -f txt -o /data/output $LANG_FLAG >/dev/null 2>"$ERRFILE"; then
+        cat "$TMPDIR"/*.txt 2>/dev/null || echo "No transcript generated"
+      else
+        echo "Transcription failed:"
+        cat "$ERRFILE"
+      fi
+      rm -rf "$TMPDIR" "$ERRFILE"
+  timeout_seconds: 600
+  max_output_bytes: 10485760
+
+  chunking:
+    enabled: true
+    chunk_duration_secs: 600
+    chunk_timeout_secs: 300
+    download_timeout_secs: 300
+    min_duration_for_chunking_secs: 600
+
+    download_command: sh
+    download_args:
+      - "-c"
+      - |
+        docker run --rm -v "${output_dir}:/data/output" --entrypoint sh whisper-transcribe:latest -c \
+          "pip install -q --upgrade yt-dlp 2>/dev/null; yt-dlp -x --audio-format mp3 --audio-quality 5 -o '/data/output/audio.%(ext)s' --no-playlist --no-warnings '${url}'"
+
+    file_command: sh
+    file_args:
+      - "-c"
+      - |
+        TMPDIR=$(mktemp -d)
+        ERRFILE=$(mktemp)
+        LANG_FLAG=""
+        if [ -n "${language}" ]; then
+          LANG_FLAG="--language ${language}"
+        fi
+        if docker run --rm -v "${file}:/data/input.mp3" -v "$TMPDIR:/data/output" whisper-transcribe:latest /data/input.mp3 -m base -f txt -o /data/output $LANG_FLAG >/dev/null 2>"$ERRFILE"; then
+          cat "$TMPDIR"/*.txt 2>/dev/null || echo "No transcript generated"
+        else
+          echo "Transcription failed:"
+          cat "$ERRFILE"
+        fi
+        rm -rf "$TMPDIR" "$ERRFILE"
+
+security:
+  cooldown_seconds: 0
+  guild_only: false
+
+playlist:
+  enabled: true
+  max_videos_per_request: 0
+  default_max_videos: 25
+  recommended_max_videos: 50
+  concurrent_playlists_per_user: 0
+  cooldown_between_playlists: 0
+  min_video_interval_seconds: 5
+
+output:
+  create_thread: true
+  thread_name_template: "Transcript: ${url}"
+  auto_archive_minutes: 1440
+  post_as_file: true
+  file_name_template: "transcript-${timestamp}.txt"
+  max_inline_length: 1500
+  source_param: url
+  summary_prompt: |
+    Provide a detailed summary of this video transcript:
+
+    1. **Overview**: A 2-3 sentence description of what the video is about
+    2. **Key Points**: List the main topics and important points discussed (5-8 bullet points)
+    3. **Notable Quotes/Moments**: Any significant statements or memorable moments
+    4. **Conclusion**: What was the main takeaway or call to action
+
+    Be thorough but concise. Use markdown formatting.
+
+    Transcript:
+    ${output}
+  chunk_summary_prompt: |
+    Summarize the key points from this section of a video transcript.
+    Be concise and conversational - just capture what was discussed.
+    No formal structure needed, just bullet points or a brief paragraph.
+
+    Transcript section:
+    ${output}
+  error_template: |
+    **Transcription failed**
+
+    ${error}
+
+    Please check that:
+    - The URL is a valid YouTube video
+    - The video is not private or age-restricted
+    - The video has audio/speech content

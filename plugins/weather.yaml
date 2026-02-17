@@ -1,0 +1,61 @@
+name: weather
+description: Get current weather
+version: "1.0.0"
+type: api
+
+command:
+  description: Get current weather for a location
+  options:
+    - name: location
+      description: "City name (e.g., London, New York)"
+      type: string
+      required: true
+      validation:
+        max_length: 100
+
+execution:
+  timeout_seconds: 10
+  script: |
+    # URL encode the location
+    ENCODED=$(echo -n "${location}" | jq -sRr @uri)
+
+    # Get weather data in JSON format
+    RESPONSE=$(curl -s --max-time 10 "https://wttr.in/$ENCODED?format=j1" 2>&1)
+
+    if echo "$RESPONSE" | grep -q "Unknown location"; then
+      echo "## Weather"
+      echo ""
+      echo "**Location:** ${location}"
+      echo ""
+      echo "Location not found. Try a different city name."
+      exit 0
+    fi
+
+    # Extract current conditions
+    AREA=$(echo "$RESPONSE" | jq -r '.nearest_area[0].areaName[0].value // "Unknown"')
+    COUNTRY=$(echo "$RESPONSE" | jq -r '.nearest_area[0].country[0].value // ""')
+    TEMP_C=$(echo "$RESPONSE" | jq -r '.current_condition[0].temp_C // "?"')
+    TEMP_F=$(echo "$RESPONSE" | jq -r '.current_condition[0].temp_F // "?"')
+    FEELS_C=$(echo "$RESPONSE" | jq -r '.current_condition[0].FeelsLikeC // "?"')
+    FEELS_F=$(echo "$RESPONSE" | jq -r '.current_condition[0].FeelsLikeF // "?"')
+    DESC=$(echo "$RESPONSE" | jq -r '.current_condition[0].weatherDesc[0].value // "Unknown"')
+    HUMIDITY=$(echo "$RESPONSE" | jq -r '.current_condition[0].humidity // "?"')
+    WIND_KPH=$(echo "$RESPONSE" | jq -r '.current_condition[0].windspeedKmph // "?"')
+    WIND_DIR=$(echo "$RESPONSE" | jq -r '.current_condition[0].winddir16Point // ""')
+
+    echo "## Weather"
+    echo ""
+    if [ -n "$COUNTRY" ]; then
+      echo "**Location:** $AREA, $COUNTRY"
+    else
+      echo "**Location:** $AREA"
+    fi
+    echo ""
+    echo "**Conditions:** $DESC"
+    echo "**Temperature:** $TEMP_C""C / $TEMP_F""F"
+    echo "**Feels Like:** $FEELS_C""C / $FEELS_F""F"
+    echo "**Humidity:** $HUMIDITY""%"
+    echo "**Wind:** $WIND_KPH km/h $WIND_DIR"
+
+security:
+  cooldown_seconds: 10

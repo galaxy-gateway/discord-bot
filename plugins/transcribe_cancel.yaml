@@ -1,0 +1,15 @@
+name: transcribe_cancel
+description: Cancel an in-progress playlist transcription
+version: "1.0.0"
+type: virtual
+
+command:
+  description: Cancel your active playlist transcription
+  options:
+    - name: job_id
+      description: "Playlist job ID (optional - cancels most recent if not specified)"
+      type: string
+      required: false
+
+security:
+  cooldown_seconds: 5

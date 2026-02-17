@@ -1,0 +1,15 @@
+name: transcribe_status
+description: View your active and recent transcription jobs
+version: "1.0.0"
+type: virtual
+
+command:
+  description: View your active transcription jobs and queue
+  options:
+    - name: show_all
+      description: "Show completed jobs too (default: active only)"
+      type: boolean
+      required: false
+
+security:
+  cooldown_seconds: 10

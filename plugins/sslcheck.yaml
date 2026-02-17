@@ -1,0 +1,59 @@
+name: sslcheck
+description: Check SSL certificate for a domain
+version: "1.0.0"
+type: shell
+
+command:
+  description: Check SSL certificate expiry and details
+  options:
+    - name: domain
+      description: "Domain to check (e.g., example.com)"
+      type: string
+      required: true
+      validation:
+        pattern: "^[a-zA-Z0-9][a-zA-Z0-9.-]+$"
+        max_length: 253
+
+execution:
+  timeout_seconds: 15
+  script: |
+    CERT_INFO=$(echo | openssl s_client -servername "${domain}" -connect "${domain}:443" 2>/dev/null | openssl x509 -noout -dates -subject -issuer 2>/dev/null)
+
+    if [ -z "$CERT_INFO" ]; then
+      echo "## SSL Certificate Check"
+      echo ""
+      echo "**Domain:** \`${domain}\`"
+      echo ""
+      echo "Could not retrieve SSL certificate. The domain may not support HTTPS."
+      exit 0
+    fi
+
+    SUBJECT=$(echo "$CERT_INFO" | grep "subject=" | sed 's/subject=//')
+    ISSUER=$(echo "$CERT_INFO" | grep "issuer=" | sed 's/issuer=//')
+    NOT_BEFORE=$(echo "$CERT_INFO" | grep "notBefore=" | sed 's/notBefore=//')
+    NOT_AFTER=$(echo "$CERT_INFO" | grep "notAfter=" | sed 's/notAfter=//')
+
+    # Calculate days until expiry
+    EXPIRY_EPOCH=$(date -d "$NOT_AFTER" +%s 2>/dev/null)
+    NOW_EPOCH=$(date +%s)
+    DAYS_LEFT=$(( (EXPIRY_EPOCH - NOW_EPOCH) / 86400 ))
+
+    echo "## SSL Certificate Check"
+    echo ""
+    echo "**Domain:** \`${domain}\`"
+    echo ""
+    if [ "$DAYS_LEFT" -lt 0 ]; then
+      echo "**Status:** EXPIRED"
+    elif [ "$DAYS_LEFT" -lt 30 ]; then
+      echo "**Status:** Expiring soon ($DAYS_LEFT days)"
+    else
+      echo "**Status:** Valid ($DAYS_LEFT days remaining)"
+    fi
+    echo ""
+    echo "**Issued To:** $SUBJECT"
+    echo "**Issued By:** $ISSUER"
+    echo "**Valid From:** $NOT_BEFORE"
+    echo "**Expires:** $NOT_AFTER"
+
+security:
+  cooldown_seconds: 10

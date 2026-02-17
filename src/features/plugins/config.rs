@@ -1,11 +1,14 @@
 //! # Plugin Configuration Schema
 //!
 //! YAML-based plugin configuration with full schema validation.
+//! Supports both monolithic `plugins.yaml` and per-plugin directory (`plugins/`) loading.
 //!
-//! - **Version**: 3.4.0
+//! - **Version**: 4.0.0
 //! - **Since**: 0.9.0
 //!
 //! ## Changelog
+//! - 4.0.0: Added PluginType presets (shell/api/docker/virtual), RawPlugin with resolve(),
+//!   per-file directory loading (load_dir/load_auto), script sugar, command name inference
 //! - 3.4.0: Added chunk_summary_prompt to OutputConfig for casual per-chunk summaries
 //! - 3.3.0: Added recommended_max_videos to PlaylistConfig for flexible playlist limits
 //! - 3.2.0: Added cumulative_summaries option for progressive summarization during chunked transcription
@@ -480,6 +483,300 @@ fn default_download_timeout() -> u64 {
     300 // 5 minutes
 }
 
+// ─── Plugin Type Presets ───────────────────────────────────────────────
+
+/// Plugin type preset that provides sensible defaults
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PluginType {
+    Shell,
+    Api,
+    Docker,
+    Virtual,
+}
+
+/// Default values derived from plugin type
+struct TypeDefaults {
+    execution_command: &'static str,
+    timeout_seconds: u64,
+    max_output_bytes: usize,
+    create_thread: bool,
+    max_inline_length: usize,
+}
+
+impl PluginType {
+    fn defaults(self) -> TypeDefaults {
+        match self {
+            PluginType::Shell => TypeDefaults {
+                execution_command: "sh",
+                timeout_seconds: 30,
+                max_output_bytes: 4096,
+                create_thread: false,
+                max_inline_length: 2000,
+            },
+            PluginType::Api => TypeDefaults {
+                execution_command: "sh",
+                timeout_seconds: 15,
+                max_output_bytes: 4096,
+                create_thread: false,
+                max_inline_length: 2000,
+            },
+            PluginType::Docker => TypeDefaults {
+                execution_command: "docker",
+                timeout_seconds: 600,
+                max_output_bytes: 10_485_760,
+                create_thread: true,
+                max_inline_length: 1500,
+            },
+            PluginType::Virtual => TypeDefaults {
+                execution_command: "",
+                timeout_seconds: 5,
+                max_output_bytes: 0,
+                create_thread: false,
+                max_inline_length: 2000,
+            },
+        }
+    }
+}
+
+// ─── Raw Plugin (pre-resolution) ──────────────────────────────────────
+
+/// Raw plugin as read from individual YAML file (before type-default resolution)
+#[derive(Debug, Clone, Deserialize)]
+pub struct RawPlugin {
+    pub name: String,
+    pub description: String,
+    pub version: String,
+
+    /// Plugin type preset (shell, api, docker, virtual)
+    #[serde(rename = "type")]
+    pub plugin_type: Option<PluginType>,
+
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+
+    #[serde(default)]
+    pub command: Option<RawCommandDefinition>,
+
+    #[serde(default)]
+    pub execution: Option<RawExecutionConfig>,
+
+    #[serde(default)]
+    pub security: Option<SecurityConfig>,
+
+    #[serde(default)]
+    pub output: Option<RawOutputConfig>,
+
+    #[serde(default)]
+    pub playlist: Option<PlaylistConfig>,
+}
+
+/// Command definition with optional name (defaults to plugin name)
+#[derive(Debug, Clone, Deserialize)]
+pub struct RawCommandDefinition {
+    pub name: Option<String>,
+    pub description: String,
+    #[serde(default)]
+    pub options: Vec<CommandOption>,
+}
+
+/// Execution config with optional fields and script sugar
+#[derive(Debug, Clone, Deserialize)]
+pub struct RawExecutionConfig {
+    pub command: Option<String>,
+    pub args: Option<Vec<String>>,
+    /// Sugar: `script: |` becomes `command: "sh"`, `args: ["-c", script]`
+    pub script: Option<String>,
+    pub timeout_seconds: Option<u64>,
+    pub working_directory: Option<String>,
+    pub max_output_bytes: Option<usize>,
+    #[serde(default)]
+    pub env: Option<HashMap<String, String>>,
+    pub chunking: Option<ChunkingConfig>,
+}
+
+/// Output config with optional type-defaulted fields
+#[derive(Debug, Clone, Deserialize)]
+pub struct RawOutputConfig {
+    pub create_thread: Option<bool>,
+    pub thread_name_template: Option<String>,
+    pub auto_archive_minutes: Option<u64>,
+    pub post_as_file: Option<bool>,
+    pub file_name_template: Option<String>,
+    pub max_inline_length: Option<usize>,
+    pub summary_prompt: Option<String>,
+    pub chunk_summary_prompt: Option<String>,
+    pub error_template: Option<String>,
+    pub source_param: Option<String>,
+}
+
+impl RawPlugin {
+    /// Resolve a RawPlugin into a fully-populated Plugin by merging type defaults
+    pub fn resolve(self) -> Plugin {
+        let td = self.plugin_type.map(|t| t.defaults());
+
+        // Command: name defaults to plugin name
+        let command = match self.command {
+            Some(raw_cmd) => CommandDefinition {
+                name: raw_cmd.name.unwrap_or_else(|| self.name.clone()),
+                description: raw_cmd.description,
+                options: raw_cmd.options,
+            },
+            None => CommandDefinition {
+                name: self.name.clone(),
+                description: self.description.clone(),
+                options: vec![],
+            },
+        };
+
+        // Execution: handle script sugar, then merge type defaults
+        let execution = match self.execution {
+            Some(raw_exec) => {
+                let (cmd, args) = if let Some(script) = raw_exec.script {
+                    // script sugar: sh -c <script>
+                    ("sh".to_string(), vec!["-c".to_string(), script])
+                } else {
+                    let cmd = raw_exec.command.unwrap_or_else(|| {
+                        td.as_ref()
+                            .map(|d| d.execution_command.to_string())
+                            .unwrap_or_default()
+                    });
+                    (cmd, raw_exec.args.unwrap_or_default())
+                };
+
+                ExecutionConfig {
+                    command: cmd,
+                    args,
+                    timeout_seconds: raw_exec.timeout_seconds.unwrap_or_else(|| {
+                        td.as_ref().map(|d| d.timeout_seconds).unwrap_or(300)
+                    }),
+                    working_directory: raw_exec.working_directory,
+                    max_output_bytes: raw_exec.max_output_bytes.unwrap_or_else(|| {
+                        td.as_ref()
+                            .map(|d| d.max_output_bytes)
+                            .unwrap_or(10_485_760)
+                    }),
+                    env: raw_exec.env.unwrap_or_default(),
+                    chunking: raw_exec.chunking,
+                }
+            }
+            None => ExecutionConfig {
+                command: td
+                    .as_ref()
+                    .map(|d| d.execution_command.to_string())
+                    .unwrap_or_default(),
+                args: vec![],
+                timeout_seconds: td.as_ref().map(|d| d.timeout_seconds).unwrap_or(300),
+                working_directory: None,
+                max_output_bytes: td
+                    .as_ref()
+                    .map(|d| d.max_output_bytes)
+                    .unwrap_or(10_485_760),
+                env: HashMap::new(),
+                chunking: None,
+            },
+        };
+
+        // Output: merge type defaults for create_thread and max_inline_length
+        let output = match self.output {
+            Some(raw_out) => OutputConfig {
+                create_thread: raw_out.create_thread.unwrap_or_else(|| {
+                    td.as_ref().map(|d| d.create_thread).unwrap_or(false)
+                }),
+                max_inline_length: raw_out.max_inline_length.unwrap_or_else(|| {
+                    td.as_ref().map(|d| d.max_inline_length).unwrap_or(1500)
+                }),
+                thread_name_template: raw_out.thread_name_template,
+                auto_archive_minutes: raw_out.auto_archive_minutes.unwrap_or(60),
+                post_as_file: raw_out.post_as_file.unwrap_or(false),
+                file_name_template: raw_out.file_name_template,
+                summary_prompt: raw_out.summary_prompt,
+                chunk_summary_prompt: raw_out.chunk_summary_prompt,
+                error_template: raw_out.error_template,
+                source_param: raw_out.source_param,
+            },
+            None => {
+                let mut out = OutputConfig::default();
+                if let Some(ref d) = td {
+                    out.create_thread = d.create_thread;
+                    out.max_inline_length = d.max_inline_length;
+                }
+                out
+            }
+        };
+
+        Plugin {
+            name: self.name,
+            description: self.description,
+            enabled: self.enabled,
+            version: self.version,
+            command,
+            execution,
+            security: self.security.unwrap_or_default(),
+            output,
+            playlist: self.playlist,
+        }
+    }
+}
+
+// ─── Directory Loading ────────────────────────────────────────────────
+
+impl PluginConfig {
+    /// Load all plugin YAML files from a directory
+    ///
+    /// Each file is parsed as a `RawPlugin`, resolved with type defaults,
+    /// and collected into a `PluginConfig`. Files are sorted alphabetically
+    /// for deterministic load order.
+    pub fn load_dir(dir: &str) -> Result<Self> {
+        let dir_path = std::path::Path::new(dir);
+        if !dir_path.is_dir() {
+            return Err(anyhow::anyhow!("{} is not a directory", dir));
+        }
+
+        let mut entries: Vec<_> = std::fs::read_dir(dir_path)?
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.path()
+                    .extension()
+                    .map(|ext| ext == "yaml" || ext == "yml")
+                    .unwrap_or(false)
+            })
+            .collect();
+
+        entries.sort_by_key(|e| e.file_name());
+
+        let mut plugins = Vec::new();
+        for entry in entries {
+            let path = entry.path();
+            let filename = path.file_name().unwrap_or_default().to_string_lossy();
+            let contents = std::fs::read_to_string(&path)
+                .map_err(|e| anyhow::anyhow!("Failed to read {}: {}", filename, e))?;
+            let raw: RawPlugin = serde_yaml::from_str(&contents)
+                .map_err(|e| anyhow::anyhow!("Failed to parse {}: {}", filename, e))?;
+            plugins.push(raw.resolve());
+        }
+
+        let config = PluginConfig { plugins };
+        config.validate()?;
+        Ok(config)
+    }
+
+    /// Auto-detect plugin source: directory or single file
+    ///
+    /// If path is a directory, loads all YAML files from it.
+    /// If path is a file, loads it as a monolithic plugin config.
+    pub fn load_auto(path: &str) -> Result<Self> {
+        let p = std::path::Path::new(path);
+        if p.is_dir() {
+            Self::load_dir(path)
+        } else if p.is_file() || p.extension().is_some() {
+            Self::load(path)
+        } else {
+            Err(anyhow::anyhow!("Plugin config path not found: {}", path))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -608,5 +905,268 @@ plugins:
 "#;
         let config: PluginConfig = serde_yaml::from_str(yaml).unwrap();
         assert!(config.validate().is_err());
+    }
+
+    // ─── RawPlugin tests ─────────────────────────────────────────────
+
+    #[test]
+    fn test_raw_plugin_shell_defaults() {
+        let yaml = r#"
+name: test
+description: A test plugin
+version: "1.0.0"
+type: shell
+
+command:
+  description: Run a test
+
+execution:
+  script: echo hello
+"#;
+        let raw: RawPlugin = serde_yaml::from_str(yaml).unwrap();
+        let plugin = raw.resolve();
+
+        assert_eq!(plugin.name, "test");
+        assert_eq!(plugin.command.name, "test"); // inferred from name
+        assert_eq!(plugin.execution.command, "sh");
+        assert_eq!(plugin.execution.args, vec!["-c", "echo hello"]);
+        assert_eq!(plugin.execution.timeout_seconds, 30);
+        assert_eq!(plugin.execution.max_output_bytes, 4096);
+        assert!(!plugin.output.create_thread);
+        assert_eq!(plugin.output.max_inline_length, 2000);
+    }
+
+    #[test]
+    fn test_raw_plugin_virtual_defaults() {
+        let yaml = r#"
+name: cancel_thing
+description: Cancel an operation
+version: "1.0.0"
+type: virtual
+
+command:
+  description: Cancel it
+"#;
+        let raw: RawPlugin = serde_yaml::from_str(yaml).unwrap();
+        let plugin = raw.resolve();
+
+        assert!(plugin.is_virtual()); // empty command
+        assert_eq!(plugin.execution.timeout_seconds, 5);
+        assert_eq!(plugin.execution.max_output_bytes, 0);
+        assert!(!plugin.output.create_thread);
+    }
+
+    #[test]
+    fn test_raw_plugin_docker_defaults() {
+        let yaml = r#"
+name: transcribe
+description: Transcribe videos
+version: "1.0.0"
+type: docker
+
+command:
+  description: Transcribe a video
+
+execution:
+  args: ["run", "--rm", "my-image"]
+"#;
+        let raw: RawPlugin = serde_yaml::from_str(yaml).unwrap();
+        let plugin = raw.resolve();
+
+        assert_eq!(plugin.execution.command, "docker");
+        assert_eq!(plugin.execution.timeout_seconds, 600);
+        assert_eq!(plugin.execution.max_output_bytes, 10_485_760);
+        assert!(plugin.output.create_thread);
+        assert_eq!(plugin.output.max_inline_length, 1500);
+    }
+
+    #[test]
+    fn test_raw_plugin_explicit_overrides() {
+        let yaml = r#"
+name: custom
+description: Custom plugin
+version: "1.0.0"
+type: shell
+
+command:
+  name: my_custom_cmd
+  description: A custom command
+
+execution:
+  command: python3
+  args: ["-c", "print('hi')"]
+  timeout_seconds: 120
+  max_output_bytes: 8192
+
+output:
+  create_thread: true
+  max_inline_length: 500
+"#;
+        let raw: RawPlugin = serde_yaml::from_str(yaml).unwrap();
+        let plugin = raw.resolve();
+
+        // Explicit values override type defaults
+        assert_eq!(plugin.command.name, "my_custom_cmd");
+        assert_eq!(plugin.execution.command, "python3");
+        assert_eq!(plugin.execution.timeout_seconds, 120);
+        assert_eq!(plugin.execution.max_output_bytes, 8192);
+        assert!(plugin.output.create_thread);
+        assert_eq!(plugin.output.max_inline_length, 500);
+    }
+
+    #[test]
+    fn test_raw_plugin_script_sugar() {
+        let yaml = r#"
+name: greet
+description: Say hello
+version: "1.0.0"
+type: shell
+
+command:
+  description: Greet the user
+
+execution:
+  script: echo "Hello, world!"
+"#;
+        let raw: RawPlugin = serde_yaml::from_str(yaml).unwrap();
+        let plugin = raw.resolve();
+
+        assert_eq!(plugin.execution.command, "sh");
+        assert_eq!(plugin.execution.args.len(), 2);
+        assert_eq!(plugin.execution.args[0], "-c");
+        assert!(plugin.execution.args[1].contains("Hello, world!"));
+    }
+
+    #[test]
+    fn test_raw_plugin_command_name_inference() {
+        let yaml = r#"
+name: my_plugin
+description: My plugin
+version: "1.0.0"
+type: shell
+
+command:
+  description: Does things
+"#;
+        let raw: RawPlugin = serde_yaml::from_str(yaml).unwrap();
+        let plugin = raw.resolve();
+
+        assert_eq!(plugin.command.name, "my_plugin");
+    }
+
+    #[test]
+    fn test_load_dir() {
+        // Create a temp directory with plugin files
+        let dir = std::env::temp_dir().join("persona_test_plugins_load_dir");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        std::fs::write(
+            dir.join("alpha.yaml"),
+            r#"
+name: alpha
+description: First plugin
+version: "1.0.0"
+type: shell
+command:
+  description: Alpha command
+execution:
+  script: echo alpha
+"#,
+        )
+        .unwrap();
+
+        std::fs::write(
+            dir.join("beta.yaml"),
+            r#"
+name: beta
+description: Second plugin
+version: "1.0.0"
+type: api
+command:
+  description: Beta command
+execution:
+  script: echo beta
+"#,
+        )
+        .unwrap();
+
+        let config = PluginConfig::load_dir(dir.to_str().unwrap()).unwrap();
+        assert_eq!(config.plugins.len(), 2);
+        assert_eq!(config.plugins[0].name, "alpha"); // sorted alphabetically
+        assert_eq!(config.plugins[1].name, "beta");
+        assert_eq!(config.plugins[0].execution.timeout_seconds, 30); // shell default
+        assert_eq!(config.plugins[1].execution.timeout_seconds, 15); // api default
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_load_auto_dir() {
+        let dir = std::env::temp_dir().join("persona_test_plugins_auto_dir");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        std::fs::write(
+            dir.join("test.yaml"),
+            r#"
+name: test
+description: Test
+version: "1.0.0"
+type: shell
+command:
+  description: Test
+execution:
+  script: echo test
+"#,
+        )
+        .unwrap();
+
+        let config = PluginConfig::load_auto(dir.to_str().unwrap()).unwrap();
+        assert_eq!(config.plugins.len(), 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_backward_compatible_full_schema() {
+        // A fully specified plugin (old format) should also parse as RawPlugin
+        let yaml = r#"
+name: legacy
+description: Legacy plugin
+enabled: true
+version: "1.0.0"
+command:
+  name: legacy
+  description: Legacy command
+  options:
+    - name: input
+      description: Input value
+      type: string
+      required: true
+execution:
+  command: echo
+  args: ["hello"]
+  timeout_seconds: 60
+  max_output_bytes: 8192
+security:
+  cooldown_seconds: 10
+  guild_only: true
+output:
+  create_thread: false
+  max_inline_length: 2000
+"#;
+        let raw: RawPlugin = serde_yaml::from_str(yaml).unwrap();
+        let plugin = raw.resolve();
+
+        assert_eq!(plugin.name, "legacy");
+        assert_eq!(plugin.command.name, "legacy");
+        assert_eq!(plugin.execution.command, "echo");
+        assert_eq!(plugin.execution.timeout_seconds, 60);
+        assert_eq!(plugin.execution.max_output_bytes, 8192);
+        assert_eq!(plugin.security.cooldown_seconds, 10);
+        assert!(plugin.security.guild_only);
+        assert!(!plugin.output.create_thread);
+        assert_eq!(plugin.output.max_inline_length, 2000);
     }
 }

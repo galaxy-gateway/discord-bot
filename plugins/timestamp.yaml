@@ -1,0 +1,55 @@
+name: timestamp
+description: Convert between Unix timestamps and dates
+version: "1.0.0"
+type: shell
+
+command:
+  description: Convert between Unix timestamps and human-readable dates
+  options:
+    - name: value
+      description: "Unix timestamp (e.g., 1700000000) or 'now' for current time"
+      type: string
+      required: true
+      validation:
+        max_length: 50
+
+execution:
+  timeout_seconds: 5
+  max_output_bytes: 2048
+  script: |
+    INPUT="${value}"
+
+    echo "## Timestamp Converter"
+    echo ""
+
+    if [ "$INPUT" = "now" ]; then
+      UNIX=$(date +%s)
+      HUMAN=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+      LOCAL=$(date +"%Y-%m-%d %H:%M:%S %Z")
+
+      echo "**Current Time**"
+      echo ""
+      echo "**Unix:** \`$UNIX\`"
+      echo "**UTC:** $HUMAN"
+      echo "**Local:** $LOCAL"
+    elif echo "$INPUT" | grep -qE '^[0-9]+$'; then
+      # Input is a Unix timestamp
+      HUMAN=$(date -u -d "@$INPUT" +"%Y-%m-%d %H:%M:%S UTC" 2>/dev/null)
+      LOCAL=$(date -d "@$INPUT" +"%Y-%m-%d %H:%M:%S %Z" 2>/dev/null)
+
+      if [ -z "$HUMAN" ]; then
+        echo "**Error:** Invalid timestamp"
+        exit 0
+      fi
+
+      echo "**Unix:** \`$INPUT\`"
+      echo "**UTC:** $HUMAN"
+      echo "**Local:** $LOCAL"
+      echo ""
+      echo "**Discord Format:** <t:$INPUT:F>"
+    else
+      echo "**Error:** Please provide a Unix timestamp (numbers only) or 'now'"
+    fi
+
+security:
+  cooldown_seconds: 3

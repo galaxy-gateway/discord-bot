@@ -1,0 +1,32 @@
+name: uuid
+description: Generate random UUIDs
+version: "1.0.0"
+type: shell
+
+command:
+  description: Generate random UUID(s)
+  options:
+    - name: count
+      description: "Number of UUIDs to generate (1-10)"
+      type: integer
+      required: false
+      validation:
+        min_value: 1
+        max_value: 10
+
+execution:
+  timeout_seconds: 5
+  max_output_bytes: 2048
+  script: |
+    if [ -n "$count" ]; then COUNT="$count"; else COUNT=1; fi
+
+    echo "## UUID Generator"
+    echo ""
+    echo "\`\`\`"
+    for i in $(seq 1 $COUNT); do
+      uuidgen
+    done
+    echo "\`\`\`"
+
+security:
+  cooldown_seconds: 3

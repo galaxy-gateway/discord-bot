@@ -1,0 +1,67 @@
+name: httpstatus
+description: Check if a URL is reachable
+version: "1.0.0"
+type: shell
+
+command:
+  description: Check HTTP status and response time for a URL
+  options:
+    - name: url
+      description: "URL to check (e.g., https://example.com)"
+      type: string
+      required: true
+      validation:
+        pattern: "^https?://[a-zA-Z0-9][a-zA-Z0-9.-]+"
+        max_length: 500
+
+execution:
+  timeout_seconds: 15
+  script: |
+    RESULT=$(curl -s -o /dev/null -w "%{http_code}|%{time_total}|%{size_download}|%{redirect_url}" --max-time 10 -L "${url}" 2>&1)
+
+    HTTP_CODE=$(echo "$RESULT" | cut -d'|' -f1)
+    TIME_TOTAL=$(echo "$RESULT" | cut -d'|' -f2)
+    SIZE=$(echo "$RESULT" | cut -d'|' -f3)
+    REDIRECT=$(echo "$RESULT" | cut -d'|' -f4)
+
+    # Convert time to ms
+    TIME_MS=$(echo "$TIME_TOTAL * 1000" | bc | cut -d'.' -f1)
+
+    # Format size
+    if [ "$SIZE" -gt 1048576 ]; then
+      SIZE_FMT="$(echo "scale=2; $SIZE / 1048576" | bc) MB"
+    elif [ "$SIZE" -gt 1024 ]; then
+      SIZE_FMT="$(echo "scale=2; $SIZE / 1024" | bc) KB"
+    else
+      SIZE_FMT="$SIZE bytes"
+    fi
+
+    echo "## HTTP Status Check"
+    echo ""
+    echo "**URL:** \`${url}\`"
+    echo ""
+
+    if [ "$HTTP_CODE" = "000" ]; then
+      echo "**Status:** Connection failed"
+      echo ""
+      echo "Could not connect to the server."
+    elif [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+      echo "**Status:** $HTTP_CODE OK"
+      echo "**Response Time:** $TIME_MS""ms"
+      echo "**Size:** $SIZE_FMT"
+    elif [ "$HTTP_CODE" -ge 300 ] && [ "$HTTP_CODE" -lt 400 ]; then
+      echo "**Status:** $HTTP_CODE Redirect"
+      echo "**Response Time:** $TIME_MS""ms"
+      if [ -n "$REDIRECT" ]; then
+        echo "**Redirects to:** \`$REDIRECT\`"
+      fi
+    elif [ "$HTTP_CODE" -ge 400 ] && [ "$HTTP_CODE" -lt 500 ]; then
+      echo "**Status:** $HTTP_CODE Client Error"
+      echo "**Response Time:** $TIME_MS""ms"
+    else
+      echo "**Status:** $HTTP_CODE Server Error"
+      echo "**Response Time:** $TIME_MS""ms"
+    fi
+
+security:
+  cooldown_seconds: 5

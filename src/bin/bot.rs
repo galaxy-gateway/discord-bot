@@ -895,13 +895,26 @@ async fn main() -> Result<()> {
     let interaction_tracker = InteractionTracker::new(database.clone());
     let persona_manager = PersonaManager::new();
 
-    // Load plugins from config file (before CommandHandler so plugin_manager can be passed in)
-    let plugins_path =
-        std::env::var("PLUGINS_CONFIG_PATH").unwrap_or_else(|_| "plugins.yaml".to_string());
+    // Load plugins: check for plugins/ directory first, fall back to plugins.yaml
+    let plugins_path = std::env::var("PLUGINS_CONFIG_PATH").unwrap_or_else(|_| {
+        if std::path::Path::new("plugins").is_dir() {
+            "plugins".to_string()
+        } else {
+            "plugins.yaml".to_string()
+        }
+    });
     let (plugins, plugin_manager): (Vec<Plugin>, Option<Arc<PluginManager>>) =
-        match PluginConfig::load(&plugins_path) {
+        match PluginConfig::load_auto(&plugins_path) {
             Ok(plugin_config) => {
-                info!("📄 Loaded plugin config from {plugins_path}");
+                let source = if std::path::Path::new(&plugins_path).is_dir() {
+                    "directory"
+                } else {
+                    "file"
+                };
+                info!(
+                    "📄 Loaded {} plugin(s) from {plugins_path} ({source})",
+                    plugin_config.plugins.len()
+                );
                 let plugins = plugin_config.plugins.clone();
 
                 // Create allowed commands list
