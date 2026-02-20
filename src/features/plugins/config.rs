@@ -19,7 +19,7 @@
 //! - 1.0.0: Initial release
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 
 /// Root configuration containing all plugins
@@ -181,7 +181,7 @@ pub struct CommandOption {
     pub required: bool,
 
     /// Default value if not provided
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_optional_string_or_number")]
     pub default: Option<String>,
 
     /// Validation rules
@@ -481,6 +481,59 @@ fn default_chunk_timeout() -> u64 {
 
 fn default_download_timeout() -> u64 {
     300 // 5 minutes
+}
+
+/// Deserialize an optional string that also accepts integers, floats, and bools.
+/// This prevents YAML type mismatches like `default: 0` (integer) when the field is `Option<String>`.
+fn deserialize_optional_string_or_number<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de;
+
+    struct StringOrNumber;
+
+    impl<'de> de::Visitor<'de> for StringOrNumber {
+        type Value = Option<String>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a string, number, boolean, or null")
+        }
+
+        fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
+            Ok(Some(v.to_string()))
+        }
+
+        fn visit_string<E: de::Error>(self, v: String) -> Result<Self::Value, E> {
+            Ok(Some(v))
+        }
+
+        fn visit_i64<E: de::Error>(self, v: i64) -> Result<Self::Value, E> {
+            Ok(Some(v.to_string()))
+        }
+
+        fn visit_u64<E: de::Error>(self, v: u64) -> Result<Self::Value, E> {
+            Ok(Some(v.to_string()))
+        }
+
+        fn visit_f64<E: de::Error>(self, v: f64) -> Result<Self::Value, E> {
+            Ok(Some(v.to_string()))
+        }
+
+        fn visit_bool<E: de::Error>(self, v: bool) -> Result<Self::Value, E> {
+            Ok(Some(v.to_string()))
+        }
+    }
+
+    deserializer.deserialize_any(StringOrNumber)
 }
 
 // ─── Plugin Type Presets ───────────────────────────────────────────────
@@ -1126,6 +1179,54 @@ execution:
         assert_eq!(config.plugins.len(), 1);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_integer_default_coerced_to_string() {
+        // Regression test: YAML `default: 0` (integer) must deserialize as Option<String>
+        // Without the custom deserializer, serde_yaml fails on type mismatch
+        let yaml = r#"
+name: test_int_default
+description: Plugin with integer defaults
+version: "1.0.0"
+type: shell
+
+command:
+  description: Test integer default coercion
+  options:
+    - name: interval
+      description: "Interval (0 = disabled)"
+      type: integer
+      required: false
+      default: 0
+    - name: count
+      description: "Number of items"
+      type: integer
+      required: false
+      default: 5
+    - name: label
+      description: "A string default"
+      type: string
+      required: false
+      default: "hello"
+    - name: no_default
+      description: "No default value"
+      type: string
+      required: false
+
+execution:
+  script: echo test
+"#;
+        let raw: RawPlugin = serde_yaml::from_str(yaml).unwrap();
+        let plugin = raw.resolve();
+
+        assert_eq!(plugin.command.options[0].default, Some("0".to_string()));
+        assert_eq!(plugin.command.options[1].default, Some("5".to_string()));
+        assert_eq!(
+            plugin.command.options[2].default,
+            Some("hello".to_string())
+        );
+        assert_eq!(plugin.command.options[3].default, None);
     }
 
     #[test]

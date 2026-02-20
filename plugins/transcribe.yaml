@@ -63,7 +63,7 @@ command:
       description: "Post partial transcript file every N chunks (0 = only at end)"
       type: integer
       required: false
-      default: 0
+      default: "0"
     - name: custom_prompt
       description: "Additional instructions for AI summaries"
       type: string
