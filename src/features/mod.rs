@@ -191,7 +191,7 @@ pub const FEATURES: &[Feature] = &[
     Feature {
         id: "plugins",
         name: "Plugin System",
-        version: "4.0.0",
+        version: "4.0.1",
         since: "0.9.0",
         toggleable: true,
         description: "Config-based CLI command plugins with background execution via /plugins subcommands",

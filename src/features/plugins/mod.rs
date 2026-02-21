@@ -5,11 +5,13 @@
 //! Now includes multi-video playlist transcription with progress tracking and chunked streaming
 //! for long videos with per-chunk summaries.
 //!
-//! - **Version**: 4.0.0
+//! - **Version**: 4.0.1
 //! - **Since**: 0.9.0
 //! - **Toggleable**: true
 //!
 //! ## Changelog
+//! - 4.0.1: Fix silent failure for short video transcription (YouTube Shorts) - replace
+//!   let _ = with error logging, add diagnostic logging, remove duplicate fetch_youtube_title
 //! - 4.0.0: Plugin type presets (shell/api/docker/virtual), per-file directory loading,
 //!   script sugar, command name inference, new-plugin scaffold generator
 //! - 3.19.0: Export create_plugins_command (single /plugins command with subcommands)
@@ -294,7 +296,7 @@ impl PluginManager {
                 // Fetch video title if we have a YouTube URL
                 let thread_name = if let Some(ref url) = source_url {
                     if url.contains("youtube.com") || url.contains("youtu.be") {
-                        match fetch_youtube_title(url).await {
+                        match youtube::fetch_youtube_title(url).await {
                             Some(title) => {
                                 info!("Fetched YouTube title: {title}");
                                 title
@@ -414,7 +416,7 @@ impl PluginManager {
                 if let Some(ref url) = source_url {
                     // Fetch title for display
                     let title = if url.contains("youtube.com") || url.contains("youtu.be") {
-                        fetch_youtube_title(url)
+                        youtube::fetch_youtube_title(url)
                             .await
                             .unwrap_or_else(|| "Video".to_string())
                     } else {
@@ -1382,8 +1384,19 @@ impl PluginManager {
 
                 match result {
                     Ok(exec_result) => {
+                        info!(
+                            "Short video transcription: success={}, stdout_len={}, stderr_len={}, timed_out={}",
+                            exec_result.success, exec_result.stdout.len(), exec_result.stderr.len(), exec_result.timed_out
+                        );
+                        if !exec_result.stderr.is_empty() {
+                            warn!(
+                                "Short video stderr: {}",
+                                &exec_result.stderr[..exec_result.stderr.len().min(500)]
+                            );
+                        }
+
                         if exec_result.success {
-                            let _ = output_handler
+                            if let Err(e) = output_handler
                                 .post_structured_result(
                                     &http,
                                     output_channel,
@@ -1393,37 +1406,62 @@ impl PluginManager {
                                     true,
                                     Some(&user_context),
                                 )
-                                .await;
-                            let _ = job_manager
+                                .await
+                            {
+                                error!("Failed to post transcription result: {e}");
+                                let _ = output_handler
+                                    .post_error(
+                                        &http,
+                                        output_channel,
+                                        &format!("Failed to post transcription result: {e}"),
+                                        plugin.output.error_template.as_deref(),
+                                    )
+                                    .await;
+                            }
+                            if let Err(e) = job_manager
                                 .complete_job(&job_id_clone, "completed".to_string())
-                                .await;
+                                .await
+                            {
+                                warn!("Failed to mark job complete: {e}");
+                            }
                         } else {
                             let error_msg = if exec_result.timed_out {
                                 "Transcription timed out".to_string()
                             } else {
                                 exec_result.stderr
                             };
-                            let _ = output_handler
+                            if let Err(e) = output_handler
                                 .post_error(
                                     &http,
                                     output_channel,
                                     &error_msg,
                                     plugin.output.error_template.as_deref(),
                                 )
-                                .await;
-                            let _ = job_manager.fail_job(&job_id_clone, error_msg).await;
+                                .await
+                            {
+                                error!("Failed to post transcription error: {e}");
+                            }
+                            if let Err(e) = job_manager.fail_job(&job_id_clone, error_msg).await {
+                                warn!("Failed to mark job failed: {e}");
+                            }
                         }
                     }
                     Err(e) => {
-                        let _ = output_handler
+                        error!("Short video transcription execution error: {e}");
+                        if let Err(post_err) = output_handler
                             .post_error(
                                 &http,
                                 output_channel,
                                 &e.to_string(),
                                 plugin.output.error_template.as_deref(),
                             )
-                            .await;
-                        let _ = job_manager.fail_job(&job_id_clone, e.to_string()).await;
+                            .await
+                        {
+                            error!("Failed to post execution error: {post_err}");
+                        }
+                        if let Err(job_err) = job_manager.fail_job(&job_id_clone, e.to_string()).await {
+                            warn!("Failed to mark job failed: {job_err}");
+                        }
                     }
                 }
                 return;
@@ -1910,28 +1948,5 @@ fn substitute_params(template: &str, params: &HashMap<String, String>) -> String
     result
 }
 
-/// Fetch YouTube video title via oEmbed API
-pub async fn fetch_youtube_title(url: &str) -> Option<String> {
-    let client = reqwest::Client::new();
-    let resp = client
-        .get("https://www.youtube.com/oembed")
-        .query(&[("url", url), ("format", "json")])
-        .send()
-        .await;
-
-    match resp {
-        Ok(r) => {
-            if let Ok(json) = r.json::<serde_json::Value>().await {
-                json.get("title")
-                    .and_then(|t| t.as_str())
-                    .map(|s| s.to_string())
-            } else {
-                None
-            }
-        }
-        Err(e) => {
-            warn!("Failed to fetch YouTube title: {e}");
-            None
-        }
-    }
-}
+// Re-export from youtube module for external callers
+pub use youtube::fetch_youtube_title;

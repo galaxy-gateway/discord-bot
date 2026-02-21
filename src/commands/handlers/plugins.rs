@@ -368,7 +368,10 @@ impl PluginsHandler {
                 let url = params.get("url").cloned().unwrap_or_default();
                 let video_title = crate::features::plugins::fetch_youtube_title(&url)
                     .await
-                    .unwrap_or_else(|| "Video".to_string());
+                    .unwrap_or_else(|| {
+                        warn!("Could not fetch title for: {url}, using default");
+                        "Video".to_string()
+                    });
 
                 info!(
                     "[{request_id}] 📦 Using chunked transcription for: {video_title}"
