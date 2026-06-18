@@ -7,7 +7,9 @@
 BINARY_NAME := bot
 SERVICE_NAME := persona.service
 RELEASE_BINARY := target/release/$(BINARY_NAME)
-SERVICE_PATH := /etc/systemd/system/$(SERVICE_NAME)
+# Installed as a systemd *user* service so botuser can manage it without sudo.
+SERVICE_DIR := $(HOME)/.config/systemd/user
+SERVICE_PATH := $(SERVICE_DIR)/$(SERVICE_NAME)
 PROJECT_DIR := $(shell pwd)
 
 help: ## Display this help message
@@ -65,66 +67,68 @@ lint: ## Run clippy linter
 
 ##@ Deployment
 
-install-service: build-release ## Install systemd service (requires sudo)
-	@echo "Installing systemd service..."
+install-service: build-release ## Install systemd user service (no sudo)
+	@echo "Installing systemd user service..."
 	@if [ ! -f "$(PROJECT_DIR)/.env" ]; then \
 		echo "Error: .env file not found. Copy .env.example and configure it first."; \
 		exit 1; \
 	fi
-	sudo cp $(PROJECT_DIR)/$(SERVICE_NAME) $(SERVICE_PATH)
-	sudo systemctl daemon-reload
-	sudo systemctl enable $(SERVICE_NAME)
+	mkdir -p $(SERVICE_DIR)
+	cp $(PROJECT_DIR)/$(SERVICE_NAME) $(SERVICE_PATH)
+	systemctl --user daemon-reload
+	systemctl --user enable $(SERVICE_NAME)
 	@echo "Service installed successfully!"
 	@echo "Run 'make start' to start the service"
 
-uninstall-service: ## Uninstall systemd service (requires sudo)
-	@echo "Uninstalling systemd service..."
-	sudo systemctl stop $(SERVICE_NAME) 2>/dev/null || true
-	sudo systemctl disable $(SERVICE_NAME) 2>/dev/null || true
-	sudo rm -f $(SERVICE_PATH)
-	sudo systemctl daemon-reload
+uninstall-service: ## Uninstall systemd user service (no sudo)
+	@echo "Uninstalling systemd user service..."
+	systemctl --user stop $(SERVICE_NAME) 2>/dev/null || true
+	systemctl --user disable $(SERVICE_NAME) 2>/dev/null || true
+	rm -f $(SERVICE_PATH)
+	systemctl --user daemon-reload
 	@echo "Service uninstalled successfully!"
 
-start: ## Start the systemd service (requires sudo)
-	sudo systemctl start $(SERVICE_NAME)
+start: ## Start the systemd user service (no sudo)
+	systemctl --user start $(SERVICE_NAME)
 	@echo "Service started!"
 	@echo "Run 'make status' to check status or 'make logs-follow' to view logs"
 
-stop: ## Stop the systemd service (requires sudo)
-	sudo systemctl stop $(SERVICE_NAME)
+stop: ## Stop the systemd user service (no sudo)
+	systemctl --user stop $(SERVICE_NAME)
 	@echo "Service stopped!"
 
-restart: ## Restart the systemd service (requires sudo)
-	sudo systemctl restart $(SERVICE_NAME)
+restart: ## Restart the systemd user service (no sudo)
+	systemctl --user restart $(SERVICE_NAME)
 	@echo "Service restarted!"
 
-reload-service: ## Reload systemd service after config changes (requires sudo)
+reload-service: ## Reload systemd user service after config changes (no sudo)
 	@echo "Stopping service..."
-	sudo systemctl stop $(SERVICE_NAME)
+	systemctl --user stop $(SERVICE_NAME)
 	@echo "Copying updated service file..."
-	sudo cp $(PROJECT_DIR)/$(SERVICE_NAME) $(SERVICE_PATH)
-	@echo "Reloading systemd daemon..."
-	sudo systemctl daemon-reload
+	mkdir -p $(SERVICE_DIR)
+	cp $(PROJECT_DIR)/$(SERVICE_NAME) $(SERVICE_PATH)
+	@echo "Reloading systemd user daemon..."
+	systemctl --user daemon-reload
 	@echo "Starting service..."
-	sudo systemctl start $(SERVICE_NAME)
+	systemctl --user start $(SERVICE_NAME)
 	@echo "Service configuration reloaded!"
 
-status: ## Show systemd service status
-	sudo systemctl status $(SERVICE_NAME)
+status: ## Show systemd user service status
+	systemctl --user status $(SERVICE_NAME)
 
 ##@ Logging
 
 logs: ## View recent service logs (last 100 lines)
-	sudo journalctl -u $(SERVICE_NAME) -n 100
+	journalctl --user -u $(SERVICE_NAME) -n 100
 
 logs-follow: ## Follow service logs in real-time
-	sudo journalctl -u $(SERVICE_NAME) -f
+	journalctl --user -u $(SERVICE_NAME) -f
 
 logs-boot: ## View logs since last boot
-	sudo journalctl -u $(SERVICE_NAME) -b
+	journalctl --user -u $(SERVICE_NAME) -b
 
 logs-export: ## Export logs to file
-	sudo journalctl -u $(SERVICE_NAME) > $(BINARY_NAME)-logs-$$(date +%Y%m%d-%H%M%S).log
+	journalctl --user -u $(SERVICE_NAME) > $(BINARY_NAME)-logs-$$(date +%Y%m%d-%H%M%S).log
 	@echo "Logs exported to $(BINARY_NAME)-logs-$$(date +%Y%m%d-%H%M%S).log"
 
 ##@ Environment

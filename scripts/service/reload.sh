@@ -1,19 +1,24 @@
 #!/bin/bash
 
-# Script to reload the systemd service after configuration changes
+# Script to reload the systemd *user* service after configuration changes.
+# Runs entirely as botuser via `systemctl --user` — no sudo required.
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 
 echo "Stopping current service..."
-sudo systemctl stop persona.service
+systemctl --user stop persona.service
 
 echo "Copying updated service file..."
-sudo cp /home/caavere/Projects/bot/persona/persona.service /etc/systemd/system/
+mkdir -p "${UNIT_DIR}"
+cp "${REPO_ROOT}/persona.service" "${UNIT_DIR}/"
 
-echo "Reloading systemd daemon..."
-sudo systemctl daemon-reload
+echo "Reloading systemd user daemon..."
+systemctl --user daemon-reload
 
 echo "Starting service with new configuration..."
-sudo systemctl start persona.service
+systemctl --user start persona.service
 
 echo ""
 echo "Service reloaded! Checking status..."
-sudo systemctl status persona.service
+systemctl --user status persona.service

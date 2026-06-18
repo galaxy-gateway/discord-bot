@@ -3,7 +3,7 @@
 │                                                   │
 │   /help for help, /status for your current setup  │
 │                                                   │
-│   cwd: /home/caavere/Projects/bot/persona         │
+│   cwd: $HOME/Projects/bot/persona         │
 ╰───────────────────────────────────────────────────╯
 
  Tips for getting started:
@@ -900,7 +900,7 @@
 ● Now let me check if the build works:
 
 ● Bash(cargo check)
-  ⎿  Error: Checking persona v0.1.0 (/home/caavere/Projects/bot/persona)
+  ⎿  Error: Checking persona v0.1.0 ($HOME/Projects/bot/persona)
      error[E0308]: mismatched types
         --> src/bin/bot.rs:59:13
          |
@@ -924,7 +924,7 @@
        62        let command_handler = CommandHandler::new(database, config.openai_api_key.clone());
 
 ● Bash(cargo check)
-  ⎿      Checking persona v0.1.0 (/home/caavere/Projects/bot/persona)
+  ⎿      Checking persona v0.1.0 ($HOME/Projects/bot/persona)
          Finished dev [unoptimized + debuginfo] target(s) in 0.48s
 
 ● Great! Now let me run the tests to make sure they pass:

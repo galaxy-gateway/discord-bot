@@ -1,12 +1,30 @@
 # Systemd Deployment Guide
 
-This guide explains how to run the Discord Persona Bot as a systemd service, ensuring it runs persistently in the background and survives SSH disconnections and system reboots.
+This guide explains how to run the Discord Persona Bot as a **systemd user
+service**, ensuring it runs persistently in the background and survives SSH
+disconnections and system reboots — all managed by the `botuser` account
+**without sudo**.
+
+## Why a user service?
+
+The bot runs entirely as `botuser`. Installing it as a *user* service (under
+`~/.config/systemd/user/`) instead of a system service (`/etc/systemd/system/`)
+means `botuser` can install, start, stop, restart, and inspect logs for the
+service with no root privileges. The only requirement is **lingering**, which
+lets the user manager — and therefore the service — run at boot without anyone
+logging in.
 
 ## Prerequisites
 
 - The bot must be compiled in release mode: `cargo build --release`
 - The `.env` file must be properly configured with all required environment variables
 - The system must have systemd available (standard on most modern Linux distributions)
+- **Lingering must be enabled for `botuser`** so the service runs at boot
+  without a login session. This is a one-time action that requires root:
+  ```bash
+  sudo loginctl enable-linger botuser
+  ```
+  Verify with `loginctl show-user botuser | grep Linger` (should show `Linger=yes`).
 
 ## Available Binaries
 
@@ -18,20 +36,18 @@ The systemd service is configured to run the `bot` binary.
 
 ## Service Configuration
 
-The `persona.service` file in the project root contains the systemd service definition:
+The `persona.service` file in the project root contains the systemd service
+definition. Note there is **no** `User=`/`Group=` — a user service always runs
+as the owning user — and it installs into the user manager (`default.target`):
 
 ```ini
 [Unit]
 Description=Discord Persona Bot
-After=network-online.target
-Wants=network-online.target
 
 [Service]
 Type=simple
-User=caavere
-Group=caavere
-WorkingDirectory=/home/caavere/Projects/bot/persona
-ExecStart=/home/caavere/Projects/bot/persona/target/release/bot
+WorkingDirectory=%h/Projects/bot/persona
+ExecStart=%h/Projects/bot/persona/target/release/bot
 Restart=always
 RestartSec=10
 StandardOutput=journal
@@ -39,24 +55,41 @@ StandardError=journal
 SyslogIdentifier=persona-bot
 
 # Load environment variables from .env file
-EnvironmentFile=/home/caavere/Projects/bot/persona/.env
+EnvironmentFile=%h/Projects/bot/persona/.env
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
 ```
+
+The user manager sets `XDG_RUNTIME_DIR=/run/user/1005` automatically, which
+rootless podman (the transcribe plugin) relies on — so it no longer needs to be
+hardcoded in the unit.
+
+## Migrating from the old system service
+
+If the bot was previously installed as a root-owned system service at
+`/etc/systemd/system/persona.service`, tear it down once (requires root) before
+enabling the user service, so two instances don't connect to Discord at the
+same time:
+
+```bash
+sudo systemctl disable --now persona.service
+sudo rm /etc/systemd/system/persona.service
+sudo systemctl daemon-reload
+```
+
+Then follow the installation steps below as `botuser`.
 
 ## Installation Steps
 
 ### Quick Setup with Makefile (Recommended)
 
-The project includes a self-documented Makefile for easier management:
-
 ```bash
 # View all available commands
 make help
 
-# Complete setup in one command
-make setup
+# Build the release binary and install the user service
+make install-service
 
 # Start the service
 make start
@@ -67,36 +100,37 @@ make logs-follow
 
 ### Manual Installation Steps
 
-If you prefer to install manually:
+If you prefer to install manually (all as `botuser`, no sudo):
 
 1. **Build the release binary:**
    ```bash
    cargo build --release
    ```
 
-2. **Copy the service file to systemd:**
+2. **Copy the service file into the user unit directory:**
    ```bash
-   sudo cp /home/caavere/Projects/bot/persona/persona.service /etc/systemd/system/
+   mkdir -p ~/.config/systemd/user
+   cp $HOME/Projects/bot/persona/persona.service ~/.config/systemd/user/
    ```
 
-3. **Reload systemd daemon:**
+3. **Reload the systemd user daemon:**
    ```bash
-   sudo systemctl daemon-reload
+   systemctl --user daemon-reload
    ```
 
 4. **Enable the service to start on boot:**
    ```bash
-   sudo systemctl enable persona.service
+   systemctl --user enable persona.service
    ```
 
 5. **Start the service:**
    ```bash
-   sudo systemctl start persona.service
+   systemctl --user start persona.service
    ```
 
 6. **Verify the service is running:**
    ```bash
-   sudo systemctl status persona.service
+   systemctl --user status persona.service
    ```
 
 ## Service Management
@@ -124,27 +158,27 @@ make uninstall-service
 
 ```bash
 # View service status
-sudo systemctl status persona.service
+systemctl --user status persona.service
 
 # Stop the bot
-sudo systemctl stop persona.service
+systemctl --user stop persona.service
 
 # Start the bot
-sudo systemctl start persona.service
+systemctl --user start persona.service
 
 # Restart the bot
-sudo systemctl restart persona.service
+systemctl --user restart persona.service
 
 # Disable auto-start on boot
-sudo systemctl disable persona.service
+systemctl --user disable persona.service
 
 # Re-enable auto-start on boot
-sudo systemctl enable persona.service
+systemctl --user enable persona.service
 ```
 
 ## Viewing Logs
 
-The bot outputs to systemd's journal. You can view logs using the Makefile or `journalctl`:
+The bot outputs to the user journal. You can view logs using the Makefile or `journalctl --user`:
 
 ### Using Makefile (Recommended)
 
@@ -166,19 +200,19 @@ make logs-export
 
 ```bash
 # View real-time logs
-sudo journalctl -u persona.service -f
+journalctl --user -u persona.service -f
 
 # View recent logs (last 100 lines)
-sudo journalctl -u persona.service -n 100
+journalctl --user -u persona.service -n 100
 
 # View logs since boot
-sudo journalctl -u persona.service -b
+journalctl --user -u persona.service -b
 
 # View logs from a specific time range
-sudo journalctl -u persona.service --since "2024-01-01 00:00:00" --until "2024-01-01 23:59:59"
+journalctl --user -u persona.service --since "2024-01-01 00:00:00" --until "2024-01-01 23:59:59"
 
 # Export logs to a file
-sudo journalctl -u persona.service > persona-bot.log
+journalctl --user -u persona.service > persona-bot.log
 ```
 
 ## Service Features
@@ -186,9 +220,9 @@ sudo journalctl -u persona.service > persona-bot.log
 The systemd service provides several important features:
 
 - **Automatic Restart**: If the bot crashes, it will automatically restart after 10 seconds
-- **Boot Persistence**: The bot will start automatically when the system boots (if enabled)
+- **Boot Persistence**: With lingering enabled, the bot starts automatically when the system boots
 - **Session Independence**: The bot continues running even if you log out or your SSH connection drops
-- **Centralized Logging**: All output is captured in systemd's journal
+- **Centralized Logging**: All output is captured in the user journal
 - **Environment Management**: Environment variables are loaded from the `.env` file
 
 ## Troubleshooting
@@ -197,23 +231,32 @@ The systemd service provides several important features:
 
 1. **Check service status for errors:**
    ```bash
-   sudo systemctl status persona.service
+   systemctl --user status persona.service
    ```
 
 2. **View detailed logs:**
    ```bash
-   sudo journalctl -u persona.service -n 50
+   journalctl --user -u persona.service -n 50
    ```
 
 3. **Verify the binary exists and is executable:**
    ```bash
-   ls -la /home/caavere/Projects/bot/persona/target/release/persona
+   ls -la $HOME/Projects/bot/persona/target/release/bot
    ```
 
 4. **Check .env file permissions:**
    ```bash
-   ls -la /home/caavere/Projects/bot/persona/.env
+   ls -la $HOME/Projects/bot/persona/.env
    ```
+
+### Service Doesn't Start at Boot
+
+The user manager only runs at boot if lingering is enabled:
+
+```bash
+loginctl show-user botuser | grep Linger   # expect Linger=yes
+sudo loginctl enable-linger botuser        # one-time, requires root
+```
 
 ### Environment Variables Not Loading
 
@@ -221,29 +264,15 @@ If the bot can't read environment variables:
 
 1. **Verify .env file exists:**
    ```bash
-   cat /home/caavere/Projects/bot/persona/.env
+   cat $HOME/Projects/bot/persona/.env
    ```
 
 2. **Check file permissions:**
    ```bash
-   chmod 600 /home/caavere/Projects/bot/persona/.env
+   chmod 600 $HOME/Projects/bot/persona/.env
    ```
 
 3. **Ensure the .env file format is correct** (no spaces around `=`, one variable per line)
-
-### Permission Errors
-
-If you see permission errors:
-
-1. **Verify the User and Group in the service file match your username:**
-   ```bash
-   whoami  # Should match the User field in persona.service
-   ```
-
-2. **Check ownership of project files:**
-   ```bash
-   ls -la /home/caavere/Projects/bot/persona/
-   ```
 
 ### Updating the Bot
 
@@ -263,13 +292,13 @@ make update
 
 2. **Restart the service:**
    ```bash
-   sudo systemctl restart persona.service
+   systemctl --user restart persona.service
    ```
 
 3. **Verify it's running with the new code:**
    ```bash
-   sudo systemctl status persona.service
-   sudo journalctl -u persona.service -f
+   systemctl --user status persona.service
+   journalctl --user -u persona.service -f
    ```
 
 ## Alternative: Running with nohup
@@ -277,7 +306,8 @@ make update
 If you prefer not to use systemd, you can use `nohup` as a simpler alternative:
 
 ```bash
-nohup /home/caavere/Projects/bot/persona/target/release/persona > persona.log 2>&1 &
+nohup $HOME/Projects/bot/persona/target/release/bot > persona.log 2>&1 &
 ```
 
-However, systemd is recommended as it provides better management, logging, and automatic restart capabilities.
+However, the systemd user service is recommended as it provides better
+management, logging, and automatic restart capabilities.

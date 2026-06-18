@@ -70,7 +70,7 @@ service/reload: ## Reload systemd service
 	@cd .. && ./scripts/service/reload.sh $(ARGS)
 
 service/status: ## Check service status
-	@sudo systemctl status persona.service
+	@systemctl --user status persona.service
 
 ##@ Tunnel Management
 

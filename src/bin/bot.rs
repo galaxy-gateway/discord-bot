@@ -30,7 +30,7 @@ use serenity::model::id::GuildId;
 struct Handler {
     command_handler: Arc<CommandHandler>,
     component_handler: Arc<MessageComponentHandler>,
-    guild_id: Option<GuildId>,
+    guild_ids: Vec<GuildId>,
     startup_notifier: StartupNotifier,
     plugins: Vec<Plugin>,
     ipc_server: Option<Arc<IpcServer>>,
@@ -41,7 +41,7 @@ impl Handler {
     fn new(
         command_handler: CommandHandler,
         component_handler: MessageComponentHandler,
-        guild_id: Option<GuildId>,
+        guild_ids: Vec<GuildId>,
         startup_notifier: StartupNotifier,
         plugins: Vec<Plugin>,
         ipc_server: Option<Arc<IpcServer>>,
@@ -49,7 +49,7 @@ impl Handler {
         Handler {
             command_handler: Arc::new(command_handler),
             component_handler: Arc::new(component_handler),
-            guild_id,
+            guild_ids,
             startup_notifier,
             plugins,
             ipc_server,
@@ -348,15 +348,21 @@ impl EventHandler for Handler {
             );
         }
 
-        // Register slash commands - use guild commands for development (instant), global for production
-        if let Some(guild_id) = self.guild_id {
-            info!("🔧 Development mode: Registering commands for guild {guild_id}");
-            if let Err(e) =
-                register_guild_commands_with_plugins(&ctx, guild_id, &self.plugins).await
-            {
-                error!("❌ Failed to register guild slash commands: {e}");
-            } else {
-                info!("✅ Successfully registered slash commands for guild {guild_id} (instant update)");
+        // Register slash commands - use guild commands for development (instant), global for production.
+        // One or more guild IDs => register to each (instant updates, no propagation delay).
+        if !self.guild_ids.is_empty() {
+            info!(
+                "🔧 Development mode: Registering commands for {} guild(s)",
+                self.guild_ids.len()
+            );
+            for guild_id in &self.guild_ids {
+                if let Err(e) =
+                    register_guild_commands_with_plugins(&ctx, *guild_id, &self.plugins).await
+                {
+                    error!("❌ Failed to register guild slash commands for {guild_id}: {e}");
+                } else {
+                    info!("✅ Successfully registered slash commands for guild {guild_id} (instant update)");
+                }
             }
         } else {
             info!("🌍 Production mode: Registering commands globally");
@@ -962,12 +968,17 @@ async fn main() -> Result<()> {
     let component_handler =
         MessageComponentHandler::new(command_handler.clone(), persona_manager, database.clone());
 
-    // Parse guild ID if provided for development mode
-    let guild_id = config
+    // Parse guild IDs if provided for development mode (instant per-guild registration).
+    // Accepts a single ID or a comma-separated list so commands can be registered to
+    // multiple servers at once. Whitespace and empty entries are ignored.
+    let guild_ids: Vec<GuildId> = config
         .discord_guild_id
-        .as_ref()
-        .and_then(|id| id.parse::<u64>().ok())
-        .map(GuildId);
+        .as_deref()
+        .unwrap_or("")
+        .split(',')
+        .filter_map(|id| id.trim().parse::<u64>().ok())
+        .map(GuildId)
+        .collect();
 
     // Create startup notifier (reads config from database)
     let startup_notifier = StartupNotifier::new(Arc::new(database.clone()));
@@ -975,7 +986,7 @@ async fn main() -> Result<()> {
     let handler = Handler::new(
         command_handler,
         component_handler,
-        guild_id,
+        guild_ids,
         startup_notifier,
         plugins,
         Some(ipc_server),

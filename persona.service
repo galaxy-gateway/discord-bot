@@ -1,14 +1,10 @@
 [Unit]
 Description=Discord Persona Bot
-After=network-online.target
-Wants=network-online.target
 
 [Service]
 Type=simple
-User=caavere
-Group=caavere
-WorkingDirectory=/home/caavere/Projects/bot/persona
-ExecStart=/home/caavere/Projects/bot/persona/target/release/bot
+WorkingDirectory=%h/Projects/bot/persona
+ExecStart=%h/Projects/bot/persona/target/release/bot
 Restart=always
 RestartSec=10
 StandardOutput=journal
@@ -16,7 +12,19 @@ StandardError=journal
 SyslogIdentifier=persona-bot
 
 # Load environment variables from .env file
-EnvironmentFile=/home/caavere/Projects/bot/persona/.env
+EnvironmentFile=%h/Projects/bot/persona/.env
+
+# This is a systemd *user* service, installed under
+# ~/.config/systemd/user/ and managed entirely by botuser (no sudo):
+#
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now persona.service
+#
+# botuser has lingering enabled (loginctl enable-linger botuser) so the
+# user manager — and therefore this service — runs at boot without a login
+# session. The user manager also sets XDG_RUNTIME_DIR=/run/user/1005
+# automatically, which rootless podman (transcribe plugin) relies on, so it
+# no longer needs to be hardcoded here.
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target

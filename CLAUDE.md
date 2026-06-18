@@ -293,7 +293,7 @@ Types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`
 | `DATABASE_PATH` | `persona.db` | SQLite database path |
 | `LOG_LEVEL` | `info` | Logging level (error/warn/info/debug/trace) |
 | `OPENAI_MODEL` | `gpt-5.1` | OpenAI model to use |
-| `DISCORD_GUILD_ID` | - | Guild ID for instant command registration |
+| `DISCORD_GUILD_ID` | - | Guild ID(s) for instant command registration; comma-separated for multiple servers |
 | `CONFLICT_MEDIATION_ENABLED` | `true` | Enable conflict detection |
 | `CONFLICT_SENSITIVITY` | `medium` | Detection sensitivity (low/medium/high/ultra) |
 | `MEDIATION_COOLDOWN_MINUTES` | `5` | Cooldown between mediations |
