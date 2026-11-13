@@ -351,7 +351,7 @@ personas.insert("your_persona".to_string(), Persona {
 
 ## License
 
-This project is open source. Please check the license file for details.
+Released under the [MIT License](LICENSE).
 
 ## Contributing
 
